@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 
 from fastapi import APIRouter, Request
 
@@ -31,11 +32,21 @@ async def folders_list(request: Request):
     # Excluded patterns
     exclude_patterns = cfg.exclude_folder_patterns
 
-    # Build folder data with exclusion info
+    # Live folder paths (persisted by orchestrator/bootstrap on each run)
+    live_folder_paths = set()
+    row = db.execute("SELECT value FROM learner_state WHERE key = 'live_folder_paths'").fetchone()
+    if row:
+        try:
+            live_folder_paths = set(json.loads(row["value"]))
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Build folder data with exclusion and stale info
     folders = []
     for desc in descriptions:
         path = desc["folder_path"]
         excluded = any(fnmatch.fnmatch(path, pat) for pat in exclude_patterns)
+        stale = bool(live_folder_paths) and path not in live_folder_paths
         depth = path.count("/")
         folders.append({
             "path": path,
@@ -43,13 +54,17 @@ async def folders_list(request: Request):
             "source": desc["source"],
             "email_count": counts.get(path, 0),
             "excluded": excluded,
+            "stale": stale,
             "depth": depth,
             "updated_at": desc["updated_at"],
         })
+
+    stale_count = sum(1 for f in folders if f["stale"])
 
     return templates.TemplateResponse("folders.html", {
         "request": request,
         "folders": folders,
         "exclude_patterns": exclude_patterns,
+        "stale_count": stale_count,
         "nav_active": "folders",
     })

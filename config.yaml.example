@@ -7,7 +7,7 @@ fastmail:
 # Scheduling
 scheduler:
   interval_minutes: 15
-  min_age_hours: 4
+  min_age_minutes: 240          # Minimum email age before moving (default 4 hours)
   max_batch_size: 100
   contacts_refresh_hours: 24   # How often to re-fetch contacts from Fastmail
 

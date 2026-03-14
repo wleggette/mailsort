@@ -181,28 +181,23 @@ class JMAPClient:
     def query_inbox_emails(
         self,
         inbox_id: str,
-        min_age_hours: int = 4,
         limit: int = 100,
         *,
-        filter_eligible: bool = True,
+        filter_eligible: bool = False,
     ) -> list[str]:
         """Return IDs of inbox emails.
 
         Args:
-            filter_eligible: If True (default), apply read/unflagged/age filters
-                for classification eligibility. If False, return ALL inbox emails
-                (used for inbox snapshot tracking).
+            filter_eligible: If True, apply read/unflagged filters (no age
+                filter — age is checked in Python after classification).
+                If False (default), return ALL inbox emails.
         """
         session = self.get_session()
 
         query_filter: dict = {"inMailbox": inbox_id}
         if filter_eligible:
-            cutoff = (
-                datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
-            ).strftime("%Y-%m-%dT%H:%M:%SZ")
             query_filter["hasKeyword"] = "$seen"
             query_filter["notKeyword"] = "$flagged"
-            query_filter["before"] = cutoff
 
         data = self.call([
             ["Email/query", {

@@ -26,7 +26,7 @@ from mailsort.orchestrator import run_classification_pass
 def _cfg() -> Config:
     return Config(
         fastmail=FastmailConfig(),
-        scheduler=SchedulerConfig(interval_minutes=15, min_age_hours=4, max_batch_size=100),
+        scheduler=SchedulerConfig(interval_minutes=15, min_age_minutes=240, max_batch_size=100),
         classification=ClassificationConfig(),
         fastmail_api_token="test-token",
         anthropic_api_key="",
@@ -448,9 +448,9 @@ def test_flagged_email_classified_but_not_moved(db: Database, monkeypatch):
 
 
 def test_too_new_email_classified_but_not_moved(db: Database, monkeypatch):
-    """Emails received less than min_age_hours ago should be classified but not moved."""
+    """Emails received less than min_age_minutes ago should be classified but not moved."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    cfg = _cfg()  # min_age_hours=4
+    cfg = _cfg()  # min_age_minutes=240
     tree = _tree()
     _seed_rules(db)
 
@@ -567,3 +567,157 @@ def test_mixed_eligibility_in_single_run(db: Database, monkeypatch):
     # Run summary
     run_row = db.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
     assert run_row["emails_moved"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Folder reconciliation: deleted folders
+# ---------------------------------------------------------------------------
+
+def test_deleted_folder_rule_deactivated_on_run(db: Database, monkeypatch):
+    """Rules pointing to a deleted folder should be deactivated at the start of a run."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _cfg()
+    rules = _seed_rules(db)
+
+    # Tree WITHOUT Shopping/Orders — simulates a deleted folder
+    tree_without_orders = MailboxTree.build([
+        JMAPMailbox(id="mb-inbox", name="INBOX", role="inbox"),
+        JMAPMailbox(id="mb-banks", name="Banks", parentId="mb-affairs"),
+        JMAPMailbox(id="mb-affairs", name="Affairs", parentId="mb-inbox"),
+        JMAPMailbox(id="mb-travel", name="Travel", parentId="mb-inbox"),
+    ])
+
+    # Amazon rule targets INBOX/Shopping/Orders which no longer exists
+    rule_before = db.execute("SELECT active FROM rules WHERE id = ?", (rules["orders@amazon.com"],)).fetchone()
+    assert rule_before["active"] == 1
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.side_effect = [set(), []]
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    run_classification_pass(cfg, db, mock_jmap, tree_without_orders, dry_run=False, trigger="test")
+
+    # Amazon rule should be deactivated; Chase rule (Banks still exists) should be active
+    amazon_rule = db.execute("SELECT active FROM rules WHERE id = ?", (rules["orders@amazon.com"],)).fetchone()
+    assert amazon_rule["active"] == 0
+
+    chase_rule = db.execute("SELECT active FROM rules WHERE id = ?", (rules["noreply@chase.com"],)).fetchone()
+    assert chase_rule["active"] == 1
+
+
+def test_deleted_folder_email_gets_unknown_folder_skip(db: Database, monkeypatch):
+    """If a rule is active but folder is deleted mid-run (edge case), email gets unknown_folder skip."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _cfg()
+
+    # Create a rule for a folder that exists in the tree
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES ('exact_sender', 'noreply@ghost.com', "
+        "'INBOX/Ghost/Folder', 0.95, 'bootstrap', 1)"
+    )
+    db.commit()
+
+    tree = _tree()  # Ghost/Folder not in tree
+
+    e = _email("e-ghost", "noreply@ghost.com", "Hello")
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.side_effect = [{"e-ghost"}, ["e-ghost"]]
+    mock_jmap.get_emails.return_value = [e]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    # The rule should have been deactivated by reconcile_folders
+    rule = db.execute(
+        "SELECT active FROM rules WHERE condition_value = 'noreply@ghost.com'"
+    ).fetchone()
+    assert rule["active"] == 0
+
+    # The email shouldn't match the deactivated rule, so no classification
+    row = db.execute("SELECT * FROM audit_log WHERE email_id = 'e-ghost'").fetchone()
+    assert row is not None
+    assert row["moved"] == 0
+    assert row["skip_reason"] in ("no_classification", "llm_unavailable")
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap: deleted folder filtering in coverage and rule creation
+# ---------------------------------------------------------------------------
+
+def test_bootstrap_coverage_excludes_deleted_folders(db: Database):
+    """Coverage calculation should not count evidence for folders that no longer exist."""
+    from mailsort.bootstrap import _calculate_coverage, BootstrapReport
+    from mailsort.classifier.rules import RuleEngine
+    from mailsort.config import ThresholdsConfig
+
+    tree = _tree()
+    rule_engine = RuleEngine(db, ThresholdsConfig())
+
+    # Seed a rule for Banks (exists)
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES ('exact_sender', 'a@example.com', "
+        "'INBOX/Affairs/Banks', 0.95, 'auto', 1)"
+    )
+    db.commit()
+
+    # Seed evidence: 2 emails to Banks (exists), 1 email to DeletedFolder (gone)
+    for i, (addr, folder) in enumerate([
+        ("a@example.com", "INBOX/Affairs/Banks"),
+        ("a@example.com", "INBOX/Affairs/Banks"),
+        ("b@example.com", "INBOX/Deleted/Folder"),
+    ]):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved) "
+            "VALUES ('run-cov', ?, ?, 'example.com', 'INBOX', ?, 1.0, 'manual', 1)",
+            (f"e-cov-{i}", addr, folder),
+        )
+    db.commit()
+
+    report = BootstrapReport()
+    _calculate_coverage(db, rule_engine, report, tree.all_folder_paths())
+
+    # Only 2 evidence emails for existing folders; both matched by the rule
+    assert report.emails_matched_by_rules == 2
+    assert report.emails_unmatched == 0  # DeletedFolder evidence excluded
+
+
+def test_bootstrap_create_rules_excludes_deleted_folders(db: Database):
+    """Rule creation should not consider evidence for folders that no longer exist."""
+    from mailsort.bootstrap import _create_rules_from_evidence, BootstrapReport
+    from mailsort.audit.learner import Learner
+    from mailsort.classifier.rules import RuleEngine
+    from mailsort.config import ClassificationConfig, ThresholdsConfig
+
+    tree = _tree()
+    rule_engine = RuleEngine(db, ThresholdsConfig())
+    learner = Learner(db, rule_engine, ClassificationConfig())
+
+    # Seed 5 manual sorts to a deleted folder (would exceed auto-rule threshold)
+    for i in range(5):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved) "
+            "VALUES ('run-del', ?, 'deleted@example.com', 'example.com', 'INBOX', "
+            "'INBOX/Deleted/Folder', 1.0, 'manual', 1)",
+            (f"e-del-{i}",),
+        )
+    db.commit()
+
+    report = BootstrapReport()
+    _create_rules_from_evidence(db, learner, report, tree.all_folder_paths())
+
+    # No rules should be created — the folder doesn't exist
+    assert report.rules_created == 0
+    rules = db.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+    assert rules == 0

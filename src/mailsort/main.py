@@ -253,14 +253,15 @@ def bootstrap(ctx: click.Context, max_per_folder: int) -> None:
                 cfg, db, jmap, tree, max_per_folder=max_per_folder,
             )
 
-    pct = (report.emails_matched_by_rules / report.emails_sampled * 100
-           if report.emails_sampled > 0 else 0)
+    total_evidence = report.emails_matched_by_rules + report.emails_unmatched
+    pct = (report.emails_matched_by_rules / total_evidence * 100
+           if total_evidence > 0 else 0)
 
     click.echo(f"\nBootstrap complete:")
     click.echo(f"  Folders scanned : {report.folders_scanned}")
     click.echo(f"  Emails sampled  : {report.emails_sampled}")
     click.echo(f"  Rules created   : {report.rules_created}")
-    click.echo(f"  Rule coverage   : {report.emails_matched_by_rules}/{report.emails_sampled} ({pct:.0f}%) matched, {report.emails_unmatched} unmatched")
+    click.echo(f"  Rule coverage   : {report.emails_matched_by_rules}/{total_evidence} ({pct:.0f}%) matched, {report.emails_unmatched} unmatched")
     click.echo(f"  Descriptions    : {report.descriptions_generated}")
     click.echo(f"  Contacts        : {report.contacts_imported}")
     if report.errors:

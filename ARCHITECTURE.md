@@ -206,7 +206,7 @@ filter condition with a computed UTC datetime. Fastmail's JMAP implementation
 supports `before` in `Email/query`, so this can be done server-side:
 
 ```python
-cutoff = (datetime.now(timezone.utc) - timedelta(hours=config.scheduler.min_age_hours)).isoformat() + "Z"
+cutoff = (datetime.now(timezone.utc) - timedelta(minutes=config.scheduler.min_age_minutes)).isoformat() + "Z"
 filter["before"] = cutoff
 ```
 
@@ -375,7 +375,7 @@ An email is eligible for classification if ALL of the following are true:
 - It is in the inbox (has inbox mailbox ID in `mailboxIds`)
 - It has the `$seen` keyword (has been read)
 - It does NOT have the `$flagged` keyword
-- Its `receivedAt` is older than `min_age_hours` (default: 4 hours)
+- Its `receivedAt` is older than `min_age_minutes` (default: 240 minutes / 4 hours)
 - It has not already been processed in this run (deduplicate by email ID)
 - It is not in the `skip_senders` list (manual exclude list in config)
 
@@ -1378,7 +1378,7 @@ fastmail:
 # Scheduling
 scheduler:
   interval_minutes: 15
-  min_age_hours: 4          # Don't move emails younger than this
+  min_age_minutes: 240      # Don't move emails younger than this (4 hours)
   max_batch_size: 100       # Max emails to process per run
 
 # Classification
@@ -1717,10 +1717,12 @@ This means the audit log shows what mailsort *would* do with every email,
 giving full visibility into classification quality even for emails that aren't
 eligible to move yet.
 
-The `min_age_hours` setting (default 4h) produces a separate `too_new` skip
-reason. Emails received less than `min_age_hours` ago are classified but not
-moved, giving the user time to read and sort them first. This is checked
-independently of the unread/flagged gates — a read email can still be too new.
+The `min_age_minutes` setting (default 240, i.e. 4 hours) produces a separate
+`too_new` skip reason. Emails received less than `min_age_minutes` ago are
+classified but not moved, giving the user time to read and sort them first.
+This is checked independently of the unread/flagged gates — a read email can
+still be too new. Using minutes instead of hours allows fine-grained control
+for system testing (e.g., `min_age_minutes: 1`).
 
 #### Outcome Categories
 
@@ -1732,7 +1734,7 @@ Every email in the audit log has one of these outcomes:
 | **dry run** | `dry run` (blue) | Would have moved, but `--dry-run` mode |
 | **unread** | `unread` (gray) | Email not yet read by user |
 | **flagged** | `flagged` (gray) | Email flagged by user |
-| **too new** | `too new` (gray) | Email received less than `min_age_hours` ago |
+| **too new** | `too new` (gray) | Email received less than `min_age_minutes` ago |
 | **below threshold** | `below threshold` (gray) | Confidence below move threshold |
 | **below threshold (known contact)** | `below threshold (known contact)` (gray) | LLM confidence below stricter known-contact threshold |
 | **no classification** | `no classification` (gray) | No rule/thread/LLM match |
@@ -1829,35 +1831,34 @@ def run_migrations():
 ### Deleted Folder Handling
 
 If a Fastmail folder is renamed or deleted, rules pointing to it will have a
-stale `target_folder_id` and a `target_folder_path` that no longer exists in the
-mailbox tree.
+stale `target_folder_path` that no longer exists in the mailbox tree.
+`RuleEngine.reconcile_folders()` (`classifier/rules.py`) compares active rules
+against the live mailbox tree and deactivates any with a missing target.
 
-On each startup (and whenever `Mailbox/get` is refreshed), reconcile rules
-against the live mailbox tree:
+**When it runs:**
 
-```python
-def reconcile_rules(live_folder_paths: set[str]):
-    """Deactivate rules whose target folder no longer exists."""
-    stale = db.execute("""
-        SELECT id, target_folder_path FROM rules
-        WHERE active = 1
-    """).fetchall()
+- **Every classification pass** — the orchestrator calls `reconcile_folders`
+  at the start of `_execute_run`, before the learning step, so stale rules
+  never match during classification.
+- **Every bootstrap** — called before rule creation and coverage calculation,
+  ensuring deleted-folder evidence is excluded from both.
 
-    for rule in stale:
-        if rule["target_folder_path"] not in live_folder_paths:
-            db.execute(
-                "UPDATE rules SET active=0, updated_at=datetime('now') WHERE id=?",
-                (rule["id"],)
-            )
-            logger.warning(
-                f"Deactivated rule {rule['id']}: target folder "
-                f"'{rule['target_folder_path']}' no longer exists"
-            )
-```
+**What it affects:**
 
-Deactivated rules are retained (not deleted) so they appear in the summary
-report for review. If you renamed a folder, you can update the rule's
-`target_folder_path` and re-activate it rather than losing the rule's history.
+- **Rule deactivation:** active rules targeting a deleted folder are set to
+  `active=0`. They are retained (not deleted) so they appear in the rules UI
+  for review. If the folder was renamed, the rule can be manually updated and
+  re-activated.
+- **Bootstrap rule creation:** `_create_rules_from_evidence` filters out
+  audit_log evidence pointing to folders not in the live tree, preventing
+  rules from being created for deleted folders.
+- **Bootstrap coverage:** `_calculate_coverage` excludes deleted-folder
+  evidence from both the matched count and the total, so coverage percentage
+  reflects only reachable folders.
+- **Classification fallback:** if a rule somehow matches but the folder ID
+  can't be resolved (e.g., folder deleted between reconciliation and
+  classification), the email gets `skip_reason = "unknown_folder"` and is
+  not moved.
 
 ---
 

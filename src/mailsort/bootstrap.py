@@ -8,6 +8,7 @@ rules created from ongoing manual sorts.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -58,7 +59,24 @@ def run_bootstrap(
     rule_engine = RuleEngine(db, cfg.classification.thresholds)
     learner = Learner(db, rule_engine, cfg.classification)
 
+    live_folders = tree.all_folder_paths()
+
     try:
+        # Phase 0: Deactivate rules for deleted folders
+        deactivated = rule_engine.reconcile_folders(live_folders)
+        if deactivated:
+            logger.info("Deactivated %d rule(s) for deleted folders", deactivated)
+
+        # Persist live folder paths for the web UI's stale-folder detection
+        try:
+            db.execute(
+                "INSERT OR REPLACE INTO learner_state (key, value) VALUES ('live_folder_paths', ?)",
+                (json.dumps(sorted(live_folders)),),
+            )
+            db.commit()
+        except Exception:
+            logger.debug("Failed to persist live folder paths")
+
         # Phase 1: Collect evidence from all folders
         logger.info("Phase 1/4: Scanning folders for email evidence...")
         _collect_evidence(
@@ -72,7 +90,7 @@ def run_bootstrap(
 
         # Phase 2: Evaluate candidate rules using learner's coherence checks
         logger.info("Phase 2/4: Creating rules from evidence...")
-        _create_rules_from_evidence(db, learner, report)
+        _create_rules_from_evidence(db, learner, report, live_folders)
         logger.info("Phase 2/4 complete: %d rules created", report.rules_created)
 
         # Phase 3: Import contacts from Fastmail
@@ -82,7 +100,7 @@ def run_bootstrap(
 
         # Phase 4: Calculate rule coverage
         logger.info("Phase 4/4: Calculating rule coverage...")
-        _calculate_coverage(db, rule_engine, report)
+        _calculate_coverage(db, rule_engine, report, live_folders)
 
         audit.finish_run(
             run_id,
@@ -198,6 +216,7 @@ def _create_rules_from_evidence(
     db: Database,
     learner: Learner,
     report: BootstrapReport,
+    live_folders: set[str] | None = None,
 ) -> None:
     """Query the bootstrap evidence and create rules using learner's logic."""
     # Find distinct (from_address, from_domain, list_id, target_folder) combos
@@ -206,6 +225,10 @@ def _create_rules_from_evidence(
            FROM audit_log
            WHERE classification_source = 'manual' AND moved = 1"""
     ).fetchall()
+
+    # Skip evidence pointing to deleted folders
+    if live_folders is not None:
+        rows = [r for r in rows if r["target_folder"] in live_folders]
 
     seen_rules: set[tuple[str, str]] = set()
     for row in rows:
@@ -230,12 +253,17 @@ def _calculate_coverage(
     db: Database,
     rule_engine: RuleEngine,
     report: BootstrapReport,
+    live_folders: set[str] | None = None,
 ) -> None:
-    """Check how many sampled emails would be matched by the created rules."""
+    """Check how many evidence emails would be matched by the created rules."""
     rows = db.execute(
         "SELECT DISTINCT email_id, from_address, from_domain, list_id, target_folder "
         "FROM audit_log WHERE classification_source = 'manual' AND moved = 1"
     ).fetchall()
+
+    # Only count evidence for folders that still exist
+    if live_folders is not None:
+        rows = [r for r in rows if r["target_folder"] in live_folders]
 
     matched = 0
     for row in rows:
@@ -256,12 +284,13 @@ def _calculate_coverage(
         if clf and clf.folder_path == row["target_folder"]:
             matched += 1
 
+    total_evidence = len(rows)
     report.emails_matched_by_rules = matched
-    report.emails_unmatched = report.emails_sampled - matched
+    report.emails_unmatched = total_evidence - matched
     logger.info(
         "Rule coverage: %d/%d emails matched (%.0f%%), %d unmatched",
-        matched, report.emails_sampled,
-        matched / report.emails_sampled * 100 if report.emails_sampled > 0 else 0,
+        matched, total_evidence,
+        matched / total_evidence * 100 if total_evidence > 0 else 0,
         report.emails_unmatched,
     )
 

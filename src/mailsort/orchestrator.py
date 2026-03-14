@@ -12,6 +12,7 @@ Implements the Phase 3 pipeline:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import Counter
@@ -87,6 +88,22 @@ def _execute_run(
     # ------------------------------------------------------------------
     rule_engine = RuleEngine(db, cfg.classification.thresholds)
     learner = Learner(db, rule_engine, cfg.classification)
+
+    # Deactivate rules whose target folder no longer exists
+    live_folders = tree.all_folder_paths()
+    deactivated = rule_engine.reconcile_folders(live_folders)
+    if deactivated:
+        logger.info("Deactivated %d rule(s) for deleted folders", deactivated)
+
+    # Persist live folder paths for the web UI's stale-folder detection
+    try:
+        db.execute(
+            "INSERT OR REPLACE INTO learner_state (key, value) VALUES ('live_folder_paths', ?)",
+            (json.dumps(sorted(live_folders)),),
+        )
+        db.commit()
+    except Exception:
+        logger.debug("Failed to persist live folder paths")
 
     # Query ALL inbox emails (unfiltered) for snapshot diff and inbox total
     try:
@@ -245,7 +262,7 @@ def _execute_run(
                 decision.should_move = False
                 decision.skip_reason = "flagged"
             else:
-                age_cutoff = datetime.now(timezone.utc) - timedelta(hours=cfg.scheduler.min_age_hours)
+                age_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cfg.scheduler.min_age_minutes)
                 if features.received_at.tzinfo is None:
                     received_utc = features.received_at.replace(tzinfo=timezone.utc)
                 else:

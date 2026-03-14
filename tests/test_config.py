@@ -18,21 +18,21 @@ fastmail:
   session_url: "https://api.fastmail.com/jmap/session"
 scheduler:
   interval_minutes: 10
-  min_age_hours: 2
+  min_age_minutes: 120
 classification:
   thresholds:
     rule_move: 0.90
 """)
     cfg = load_config(config_file, require_secrets=False)
     assert cfg.scheduler.interval_minutes == 10
-    assert cfg.scheduler.min_age_hours == 2
+    assert cfg.scheduler.min_age_minutes == 120
     assert cfg.classification.thresholds.rule_move == 0.90
 
 
 def test_config_defaults():
     cfg = Config(fastmail_api_token="dummy-token")
     assert cfg.scheduler.interval_minutes == 15
-    assert cfg.scheduler.min_age_hours == 4
+    assert cfg.scheduler.min_age_minutes == 240
     assert cfg.classification.llm_model == "claude-haiku-4-5-20251001"
     assert cfg.classification.thresholds.llm_move_known_contact == 0.93
     assert cfg.skip_senders == []

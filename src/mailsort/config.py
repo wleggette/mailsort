@@ -17,7 +17,7 @@ class FastmailConfig(BaseModel):
 
 class SchedulerConfig(BaseModel):
     interval_minutes: int = 15
-    min_age_hours: int = 4
+    min_age_minutes: int = 240
     max_batch_size: int = 100
     health_check_port: int = 8025
     contacts_refresh_hours: int = 24

@@ -31,7 +31,7 @@ from mailsort.orchestrator import run_classification_pass
 def _make_config() -> Config:
     return Config(
         fastmail=FastmailConfig(),
-        scheduler=SchedulerConfig(interval_minutes=15, min_age_hours=4, max_batch_size=100),
+        scheduler=SchedulerConfig(interval_minutes=15, min_age_minutes=240, max_batch_size=100),
         classification=ClassificationConfig(),
         fastmail_api_token="test-token",
         anthropic_api_key="",

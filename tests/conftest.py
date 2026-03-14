@@ -32,7 +32,7 @@ def test_config() -> Config:
     """Minimal config for tests — no real secrets needed."""
     return Config(
         fastmail=FastmailConfig(),
-        scheduler=SchedulerConfig(interval_minutes=15, min_age_hours=4, max_batch_size=100),
+        scheduler=SchedulerConfig(interval_minutes=15, min_age_minutes=240, max_batch_size=100),
         classification=ClassificationConfig(),
         fastmail_api_token="test-token-abc123",
         anthropic_api_key="test-anthropic-key",

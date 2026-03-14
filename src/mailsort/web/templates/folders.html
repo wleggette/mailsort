@@ -5,6 +5,7 @@
 <div class="mb-6">
   <h1 class="text-2xl font-semibold text-gray-900">Folders</h1>
   <p class="text-sm text-gray-500 mt-1">{{ folders|length }} folders with descriptions
+    {% if stale_count %} · <span class="text-amber-600">{{ stale_count }} no longer in Fastmail</span>{% endif %}
     {% if exclude_patterns %} · Excluding: {{ exclude_patterns|join(', ') }}{% endif %}
   </p>
 </div>
@@ -24,9 +25,12 @@
       </thead>
       <tbody class="divide-y divide-gray-200">
         {% for f in folders %}
-        <tr class="hover:bg-gray-50 {{ 'opacity-40' if f.excluded }}">
+        <tr class="hover:bg-gray-50 {{ 'opacity-40' if f.excluded or f.stale }}">
           <td class="px-4 py-2 text-sm font-mono text-gray-900" style="padding-left: {{ 16 + f.depth * 16 }}px">
             {{ f.path }}
+            {% if f.stale %}
+              <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">deleted</span>
+            {% endif %}
             {% if f.excluded %}
               <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">excluded</span>
             {% endif %}
