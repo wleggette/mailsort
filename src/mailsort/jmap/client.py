@@ -31,7 +31,21 @@ EMAIL_PROPERTIES = [
     "header:list-unsubscribe:asText",
 ]
 
-# Fallback for read-only tokens that reject header:* properties
+# Fallback without list-unsubscribe (some accounts reject it)
+_EMAIL_PROPERTIES_NO_UNSUB = [
+    "id",
+    "threadId",
+    "mailboxIds",
+    "from",
+    "to",
+    "subject",
+    "receivedAt",
+    "keywords",
+    "preview",
+    "header:list-id:asText",
+]
+
+# Fallback for read-only tokens that reject all header:* properties
 _EMAIL_PROPERTIES_MINIMAL = [
     "id",
     "threadId",
@@ -242,25 +256,32 @@ class JMAPClient:
         session = self.get_session()
         props = properties or EMAIL_PROPERTIES
 
-        try:
-            data = self.call([
-                ["Email/get", {
-                    "accountId": session.account_id,
-                    "ids": email_ids,
-                    "properties": props,
-                }, "g1"],
-            ])
-        except JMAPError:
-            if properties is not None:
-                raise  # caller specified explicit properties, don't override
-            logger.debug("Email/get failed with full properties, retrying with minimal")
-            data = self.call([
-                ["Email/get", {
-                    "accountId": session.account_id,
-                    "ids": email_ids,
-                    "properties": _EMAIL_PROPERTIES_MINIMAL,
-                }, "g1"],
-            ])
+        # Fallback chain: full → no list-unsubscribe → minimal (no headers)
+        fallback_chain = [props]
+        if properties is None:
+            fallback_chain.append(_EMAIL_PROPERTIES_NO_UNSUB)
+            fallback_chain.append(_EMAIL_PROPERTIES_MINIMAL)
+
+        data = None
+        for attempt_props in fallback_chain:
+            try:
+                data = self.call([
+                    ["Email/get", {
+                        "accountId": session.account_id,
+                        "ids": email_ids,
+                        "properties": attempt_props,
+                    }, "g1"],
+                ])
+                break
+            except JMAPError:
+                if properties is not None:
+                    raise  # caller specified explicit properties, don't override
+                logger.debug(
+                    "Email/get failed with %d properties, trying fallback",
+                    len(attempt_props),
+                )
+        if data is None:
+            return []
 
         raw_list = data["methodResponses"][0][1].get("list", [])
         return [JMAPEmail.model_validate(e) for e in raw_list]

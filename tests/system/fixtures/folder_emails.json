@@ -1,0 +1,84 @@
+{
+  "_comment": "Static fixture emails for bootstrap seeding. See SYSTEM_TEST_PLAN.md fixture groups A-I.",
+  "emails": [
+    {"group": "A", "from_name": "Chase Bank", "from_email": "noreply@chase.com", "subject": "Your January statement is ready", "body": "Your Chase checking account statement for January is now available online.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "A", "from_name": "Chase Bank", "from_email": "noreply@chase.com", "subject": "Your February statement is ready", "body": "Your Chase checking account statement for February is now available online.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "A", "from_name": "Chase Bank", "from_email": "noreply@chase.com", "subject": "Your March statement is ready", "body": "Your Chase checking account statement for March is now available online.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "A", "from_name": "Chase Bank", "from_email": "noreply@chase.com", "subject": "Fraud alert: unusual activity detected", "body": "We noticed unusual activity on your Chase credit card ending in 4821.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "A", "from_name": "Chase Bank", "from_email": "noreply@chase.com", "subject": "Payment received - thank you", "body": "We received your payment of $1,247.32. Thank you for banking with Chase.", "folder": "Affairs/Banks", "list_id": null},
+
+    {"group": "A", "from_name": "Bank of America", "from_email": "alerts@bankofamerica.com", "subject": "Direct deposit received", "body": "A direct deposit of $3,450.00 has been posted to your checking account.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "A", "from_name": "Bank of America", "from_email": "alerts@bankofamerica.com", "subject": "Low balance alert", "body": "Your checking account balance is below $500. Current balance: $423.17.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "A", "from_name": "Bank of America", "from_email": "alerts@bankofamerica.com", "subject": "Account security update", "body": "We've updated our security protocols. Please review your account settings.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "A", "from_name": "Bank of America", "from_email": "alerts@bankofamerica.com", "subject": "Your tax documents are ready", "body": "Your 1099-INT tax document for 2025 is now available in your account.", "folder": "Affairs/Banks", "list_id": null},
+
+    {"group": "A", "from_name": "Amazon", "from_email": "orders@amazon.com", "subject": "Your order has shipped - USB-C cable", "body": "Your order #112-4567890 has shipped and is on its way.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "A", "from_name": "Amazon", "from_email": "orders@amazon.com", "subject": "Your order has shipped - Kitchen scale", "body": "Your order #112-7891234 has shipped via UPS.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "A", "from_name": "Amazon", "from_email": "orders@amazon.com", "subject": "Delivery confirmed - Headphones", "body": "Your package was delivered to your front door.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "A", "from_name": "Amazon", "from_email": "orders@amazon.com", "subject": "Your order has shipped - Book", "body": "Your order #112-5556789 has shipped and will arrive Thursday.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "A", "from_name": "Amazon", "from_email": "orders@amazon.com", "subject": "Return approved - Defective charger", "body": "Your return request for order #112-3334567 has been approved.", "folder": "Affairs/Stores", "list_id": null},
+
+    {"group": "A", "from_name": "Target", "from_email": "noreply@target.com", "subject": "Order confirmation #T-98765", "body": "Thank you for your Target order. Your items are being prepared.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "A", "from_name": "Target", "from_email": "noreply@target.com", "subject": "Your Target order has shipped", "body": "Great news! Your Target order #T-98765 is on its way.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "A", "from_name": "Target", "from_email": "noreply@target.com", "subject": "Pickup ready at Chicago Loop", "body": "Your order is ready for pickup at Target Chicago Loop store.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "A", "from_name": "Target", "from_email": "noreply@target.com", "subject": "Your receipt from Target", "body": "Here's your receipt for your recent Target purchase of $47.23.", "folder": "Affairs/Stores", "list_id": null},
+
+    {"group": "A", "from_name": "Lincoln Elementary", "from_email": "admin@lincolnelementary.org", "subject": "School picture day - March 15", "body": "Reminder: school picture day is this Friday, March 15. Please send students in picture-ready outfits.", "folder": "People/Children", "list_id": null},
+    {"group": "A", "from_name": "Lincoln Elementary", "from_email": "admin@lincolnelementary.org", "subject": "Parent-teacher conference signup", "body": "Sign up for spring parent-teacher conferences at the link below.", "folder": "People/Children", "list_id": null},
+    {"group": "A", "from_name": "Lincoln Elementary", "from_email": "admin@lincolnelementary.org", "subject": "Snow day - school closed tomorrow", "body": "Due to expected snowfall, Lincoln Elementary will be closed tomorrow.", "folder": "People/Children", "list_id": null},
+    {"group": "A", "from_name": "Lincoln Elementary", "from_email": "admin@lincolnelementary.org", "subject": "Field trip permission form", "body": "Please sign and return the attached permission form for the museum field trip.", "folder": "People/Children", "list_id": null},
+    {"group": "A", "from_name": "Lincoln Elementary", "from_email": "admin@lincolnelementary.org", "subject": "Report cards available online", "body": "Second quarter report cards are now available in the parent portal.", "folder": "People/Children", "list_id": null},
+
+    {"group": "A", "from_name": "YMCA Activities", "from_email": "activities@ymca.org", "subject": "Spring soccer registration open", "body": "Registration for spring youth soccer is now open. Ages 5-12.", "folder": "People/Children", "list_id": null},
+    {"group": "A", "from_name": "YMCA Activities", "from_email": "activities@ymca.org", "subject": "Swim lesson schedule change", "body": "Please note the updated swim lesson schedule starting next week.", "folder": "People/Children", "list_id": null},
+    {"group": "A", "from_name": "YMCA Activities", "from_email": "activities@ymca.org", "subject": "Summer camp early bird discount", "body": "Save 15% on summer camp registration when you sign up before April 1.", "folder": "People/Children", "list_id": null},
+    {"group": "A", "from_name": "YMCA Activities", "from_email": "activities@ymca.org", "subject": "Basketball game this Saturday", "body": "Reminder: your child's basketball game is this Saturday at 10am.", "folder": "People/Children", "list_id": null},
+
+    {"group": "B", "from_name": "BigBank Statements", "from_email": "statements@bigbank.com", "subject": "Your Q1 investment summary", "body": "Your quarterly investment summary for Q1 2026 is attached.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "B", "from_name": "BigBank Statements", "from_email": "statements@bigbank.com", "subject": "Your Q4 investment summary", "body": "Your quarterly investment summary for Q4 2025 is attached.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "B", "from_name": "BigBank Statements", "from_email": "statements@bigbank.com", "subject": "Year-end tax summary 2025", "body": "Your year-end tax summary for 2025 is now available.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "B", "from_name": "BigBank Alerts", "from_email": "alerts@bigbank.com", "subject": "Wire transfer received", "body": "A wire transfer of $5,000.00 has been deposited to your account.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "B", "from_name": "BigBank Alerts", "from_email": "alerts@bigbank.com", "subject": "New device login detected", "body": "A new device was used to access your BigBank account.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "B", "from_name": "BigBank Alerts", "from_email": "alerts@bigbank.com", "subject": "Large transaction alert", "body": "A transaction of $2,500.00 was processed on your account.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "B", "from_name": "BigBank Fraud", "from_email": "fraud@bigbank.com", "subject": "Suspicious activity detected", "body": "We detected potentially suspicious activity on your account. Please verify.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "B", "from_name": "BigBank Fraud", "from_email": "fraud@bigbank.com", "subject": "Card temporarily locked", "body": "Your debit card has been temporarily locked due to unusual transactions.", "folder": "Affairs/Banks", "list_id": null},
+
+    {"group": "C", "from_name": "MegaStore Orders", "from_email": "orders@megastore.com", "subject": "Order confirmed #MS-1001", "body": "Your MegaStore order has been confirmed and is being prepared.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Orders", "from_email": "orders@megastore.com", "subject": "Order shipped #MS-1002", "body": "Your MegaStore order is on its way via FedEx.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Orders", "from_email": "orders@megastore.com", "subject": "Order delivered #MS-1003", "body": "Your MegaStore order was delivered to your address.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Orders", "from_email": "orders@megastore.com", "subject": "Order confirmed #MS-1004", "body": "Your MegaStore order for kitchen supplies has been confirmed.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Alerts", "from_email": "alerts@megastore.com", "subject": "Price drop on your wishlist item", "body": "An item on your MegaStore wishlist has dropped in price.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Alerts", "from_email": "alerts@megastore.com", "subject": "Payment method expiring soon", "body": "Your credit card on file at MegaStore expires next month.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Alerts", "from_email": "alerts@megastore.com", "subject": "Subscription renewal notice", "body": "Your MegaStore Premium subscription will renew on April 1.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Returns", "from_email": "returns@megastore.com", "subject": "Return label generated", "body": "Your return label for order #MS-1001 is ready to print.", "folder": "Affairs/Stores", "list_id": null},
+    {"group": "C", "from_name": "MegaStore Returns", "from_email": "returns@megastore.com", "subject": "Refund processed", "body": "Your refund of $34.99 has been processed to your original payment method.", "folder": "Affairs/Stores", "list_id": null},
+
+    {"group": "D", "from_name": "Test Contact", "from_email": "testcontact@example.com", "subject": "Check on the investment account", "body": "Hey, can you check the balance on our joint investment account?", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "D", "from_name": "Test Contact", "from_email": "testcontact@example.com", "subject": "Wire transfer confirmation needed", "body": "I need you to confirm the wire transfer we discussed.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "D", "from_name": "Test Contact", "from_email": "testcontact@example.com", "subject": "Playdate this weekend?", "body": "Would the kids like to come over for a playdate on Saturday?", "folder": "People/Children", "list_id": null},
+    {"group": "D", "from_name": "Test Contact", "from_email": "testcontact@example.com", "subject": "Soccer practice carpool", "body": "Can you take the kids to soccer practice on Tuesday?", "folder": "People/Children", "list_id": null},
+    {"group": "D", "from_name": "Test Contact", "from_email": "testcontact@example.com", "subject": "Found this great deal on Amazon", "body": "Check out this deal I found. Thought you might be interested.", "folder": "Affairs/Stores", "list_id": null},
+
+    {"group": "E", "from_name": "Test Friend", "from_email": "testfriend@gmail.com", "subject": "Birthday party for Emma", "body": "You're invited to Emma's birthday party on March 22!", "folder": "People/Children", "list_id": null},
+    {"group": "E", "from_name": "Test Friend", "from_email": "testfriend@gmail.com", "subject": "School carpool schedule", "body": "Here's the updated carpool schedule for this month.", "folder": "People/Children", "list_id": null},
+    {"group": "E", "from_name": "Test Friend", "from_email": "testfriend@gmail.com", "subject": "Dance recital next Friday", "body": "Don't forget the dance recital is next Friday at 6pm!", "folder": "People/Children", "list_id": null},
+    {"group": "E", "from_name": "Test Friend", "from_email": "testfriend@gmail.com", "subject": "Summer camp recommendations", "body": "Here are some summer camp options I've been looking at for the kids.", "folder": "People/Children", "list_id": null},
+
+    {"group": "F", "from_name": "School Newsletter", "from_email": "newsletter@lincolnelementary.org", "subject": "Lincoln Elementary Weekly Update #12", "body": "This week at Lincoln Elementary: science fair results, upcoming events.", "folder": "People/Children", "list_id": "<newsletter.school.org>"},
+    {"group": "F", "from_name": "School Newsletter", "from_email": "newsletter@lincolnelementary.org", "subject": "Lincoln Elementary Weekly Update #13", "body": "This week at Lincoln Elementary: spring break reminder, book fair.", "folder": "People/Children", "list_id": "<newsletter.school.org>"},
+    {"group": "F", "from_name": "School Newsletter", "from_email": "newsletter@lincolnelementary.org", "subject": "Lincoln Elementary Weekly Update #14", "body": "This week at Lincoln Elementary: testing schedule, volunteer opportunities.", "folder": "People/Children", "list_id": "<newsletter.school.org>"},
+
+    {"group": "G", "from_name": "Mixed Alerts Bank", "from_email": "a@mixed.com", "subject": "Account balance notification", "body": "Your account balance is $1,234.56 as of today.", "folder": "Affairs/Banks", "list_id": "<alerts.mixed.com>"},
+    {"group": "G", "from_name": "Mixed Alerts Bank", "from_email": "a@mixed.com", "subject": "New statement available", "body": "Your monthly statement is ready to view.", "folder": "Affairs/Banks", "list_id": "<alerts.mixed.com>"},
+    {"group": "G", "from_name": "Mixed Alerts Store", "from_email": "b@mixed.com", "subject": "Your order status update", "body": "Your order has been shipped and is on its way.", "folder": "Affairs/Stores", "list_id": "<alerts.mixed.com>"},
+    {"group": "G", "from_name": "Mixed Alerts Store", "from_email": "b@mixed.com", "subject": "Delivery scheduled for tomorrow", "body": "Your package is scheduled for delivery tomorrow between 2-6pm.", "folder": "Affairs/Stores", "list_id": "<alerts.mixed.com>"},
+
+    {"group": "H", "from_name": "Alice Family", "from_email": "alice@family.com", "subject": "School fundraiser this week", "body": "There's a school fundraiser happening this week. Can you help?", "folder": "People/Children", "list_id": null},
+    {"group": "H", "from_name": "Alice Family", "from_email": "alice@family.com", "subject": "Kids dentist appointment reminder", "body": "Reminder: the kids have dentist appointments next Tuesday.", "folder": "People/Children", "list_id": null},
+    {"group": "H", "from_name": "Alice Family", "from_email": "alice@family.com", "subject": "Joint account statement question", "body": "Can you check if the mortgage payment cleared on the joint account?", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "H", "from_name": "Alice Family", "from_email": "alice@family.com", "subject": "Tax document for joint account", "body": "I got the tax document for our joint account. Can you file it?", "folder": "Affairs/Banks", "list_id": null},
+
+    {"group": "I", "from_name": "Rare Sender", "from_email": "rare@oneoff.com", "subject": "One-time verification code", "body": "Your verification code is 847293. This code expires in 10 minutes.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "I", "from_name": "Rare Sender", "from_email": "rare@oneoff.com", "subject": "Account confirmation", "body": "Your account has been created. Please verify your email address.", "folder": "Affairs/Banks", "list_id": null}
+  ]
+}

@@ -219,7 +219,7 @@ address that meets the ≥3 threshold gets its own `exact_sender` rule.
 |--------|--------|-------|-------|
 | `rare@oneoff.com` | Banks | 2 | → NO rule (count < 3) |
 
-**Total: ~76 fixture emails across 3 folders**
+**Total: 66 fixture emails across 3 folders**
 
 Each fixture email includes:
 - `from` (name + email)
