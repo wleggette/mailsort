@@ -128,6 +128,10 @@ CREATE TABLE IF NOT EXISTS learner_state (
 );
 """
 
+_M8_AUDIT_RECEIVED_AT = """
+ALTER TABLE audit_log ADD COLUMN email_received_at TEXT;
+"""
+
 _MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "create_schema_version",      _M1_SCHEMA_VERSION),
     (2, "create_rules",               _M2_RULES),
@@ -136,6 +140,7 @@ _MIGRATIONS: list[tuple[int, str, str]] = [
     (5, "create_contacts",            _M5_CONTACTS),
     (6, "create_folder_descriptions", _M6_FOLDER_DESCRIPTIONS),
     (7, "create_inbox_snapshot",      _M7_INBOX_SNAPSHOT),
+    (8, "add_audit_received_at",      _M8_AUDIT_RECEIVED_AT),
 ]
 
 # ---------------------------------------------------------------------------

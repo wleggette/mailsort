@@ -16,6 +16,7 @@ async def audit_list(
     moved: str = "",
     folder: str = "",
     sender: str = "",
+    subject: str = "",
     days: int = 30,
     run_id: str = "",
     page: int = 1,
@@ -40,11 +41,14 @@ async def audit_list(
         conditions.append("a.target_folder = ?")
         params.append(folder)
     if sender:
-        conditions.append("a.from_address COLLATE NOCASE = ?")
-        params.append(sender)
+        conditions.append("a.from_address LIKE ?")
+        params.append(f"%{sender}%")
+    if subject:
+        conditions.append("a.subject LIKE ?")
+        params.append(f"%{subject}%")
     if run_id:
-        conditions.append("a.run_id = ?")
-        params.append(run_id)
+        conditions.append("a.run_id LIKE ?")
+        params.append(f"{run_id}%")
 
     where = " AND ".join(conditions)
     base = f"FROM audit_log a JOIN runs r ON r.run_id = a.run_id WHERE {where}"
@@ -77,6 +81,7 @@ async def audit_list(
             "moved": moved,
             "folder": folder,
             "sender": sender,
+            "subject": subject,
             "days": days,
             "run_id": run_id,
         },
@@ -92,8 +97,17 @@ async def audit_detail(request: Request, audit_id: int):
 
     row = db.execute("SELECT * FROM audit_log WHERE id = ?", (audit_id,)).fetchone()
 
+    # Fetch all audit entries for the same email (for history card)
+    email_history = []
+    if row:
+        email_history = db.execute(
+            "SELECT * FROM audit_log WHERE email_id = ? ORDER BY created_at DESC",
+            (row["email_id"],),
+        ).fetchall()
+
     return templates.TemplateResponse("audit/detail.html", {
         "request": request,
         "row": row,
+        "email_history": email_history,
         "nav_active": "audit",
     })

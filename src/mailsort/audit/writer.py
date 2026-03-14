@@ -82,12 +82,14 @@ class AuditWriter:
     def log_decision(self, run_id: str, decision: MoveDecision, moved: bool) -> None:
         """Write a single audit_log row for a classification decision."""
         clf = decision.classification
+        received_at = decision.features.received_at.strftime("%Y-%m-%dT%H:%M:%SZ")
         self._db.execute(
             "INSERT INTO audit_log "
             "(run_id, email_id, thread_id, from_address, from_domain, "
             " subject, list_id, source_folder, target_folder, confidence, "
-            " classification_source, rule_id, llm_reasoning, moved, skip_reason) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " classification_source, rule_id, llm_reasoning, moved, skip_reason, "
+            " email_received_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id,
                 decision.email_id,
@@ -104,6 +106,7 @@ class AuditWriter:
                 clf.reasoning,
                 moved,
                 decision.skip_reason,
+                received_at,
             ),
         )
 

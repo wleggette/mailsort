@@ -15,9 +15,10 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from mailsort.audit.learner import Learner
+from mailsort.audit.learner import Learner, ManualSortCounts
 from mailsort.audit.writer import AuditWriter
 from mailsort.classifier.descriptions import generate_descriptions_for_new_folders
 from mailsort.classifier.features import (
@@ -87,6 +88,7 @@ def _execute_run(
     rule_engine = RuleEngine(db, cfg.classification.thresholds)
     learner = Learner(db, rule_engine, cfg.classification)
 
+    # Query ALL inbox emails (unfiltered) for snapshot diff and inbox total
     try:
         all_inbox_ids = set(jmap.query_inbox_emails(
             inbox_id=tree.inbox_id, limit=500, filter_eligible=False,
@@ -95,21 +97,22 @@ def _execute_run(
         logger.warning("Failed to query inbox for snapshot, skipping departure detection")
         all_inbox_ids = None
 
-    manual_sorts = 0
+    sort_counts = ManualSortCounts()
     folder_scan_sorts = 0
     rules_adjusted = 0
     try:
-        manual_sorts = learner.detect_manual_sorts(jmap, tree, run_id, current_inbox_ids=all_inbox_ids)
+        sort_counts = learner.detect_manual_sorts(jmap, tree, run_id, current_inbox_ids=all_inbox_ids)
         folder_scan_sorts = learner.scan_folders_for_unknown_sorts(jmap, tree, run_id)
+        sort_counts.from_other += folder_scan_sorts  # Cat 4 = from_other
         rules_adjusted = learner.adjust_rule_confidence()
         learner.cleanup_old_snapshots()
     except Exception:
         logger.exception("Learning step failed, continuing with classification")
 
-    logger.info(
-        "Learning: %d manual sort(s) detected, %d folder scan finding(s), %d rule(s) adjusted",
-        manual_sorts, folder_scan_sorts, rules_adjusted,
-    )
+    logger.info("Learning: %d user sort(s) detected, %d rule(s) adjusted", sort_counts.total, rules_adjusted)
+    if sort_counts.total:
+        logger.info("  From inbox:     %d  (user manually sorted from inbox)", sort_counts.from_inbox)
+        logger.info("  From other:     %d  (user moved a sorted email to a different folder)", sort_counts.from_other)
 
     # Daily contact refresh
     try:
@@ -136,15 +139,21 @@ def _execute_run(
         logger.warning("Folder description generation failed, continuing")
 
     # ------------------------------------------------------------------
-    # 1. Query eligible inbox emails
+    # 1. Query ALL inbox emails for classification
     # ------------------------------------------------------------------
-    email_ids = jmap.query_inbox_emails(
-        inbox_id=tree.inbox_id,
-        min_age_hours=cfg.scheduler.min_age_hours,
-        limit=cfg.scheduler.max_batch_size,
-    )
-    inbox_total = len(all_inbox_ids) if all_inbox_ids is not None else "?"
-    logger.info("Inbox: %d eligible emails (%s total in inbox)", len(email_ids), inbox_total)
+    inbox_ids = list(all_inbox_ids) if all_inbox_ids is not None else []
+    if not inbox_ids:
+        # Fallback: query inbox if snapshot query failed
+        try:
+            inbox_ids = jmap.query_inbox_emails(
+                inbox_id=tree.inbox_id, limit=cfg.scheduler.max_batch_size,
+                filter_eligible=False,
+            )
+        except Exception:
+            logger.exception("Failed to query inbox emails")
+            inbox_ids = []
+
+    logger.info("Inbox: %d emails", len(inbox_ids))
 
     # Save inbox snapshot for next run's departure detection
     if all_inbox_ids is not None:
@@ -153,7 +162,7 @@ def _execute_run(
         except Exception:
             logger.warning("Failed to save inbox snapshot")
 
-    if not email_ids:
+    if not inbox_ids:
         elapsed = time.monotonic() - run_start
         logger.info("── Run %s completed (%.1fs) — nothing to process ──", short_id, elapsed)
         return 0, 0
@@ -161,7 +170,7 @@ def _execute_run(
     # ------------------------------------------------------------------
     # 2. Fetch and extract features
     # ------------------------------------------------------------------
-    emails = jmap.get_emails(email_ids)
+    emails = jmap.get_emails(inbox_ids[:cfg.scheduler.max_batch_size])
     features_list = [extract_features(email) for email in emails]
 
     skip_senders = set(cfg.skip_senders)
@@ -227,6 +236,24 @@ def _execute_run(
                 decision.should_move = False
                 decision.skip_reason = "unknown_folder"
 
+        # Eligibility gate: classify all emails but only move eligible ones
+        if decision.should_move:
+            if "$seen" not in features.keywords:
+                decision.should_move = False
+                decision.skip_reason = "unread"
+            elif "$flagged" in features.keywords:
+                decision.should_move = False
+                decision.skip_reason = "flagged"
+            else:
+                age_cutoff = datetime.now(timezone.utc) - timedelta(hours=cfg.scheduler.min_age_hours)
+                if features.received_at.tzinfo is None:
+                    received_utc = features.received_at.replace(tzinfo=timezone.utc)
+                else:
+                    received_utc = features.received_at
+                if received_utc > age_cutoff:
+                    decision.should_move = False
+                    decision.skip_reason = "too_new"
+
         # Track source for summary
         source_counts[decision.classification.source] += 1
 
@@ -248,11 +275,22 @@ def _execute_run(
         decisions.append(decision)
 
     planned = [d for d in decisions if d.should_move]
-    skipped_count = len(decisions) - len(planned)
+    left_in_inbox = [d for d in decisions if not d.should_move]
 
     # Classification summary
-    source_parts = ", ".join(f"{n} {src}" for src, n in source_counts.most_common())
-    logger.info("Classification: %s, %d skipped", source_parts, skipped_count)
+    source_parts = "  ".join(f"{src}: {n}" for src, n in source_counts.most_common())
+    logger.info("Classification: %d emails", len(decisions))
+    logger.info("  %s", source_parts)
+
+    # Outcome breakdown by skip reason
+    move_by_source: Counter = Counter()
+    for d in planned:
+        move_by_source[d.classification.source] += 1
+    move_parts = ", ".join(f"{src}: {n}" for src, n in move_by_source.most_common())
+
+    skip_reasons: Counter = Counter()
+    for d in left_in_inbox:
+        skip_reasons[d.skip_reason or "unknown"] += 1
 
     # ------------------------------------------------------------------
     # 5. Execute moves
@@ -268,11 +306,19 @@ def _execute_run(
             outcomes = jmap.move_emails(moves, inbox_id=tree.inbox_id)
             moved_count = sum(1 for v in outcomes.values() if v)
             failed_count = sum(1 for v in outcomes.values() if not v)
-            logger.info("Moves: %d planned → %d moved, %d failed", len(planned), moved_count, failed_count)
+            logger.info("Outcome:")
+            logger.info("  Moved:          %d  (%s)", moved_count, move_parts)
+            if failed_count:
+                logger.info("  Move failed:    %d", failed_count)
         elif planned and dry_run:
-            logger.info("Moves: %d planned → DRY RUN (not moved)", len(planned))
+            logger.info("Outcome:")
+            logger.info("  Would move:     %d  (%s)", len(planned), move_parts)
         else:
-            logger.info("Moves: nothing to move")
+            logger.info("Outcome:")
+
+        # Log each skip reason on its own line
+        for reason, count in skip_reasons.most_common():
+            logger.info("  %-16s %d", reason.replace("_", " ").title() + ":", count)
     except Exception:
         logger.exception("JMAP move_emails failed — decisions will still be logged")
     finally:

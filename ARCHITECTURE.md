@@ -1125,6 +1125,46 @@ def maybe_create_rule(email_features, target_folder: str):
             logger.info(f"Auto-created sender rule: {email_features.from_address} → {target_folder}")
 ```
 
+### Feedback Loop: Confidence Penalty on Corrections
+
+When Category 2 (correction sorts) detects that a user relocated a
+mailsort-moved email to a **different non-inbox folder**, the originating rule
+receives a confidence penalty. This creates a feedback loop: rules that
+consistently misroute emails lose confidence and eventually deactivate.
+
+**Design decisions:**
+
+- **Inbox returns are ignored.** Moving an email back to inbox is ambiguous —
+  the user may just want to re-read it. Only a definitive sort to a different
+  folder counts as a correction.
+- **Penalty per correction:** `correction_penalty` (default 0.15) confidence
+  reduction on the rule that caused the original move. This is steeper than
+  the −0.10 staleness decay because a correction is a stronger signal than
+  mere inactivity.
+- **Deduplication:** Each email can only penalize a rule once. The learner
+  tracks which `(email_id, rule_id)` pairs have already been penalized by
+  checking for a subsequent `manual` audit_log row for the same email. If one
+  exists, the correction was already processed.
+- **Auto-deactivation:** If a rule's confidence drops below the `rule_move`
+  threshold after a penalty, it is automatically deactivated. This prevents
+  rules with accumulated negative signal from continuing to misroute.
+- **Floor:** Confidence never drops below 0.0 (though deactivation at the
+  threshold makes the floor largely academic).
+
+```
+Correction detected:
+  audit_log row: email X moved to Receipts by rule #42 (conf 0.85)
+  current state: email X is now in Finance
+
+  → Record manual sort: email X → Finance (already done by Cat 2)
+  → Penalize rule #42: 0.85 − 0.15 = 0.70
+  → If 0.70 < rule_move threshold (e.g. 0.75): deactivate rule #42
+```
+
+The penalty is applied inside `_detect_correction_sorts` immediately after
+recording the manual sort, ensuring the rule's confidence is updated before
+the classification phase of the same run.
+
 ### Subject Regex Rules — Manual or LLM-Suggested Only
 
 Subject patterns (`Order #\d+`, `Your .* statement is ready`) are useful but
@@ -1656,6 +1696,104 @@ catches all exceptions and returns a safe default. Since rules don't need the
 LLM, rule-matched emails can still be moved in the same run. Only emails that
 require LLM classification are skipped.
 
+### Run Reporting & Logging
+
+Each run produces a structured summary that accounts for every email in the
+inbox. The numbers must add up to the total inbox count for clarity.
+
+#### Classification Scope
+
+**All inbox emails are classified**, including unread and flagged ones. The
+classification result is recorded in the audit log for every email. However,
+only eligible emails are actually moved — unread and flagged emails receive a
+classification but are given a skip reason preventing the move:
+
+- **Unread** (`unread`): email has not been read yet (no `$seen` keyword).
+  Mailsort won't move unread mail — the user hasn't had a chance to see it.
+- **Flagged** (`flagged`): email has the `$flagged` keyword. Flagged mail is
+  treated as "user wants this in inbox" and is never moved.
+
+This means the audit log shows what mailsort *would* do with every email,
+giving full visibility into classification quality even for emails that aren't
+eligible to move yet.
+
+The `min_age_hours` setting (default 4h) produces a separate `too_new` skip
+reason. Emails received less than `min_age_hours` ago are classified but not
+moved, giving the user time to read and sort them first. This is checked
+independently of the unread/flagged gates — a read email can still be too new.
+
+#### Outcome Categories
+
+Every email in the audit log has one of these outcomes:
+
+| Outcome | Badge in UI | When |
+|---------|-------------|------|
+| **moved** | `moved` (green) | Email was moved to target folder |
+| **dry run** | `dry run` (blue) | Would have moved, but `--dry-run` mode |
+| **unread** | `unread` (gray) | Email not yet read by user |
+| **flagged** | `flagged` (gray) | Email flagged by user |
+| **too new** | `too new` (gray) | Email received less than `min_age_hours` ago |
+| **below threshold** | `below threshold` (gray) | Confidence below move threshold |
+| **below threshold (known contact)** | `below threshold (known contact)` (gray) | LLM confidence below stricter known-contact threshold |
+| **no classification** | `no classification` (gray) | No rule/thread/LLM match |
+| **llm unavailable** | `llm unavailable` (gray) | LLM not configured or API error |
+| **unknown folder** | `unknown folder` (gray) | Target folder no longer exists |
+
+The UI shows just the reason — no "left in inbox /" prefix.
+
+#### Log Format
+
+```
+── Run a1b2c3d4 started (live) ──
+Inbox: 49 emails
+Learning: 3 user sort(s) detected, 0 rule(s) adjusted
+  From inbox:       1  (user manually sorted from inbox before we processed)
+  From other:       2  (user moved a mailsort-sorted email to a different folder)
+Classification: 49 emails
+  Rule match:      17
+  Thread match:     8
+  LLM match:       23
+  No match:         1
+Outcome:
+  Moved:           35  (rule: 17, thread: 8, llm: 10)
+  Unread:           5
+  Flagged:          1
+  Too new:          2
+  Below threshold:  4
+  No classification: 2
+── Run a1b2c3d4 completed (44.4s) ──
+```
+
+Key naming decisions:
+- **"Would move" / "Moved"** — dry run says "would move", live run says "moved"
+- **"From inbox" / "From other"** for corrections — distinguishes between emails
+  the user sorted themselves (before mailsort saw them) vs emails the user
+  relocated after mailsort moved them
+- **No "left in inbox" prefix** — the outcome reason stands on its own
+
+#### Correction Subtotals
+
+The learning step detects user sorts across four categories, but for reporting
+they are grouped into two user-facing buckets:
+
+| Bucket | Learner categories | Meaning |
+|--------|-------------------|---------|
+| **From inbox** | Category 1 (skipped sorts) + Category 3 (inbox departures) | User sorted an email out of the inbox themselves |
+| **From other** | Category 2 (correction sorts) + Category 4 (folder scan) | User moved an email from one non-inbox folder to another |
+
+This distinction matters because "from inbox" tells you about emails mailsort
+missed or couldn't classify, while "from other" tells you about emails
+mailsort classified incorrectly.
+
+#### Web UI Visualization
+
+The dashboard and audit log pages should reflect these same breakdowns:
+
+- **Dashboard**: last run card shows the full inbox breakdown
+- **Audit log**: each entry shows its classification source and outcome
+- **Analyze**: correction counts split into "from inbox" and "from other"
+  to distinguish missed emails from misclassified ones
+
 ### Database Migration Versioning
 
 Migrations are tracked via a `schema_version` table:
@@ -1820,6 +1958,9 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
       (with coherence check) → exact_sender (`audit/learner.py`)
 - [x] Rule confidence adjustment: decay by 0.10 for rules not hit in 90+ days,
       floor at 0.50 (`audit/learner.py`)
+- [x] Feedback loop: correction sorts penalize originating rule by −0.15,
+      auto-deactivate below `rule_move` threshold, dedup via manual audit rows
+      (`audit/learner.py`)
 
 ### Phase 5: Scheduling & Deployment ✅
 - [x] APScheduler integration: `BlockingScheduler` with `max_instances=1`,
@@ -1852,14 +1993,17 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    design picks the single best match. Is that sufficient?
 
 ### Future Enhancements
-- **Web dashboard:** Flask/FastAPI app for viewing audit log, managing rules,
-  adjusting thresholds, and triggering manual scans.
+- **~~Web dashboard:~~** Implemented — Flask app with dashboard, audit log,
+  rules, contacts, folders, and settings views (`web/` package).
 - **JMAP push notifications:** Instead of polling, use JMAP's EventSource
   push mechanism to react to new EmailDelivery state changes in near-realtime.
-- **Rule decay:** Automatically lower confidence on rules that haven't matched
-  in 90+ days. Deactivate rules that haven't matched in 180 days.
-- **Feedback loop tightening:** If the user moves an email *back* from a sorted
-  folder to the inbox, treat that as negative signal and reduce the rule's
-  confidence.
+- **~~Rule decay:~~** Implemented — `adjust_rule_confidence` decays by 0.10 for
+  rules not hit in 90+ days, floor at 0.50. Successive decays push confidence
+  below `rule_move` threshold, effectively deactivating stale rules
+  (`audit/learner.py`).
+- **~~Feedback loop tightening:~~** Implemented — correction sorts (Category 2)
+  penalize the originating rule's confidence by −0.15 per correction, with
+  auto-deactivation below the `rule_move` threshold. Inbox returns are ignored
+  (ambiguous intent). See §"Feedback Loop: Confidence Penalty on Corrections".
 - **Multiple account support:** Extend to handle multiple Fastmail accounts
   or even non-Fastmail JMAP servers.

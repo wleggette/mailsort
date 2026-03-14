@@ -27,6 +27,7 @@ async def dashboard(request: Request):
     total_contacts = db.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     total_folders = db.execute("SELECT COUNT(*) FROM folder_descriptions").fetchone()[0]
     total_processed = db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    unique_emails = db.execute("SELECT COUNT(DISTINCT email_id) FROM audit_log").fetchone()[0]
 
     # Learner state
     last_contact_refresh = db.execute(
@@ -45,6 +46,7 @@ async def dashboard(request: Request):
             "contacts": total_contacts,
             "folders": total_folders,
             "processed": total_processed,
+            "unique_emails": unique_emails,
         },
         "last_contact_refresh": last_contact_refresh["value"] if last_contact_refresh else "Never",
         "last_folder_scan": last_folder_scan["value"] if last_folder_scan else "Never",

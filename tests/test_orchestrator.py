@@ -209,7 +209,9 @@ def test_skip_sender_is_filtered(db: Database):
 # No rule match, no LLM → skip
 # ------------------------------------------------------------------
 
-def test_no_classification_logs_skip(db: Database):
+def test_no_classification_logs_skip(db: Database, monkeypatch):
+    # Ensure no LLM key is picked up from environment
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = _make_config()  # no anthropic key → no LLM
     tree = _make_tree()
 
@@ -217,13 +219,17 @@ def test_no_classification_logs_skip(db: Database):
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
     mock_jmap.get_emails.return_value = [_make_jmap_email(from_email="unknown@unknown.com")]
     mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
 
     run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
 
     row = db.execute("SELECT * FROM audit_log WHERE email_id='email-001'").fetchone()
     assert row is not None
     assert row["moved"] == 0
-    assert row["skip_reason"] in ("llm_unavailable", "below_threshold", "no_classification")
+    assert row["skip_reason"] in ("llm_unavailable", "no_classification")
 
 
 # ------------------------------------------------------------------
@@ -253,3 +259,83 @@ def test_move_failure_recorded(db: Database):
 
     run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     assert run_row["emails_moved"] == 0
+
+
+# ------------------------------------------------------------------
+# Run output number verification
+# ------------------------------------------------------------------
+
+def test_run_output_numbers_all_add_up(db: Database, monkeypatch):
+    """Every number in the run log output should be correct and add up.
+
+    Set up:
+    - 4 emails total in inbox (unfiltered query)
+    - 3 eligible (filtered query) — 1 not eligible
+    - 2 have rules (will move) — source=rule
+    - 1 has no rule, no LLM (will be skipped) — source=llm, skip=llm_unavailable
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_config()
+    tree = _make_tree()
+
+    # Seed rules for chase and amazon
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'orders@amazon.com', 'INBOX/Shopping/Orders', 0.90, 'bootstrap')"
+    )
+    db.commit()
+
+    email_chase = _make_jmap_email(email_id="e-chase", from_email="noreply@chase.com", subject="Statement")
+    email_amazon = _make_jmap_email(email_id="e-amazon", from_email="orders@amazon.com", subject="Shipped")
+    email_unknown = _make_jmap_email(email_id="e-unknown", from_email="random@nobody.com", subject="Hello")
+
+    mock_jmap = MagicMock()
+    # Unfiltered query returns 4 (simulates 1 unread)
+    # Filtered query returns 3 (eligible)
+    mock_jmap.query_inbox_emails.side_effect = [
+        ["e-chase", "e-amazon", "e-unknown", "e-unread"],  # unfiltered (all inbox)
+        ["e-chase", "e-amazon", "e-unknown"],               # filtered (eligible)
+    ]
+    mock_jmap.get_emails.return_value = [email_chase, email_amazon, email_unknown]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
+
+    # Verify run summary
+    run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    assert run_row["status"] == "completed"
+    assert run_row["emails_seen"] == 3   # eligible count
+    assert run_row["emails_moved"] == 0  # dry run
+
+    # Verify audit_log has all 3 eligible emails
+    audit_rows = db.execute(
+        "SELECT * FROM audit_log WHERE run_id = ? ORDER BY email_id", (run_id,)
+    ).fetchall()
+    assert len(audit_rows) == 3
+
+    # Verify classification sources
+    sources = {r["email_id"]: r["classification_source"] for r in audit_rows}
+    assert sources["e-chase"] == "rule"
+    assert sources["e-amazon"] == "rule"
+    assert sources["e-unknown"] == "llm"  # falls through to LLM (unavailable)
+
+    # Verify skip reasons — rule matches have no skip, unknown has llm_unavailable
+    skip_reasons = {r["email_id"]: r["skip_reason"] for r in audit_rows}
+    assert skip_reasons["e-chase"] is None      # would move (no skip)
+    assert skip_reasons["e-amazon"] is None     # would move (no skip)
+    assert skip_reasons["e-unknown"] in ("llm_unavailable", "no_classification")
+
+    # Verify the math: planned (2) + left_in_inbox (1) = eligible (3)
+    would_move = sum(1 for r in audit_rows if r["skip_reason"] is None)
+    left_in_inbox = sum(1 for r in audit_rows if r["skip_reason"] is not None)
+    assert would_move == 2
+    assert left_in_inbox == 1
+    assert would_move + left_in_inbox == 3  # = eligible count

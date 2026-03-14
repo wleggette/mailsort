@@ -128,8 +128,16 @@ class LLMClassifier:
 
     def _parse_response(self, raw_text: str) -> Classification:
         """Parse LLM JSON response with error handling and folder validation."""
+        # Strip markdown code fences if present (LLM sometimes wraps in ```json...```)
+        text = raw_text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]  # remove first line (```json)
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
         try:
-            result = json.loads(raw_text)
+            result = json.loads(text)
         except (json.JSONDecodeError, TypeError):
             logger.warning("LLM returned unparseable response: %.200s", raw_text)
             return Classification(

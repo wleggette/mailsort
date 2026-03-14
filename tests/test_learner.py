@@ -30,7 +30,9 @@ def _make_learner(db: Database) -> Learner:
 
 def _seed_audit_row(db: Database, *, email_id: str, from_address: str,
                     from_domain: str, target_folder: str, moved: bool = True,
-                    list_id: str | None = None, run_id: str = "run-seed"):
+                    list_id: str | None = None, run_id: str = "run-seed",
+                    rule_id: int | None = None,
+                    classification_source: str = "rule"):
     """Helper to insert a row into audit_log."""
     # Ensure the run exists
     db.execute(
@@ -40,10 +42,10 @@ def _seed_audit_row(db: Database, *, email_id: str, from_address: str,
     db.execute(
         "INSERT INTO audit_log "
         "(run_id, email_id, from_address, from_domain, list_id, "
-        " source_folder, target_folder, confidence, classification_source, moved) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " source_folder, target_folder, confidence, classification_source, moved, rule_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (run_id, email_id, from_address, from_domain, list_id,
-         "INBOX", target_folder, 0.95, "rule", moved),
+         "INBOX", target_folder, 0.95, classification_source, moved, rule_id),
     )
     db.commit()
 
@@ -283,6 +285,7 @@ def test_auto_rule_not_duplicated(db: Database):
 # ------------------------------------------------------------------
 
 def test_detect_skipped_email_moved_by_user(db: Database):
+    """Category 1 (skipped sort) should count as from_inbox."""
     tree = _make_tree()
     learner = _make_learner(db)
 
@@ -304,7 +307,9 @@ def test_detect_skipped_email_moved_by_user(db: Database):
     db.commit()
 
     found = learner.detect_manual_sorts(mock_jmap, tree, "run-detect")
-    assert found == 1
+    assert found.total == 1
+    assert found.from_inbox == 1  # skipped sort = from inbox
+    assert found.from_other == 0
 
     # Should have a manual sort logged
     row = db.execute(
@@ -316,6 +321,7 @@ def test_detect_skipped_email_moved_by_user(db: Database):
 
 
 def test_detect_correction_of_mailsort_move(db: Database):
+    """Category 2 (correction sort) should count as from_other."""
     tree = _make_tree()
     learner = _make_learner(db)
 
@@ -336,13 +342,115 @@ def test_detect_correction_of_mailsort_move(db: Database):
     db.commit()
 
     found = learner.detect_manual_sorts(mock_jmap, tree, "run-detect")
-    assert found == 1
+    assert found.total == 1
+    assert found.from_inbox == 0
+    assert found.from_other == 1  # correction sort = from other
 
     row = db.execute(
         "SELECT * FROM audit_log WHERE email_id='e-moved' AND classification_source='manual'"
     ).fetchone()
     assert row is not None
     assert row["target_folder"] == "INBOX/Affairs/Banks"
+
+
+def test_inbox_departure_counts_as_from_inbox(db: Database):
+    """Category 3 (inbox departure) should count as from_inbox."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    # Set up a previous snapshot with "e-departed"
+    db.execute(
+        "INSERT INTO runs (run_id, started_at, status) VALUES ('prev-run', datetime('now', '-1 hour'), 'completed')"
+    )
+    db.execute(
+        "INSERT INTO inbox_snapshot (email_id, run_id) VALUES ('e-departed', 'prev-run')"
+    )
+    db.execute(
+        "INSERT INTO runs (run_id, started_at, status) VALUES ('current-run', datetime('now'), 'running')"
+    )
+    db.commit()
+
+    # e-departed is now in Banks (user sorted it from inbox before we processed)
+    mock_jmap = MagicMock()
+    departed_email = _make_jmap_email_obj("e-departed", "noreply@chase.com", {"mb-banks": True})
+    mock_jmap.get_emails.return_value = [departed_email]
+
+    # Current inbox no longer has e-departed
+    found = learner.detect_manual_sorts(mock_jmap, tree, "current-run", current_inbox_ids=set())
+    assert found.from_inbox == 1  # inbox departure = from inbox
+    assert found.from_other == 0
+    assert found.total == 1
+
+
+def test_manual_sort_counts_total_property():
+    """ManualSortCounts.total should sum from_inbox + from_other."""
+    from mailsort.audit.learner import ManualSortCounts
+    counts = ManualSortCounts(from_inbox=3, from_other=5)
+    assert counts.total == 8
+
+
+def test_folder_scan_counts_as_from_other():
+    """Cat 4 (folder scan) should be added to from_other by the orchestrator.
+
+    The learner returns folder scan count separately; the orchestrator adds it
+    to sort_counts.from_other. This test verifies the documented contract.
+    """
+    from mailsort.audit.learner import ManualSortCounts
+    sort_counts = ManualSortCounts(from_inbox=1, from_other=2)
+    folder_scan_sorts = 3
+    sort_counts.from_other += folder_scan_sorts  # orchestrator pattern
+    assert sort_counts.from_inbox == 1
+    assert sort_counts.from_other == 5  # 2 (cat 2) + 3 (cat 4)
+    assert sort_counts.total == 6
+
+
+def test_multiple_categories_accumulate_correctly(db: Database):
+    """When both Cat 1 (skipped) and Cat 2 (correction) fire, counts go to correct buckets."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    # Cat 1: a skipped email the user moved from inbox
+    _seed_audit_row(db, email_id="e-skip-1", from_address="a@example.com",
+                    from_domain="example.com", target_folder="INBOX", moved=False)
+
+    # Cat 2: a mailsort-moved email the user relocated
+    _seed_audit_row(db, email_id="e-correction-1", from_address="b@example.com",
+                    from_domain="example.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True)
+    _seed_audit_row(db, email_id="e-correction-2", from_address="c@example.com",
+                    from_domain="example.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True)
+
+    mock_jmap = MagicMock()
+
+    # For Cat 1: e-skip-1 is now in Banks
+    skip_email = MagicMock()
+    skip_email.id = "e-skip-1"
+    skip_email.mailbox_ids = {"mb-banks": True}
+
+    # For Cat 2: both corrections are now in Banks (relocated from Orders)
+    corr_email_1 = MagicMock()
+    corr_email_1.id = "e-correction-1"
+    corr_email_1.mailbox_ids = {"mb-banks": True}
+    corr_email_2 = MagicMock()
+    corr_email_2.id = "e-correction-2"
+    corr_email_2.mailbox_ids = {"mb-banks": True}
+
+    # get_emails is called twice: once for Cat 1, once for Cat 2
+    mock_jmap.get_emails.side_effect = [
+        [skip_email],          # Cat 1: skipped sorts
+        [corr_email_1, corr_email_2],  # Cat 2: correction sorts
+    ]
+
+    db.execute(
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-multi', datetime('now'), 'running')",
+    )
+    db.commit()
+
+    found = learner.detect_manual_sorts(mock_jmap, tree, "run-multi")
+    assert found.from_inbox == 1   # Cat 1: 1 skipped sort
+    assert found.from_other == 2   # Cat 2: 2 correction sorts
+    assert found.total == 3
 
 
 # ------------------------------------------------------------------
@@ -609,3 +717,194 @@ def test_folder_scan_runs_when_stale(db: Database):
 
     found = learner.scan_folders_for_unknown_sorts(mock_jmap, tree, "scan-run")
     assert found >= 1
+
+
+# ------------------------------------------------------------------
+# Feedback loop: confidence penalty on corrections
+# ------------------------------------------------------------------
+
+def _seed_rule(db: Database, *, rule_id: int = 1, condition_value: str = "noreply@chase.com",
+               target_folder: str = "INBOX/Shopping/Orders", confidence: float = 0.90,
+               rule_type: str = "exact_sender") -> int:
+    """Insert a rule and return its ID."""
+    db.execute(
+        "INSERT INTO rules (id, rule_type, condition_value, target_folder_path, "
+        "confidence, source, active, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, 'auto', 1, datetime('now'), datetime('now'))",
+        (rule_id, rule_type, condition_value, target_folder, confidence),
+    )
+    db.commit()
+    return rule_id
+
+
+def test_correction_penalizes_originating_rule(db: Database):
+    """When a user relocates a mailsort-moved email, the originating rule loses confidence."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    # Start at 1.0 so after −0.15 → 0.85, which equals the threshold (not below)
+    rid = _seed_rule(db, confidence=1.0, target_folder="INBOX/Shopping/Orders")
+    _seed_audit_row(db, email_id="e-corr", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True, rule_id=rid)
+
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-corr"
+    email.mailbox_ids = {"mb-banks": True}
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute(
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-pen', datetime('now'), 'running')",
+    )
+    db.commit()
+
+    found = learner.detect_manual_sorts(mock_jmap, tree, "run-pen")
+    assert found.from_other == 1
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert row["confidence"] == 0.85  # 1.0 - 0.15
+    assert row["active"] == 1  # 0.85 == threshold, not below → stays active
+
+
+def test_correction_deactivates_rule_below_threshold(db: Database):
+    """Rule should be deactivated when confidence drops below rule_move threshold."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    # Start at 0.90 — after −0.15 penalty → 0.75, which is below default rule_move (0.85)
+    rid = _seed_rule(db, confidence=0.90)
+    _seed_audit_row(db, email_id="e-corr", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True, rule_id=rid)
+
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-corr"
+    email.mailbox_ids = {"mb-banks": True}
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute(
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-deact', datetime('now'), 'running')",
+    )
+    db.commit()
+
+    learner.detect_manual_sorts(mock_jmap, tree, "run-deact")
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert row["confidence"] == 0.75
+    assert row["active"] == 0  # 0.75 < 0.85 threshold → deactivated
+
+
+def test_correction_dedup_skips_already_corrected(db: Database):
+    """Emails that already have a manual audit_log row should not trigger another penalty."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    rid = _seed_rule(db, confidence=0.90)
+    _seed_audit_row(db, email_id="e-dup", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True, rule_id=rid, run_id="run-original")
+    # Simulate a previous correction already recorded
+    _seed_audit_row(db, email_id="e-dup", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Affairs/Banks",
+                    moved=True, classification_source="manual", run_id="run-prev-correction")
+
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-dup"
+    email.mailbox_ids = {"mb-banks": True}
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute(
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-dup', datetime('now'), 'running')",
+    )
+    db.commit()
+
+    found = learner.detect_manual_sorts(mock_jmap, tree, "run-dup")
+    assert found.from_other == 0  # skipped because already corrected
+
+    row = db.execute("SELECT confidence FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert row["confidence"] == 0.90  # unchanged
+
+
+def test_correction_no_penalty_for_llm_classification(db: Database):
+    """Corrections of LLM-classified emails (no rule_id) should not crash or penalize."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    # LLM move has no rule_id
+    _seed_audit_row(db, email_id="e-llm", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True, rule_id=None, classification_source="llm")
+
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-llm"
+    email.mailbox_ids = {"mb-banks": True}
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute(
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-llm', datetime('now'), 'running')",
+    )
+    db.commit()
+
+    found = learner.detect_manual_sorts(mock_jmap, tree, "run-llm")
+    assert found.from_other == 1  # correction detected
+    # No crash, no rule penalty (rule_id is None)
+
+
+def test_correction_penalty_floors_at_zero(db: Database):
+    """Rule confidence should not go below 0.0 after penalty."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    rid = _seed_rule(db, confidence=0.05)
+    _seed_audit_row(db, email_id="e-floor", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True, rule_id=rid)
+
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-floor"
+    email.mailbox_ids = {"mb-banks": True}
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute(
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-floor', datetime('now'), 'running')",
+    )
+    db.commit()
+
+    learner.detect_manual_sorts(mock_jmap, tree, "run-floor")
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert row["confidence"] == 0.0  # floored at 0, not negative
+    assert row["active"] == 0  # deactivated
+
+
+def test_inbox_return_not_penalized(db: Database):
+    """Moving an email back to inbox should NOT trigger penalty (ambiguous intent)."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    rid = _seed_rule(db, confidence=0.90)
+    _seed_audit_row(db, email_id="e-inbox", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True, rule_id=rid)
+
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-inbox"
+    email.mailbox_ids = {"mb-inbox": True}  # back in inbox
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute(
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-inbox', datetime('now'), 'running')",
+    )
+    db.commit()
+
+    found = learner.detect_manual_sorts(mock_jmap, tree, "run-inbox")
+    assert found.from_other == 0  # not counted as correction
+
+    row = db.execute("SELECT confidence FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert row["confidence"] == 0.90  # unchanged

@@ -270,18 +270,18 @@ def test_thread_context_db_error_falls_through(db: Database):
 # Full run with JMAP query failure → run marked failed
 # ------------------------------------------------------------------
 
-def test_jmap_query_failure_marks_run_failed(db: Database):
-    """If the initial JMAP query throws, run should be marked 'failed'."""
+def test_jmap_query_failure_completes_with_zero(db: Database):
+    """If the JMAP inbox query throws, run should complete gracefully with 0 seen."""
     cfg = _make_config()
     tree = _make_tree()
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.side_effect = ConnectionError("JMAP unreachable")
 
-    with pytest.raises(ConnectionError):
-        run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
 
-    # The run should exist and be marked failed
-    row = db.execute("SELECT * FROM runs WHERE status='failed'").fetchone()
+    # The run should complete (graceful degradation) with 0 emails
+    row = db.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
     assert row is not None
-    assert "JMAP unreachable" in row["error_summary"]
+    assert row["status"] == "completed"
+    assert row["emails_seen"] == 0

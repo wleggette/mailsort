@@ -14,6 +14,7 @@ All detected manual sorts are logged and fed into auto-rule generation.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from mailsort.classifier.features import extract_features
@@ -23,6 +24,17 @@ from mailsort.db.database import Database
 from mailsort.jmap.client import JMAPClient
 from mailsort.jmap.mailbox_tree import MailboxTree
 from mailsort.jmap.models import JMAPEmail
+
+
+@dataclass
+class ManualSortCounts:
+    """Correction counts grouped into user-facing buckets."""
+    from_inbox: int = 0   # Cat 1 (skipped sorts) + Cat 3 (inbox departures)
+    from_other: int = 0   # Cat 2 (correction sorts) + Cat 4 (folder scan)
+
+    @property
+    def total(self) -> int:
+        return self.from_inbox + self.from_other
 
 logger = logging.getLogger(__name__)
 
@@ -50,30 +62,31 @@ class Learner:
         tree: MailboxTree,
         run_id: str,
         current_inbox_ids: set[str] | None = None,
-    ) -> int:
-        """Detect user corrections and log them. Returns count of manual sorts found.
+    ) -> ManualSortCounts:
+        """Detect user corrections and log them. Returns counts by bucket.
 
-        Categories:
-          1. Skipped emails the user moved out of the inbox.
-          2. Mailsort-moved emails the user relocated to a different folder.
-          3. Inbox departures: emails seen in previous scan but gone now
-             (user sorted before mailsort processed them).
+        From inbox (user sorted from inbox):
+          - Category 1: skipped emails the user moved out of the inbox
+          - Category 3: inbox departures (sorted before mailsort processed)
+
+        From other (user relocated a mailsort-moved email):
+          - Category 2: mailsort-moved emails the user relocated
         """
-        found = 0
+        counts = ManualSortCounts()
 
         # Category 1: emails we skipped (moved=0) that are no longer in the inbox
-        found += self._detect_skipped_sorts(jmap, tree, run_id)
+        counts.from_inbox += self._detect_skipped_sorts(jmap, tree, run_id)
 
         # Category 2: emails we moved that the user relocated
-        found += self._detect_correction_sorts(jmap, tree, run_id)
+        counts.from_other += self._detect_correction_sorts(jmap, tree, run_id)
 
-        # Category 3: inbox departures (Option C)
+        # Category 3: inbox departures (Option C) — user sorted from inbox
         if current_inbox_ids is not None:
-            found += self._detect_inbox_departures(jmap, tree, run_id, current_inbox_ids)
+            counts.from_inbox += self._detect_inbox_departures(jmap, tree, run_id, current_inbox_ids)
 
-        if found:
-            logger.info("Detected %d manual sort(s)", found)
-        return found
+        if counts.total:
+            logger.info("Detected %d manual sort(s)", counts.total)
+        return counts
 
     def _detect_skipped_sorts(
         self,
@@ -118,10 +131,17 @@ class Learner:
         tree: MailboxTree,
         run_id: str,
     ) -> int:
-        """Find emails we moved that the user subsequently relocated."""
+        """Find emails we moved that the user subsequently relocated.
+
+        When a correction is detected:
+          1. A manual audit_log row is recorded for the new destination.
+          2. The originating rule (if any) receives a confidence penalty.
+          3. If the rule's confidence drops below the rule_move threshold,
+             the rule is automatically deactivated.
+        """
         lookback = f"-{self._config.learner_lookback_days} days"
         rows = self._db.execute(
-            """SELECT email_id, target_folder FROM audit_log
+            """SELECT email_id, target_folder, rule_id FROM audit_log
                WHERE moved = 1 AND classification_source != 'manual'
                  AND created_at >= datetime('now', ?)""",
             (lookback,),
@@ -130,7 +150,12 @@ class Learner:
             return 0
 
         expected = {row["email_id"]: row["target_folder"] for row in rows}
+        rule_ids = {row["email_id"]: row["rule_id"] for row in rows}
         email_ids = list(expected.keys())
+
+        # Dedup: skip emails that already have a subsequent manual audit_log row
+        already_corrected = self._already_corrected_email_ids(email_ids)
+
         found = 0
 
         try:
@@ -140,6 +165,8 @@ class Learner:
             return 0
 
         for email in emails:
+            if email.id in already_corrected:
+                continue
             expected_path = expected.get(email.id)
             if not expected_path:
                 continue
@@ -150,8 +177,62 @@ class Learner:
                     new_path = tree.path_for(new_folder_id)
                     if new_path and new_path != "INBOX":
                         self._record_manual_sort(run_id, email.id, new_path)
+                        self._penalize_rule(rule_ids.get(email.id))
                         found += 1
         return found
+
+    def _already_corrected_email_ids(self, email_ids: list[str]) -> set[str]:
+        """Return the subset of email_ids that already have a manual audit_log row."""
+        if not email_ids:
+            return set()
+        placeholders = ",".join("?" for _ in email_ids)
+        rows = self._db.execute(
+            f"""SELECT DISTINCT email_id FROM audit_log
+                WHERE email_id IN ({placeholders})
+                  AND classification_source = 'manual'""",
+            email_ids,
+        ).fetchall()
+        return {r["email_id"] for r in rows}
+
+    def _penalize_rule(self, rule_id: int | None) -> None:
+        """Reduce a rule's confidence after a user correction.
+
+        Deactivates the rule if confidence drops below the rule_move threshold.
+        """
+        if rule_id is None:
+            return
+        row = self._db.execute(
+            "SELECT confidence, active FROM rules WHERE id = ?",
+            (rule_id,),
+        ).fetchone()
+        if not row or not row["active"]:
+            return
+
+        old_conf = row["confidence"]
+        new_conf = max(0.0, old_conf - self._config.correction_penalty)
+        move_threshold = self._config.thresholds.rule_move
+
+        self._db.execute(
+            "UPDATE rules SET confidence = ?, updated_at = datetime('now') WHERE id = ?",
+            (new_conf, rule_id),
+        )
+
+        if new_conf < move_threshold:
+            self._db.execute(
+                "UPDATE rules SET active = 0, updated_at = datetime('now') WHERE id = ?",
+                (rule_id,),
+            )
+            logger.info(
+                "Deactivated rule %d after correction: %.2f → %.2f (below threshold %.2f)",
+                rule_id, old_conf, new_conf, move_threshold,
+            )
+        else:
+            logger.info(
+                "Penalized rule %d after correction: %.2f → %.2f",
+                rule_id, old_conf, new_conf,
+            )
+
+        self._db.commit()
 
     # ------------------------------------------------------------------
     # Category 3: Inbox departures (Option C)
@@ -327,7 +408,7 @@ class Learner:
     ) -> None:
         """Log a manual classification for an email we've seen before (has audit_log row)."""
         row = self._db.execute(
-            """SELECT from_address, from_domain, thread_id, subject, list_id
+            """SELECT from_address, from_domain, thread_id, subject, list_id, email_received_at
                FROM audit_log WHERE email_id = ?
                ORDER BY created_at DESC LIMIT 1""",
             (email_id,),
@@ -340,6 +421,7 @@ class Learner:
             from_domain=row["from_domain"] if row else None,
             subject=row["subject"] if row else None,
             list_id=row["list_id"] if row else None,
+            email_received_at=row["email_received_at"] if row else None,
         )
 
     def _record_manual_sort_from_email(
@@ -356,6 +438,7 @@ class Learner:
             from_domain=email.from_domain,
             subject=email.subject,
             list_id=email.list_id,
+            email_received_at=email.received_at,
         )
 
     def _insert_manual_audit_row(
@@ -369,18 +452,19 @@ class Learner:
         from_domain: str | None = None,
         subject: str | None = None,
         list_id: str | None = None,
+        email_received_at: str | None = None,
     ) -> None:
         """Insert a manual classification audit_log row and try auto-rule creation."""
         self._db.execute(
             "INSERT INTO audit_log "
             "(run_id, email_id, thread_id, from_address, from_domain, "
             " subject, list_id, source_folder, target_folder, confidence, "
-            " classification_source, moved, skip_reason) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " classification_source, moved, skip_reason, email_received_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id, email_id, thread_id, from_address, from_domain,
                 subject, list_id, "INBOX", folder_path,
-                1.0, "manual", True, None,
+                1.0, "manual", True, None, email_received_at,
             ),
         )
         self._db.commit()

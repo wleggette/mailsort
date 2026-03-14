@@ -156,15 +156,46 @@ def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
                 cfg, db, jmap, tree, dry_run=dry_run, trigger="cli",
             )
 
-        # Report summary
+        # Report summary — matches the structured log output
         row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
         if row:
             click.echo(f"\n[{mode}] Run {run_id[:8]}… complete:")
-            click.echo(f"  Status : {row['status']}")
-            click.echo(f"  Seen   : {row['emails_seen']}")
-            click.echo(f"  Moved  : {row['emails_moved']}")
+            click.echo(f"  Status:          {row['status']}")
             if row["error_summary"]:
-                click.echo(f"  Error  : {row['error_summary']}")
+                click.echo(f"  Error:           {row['error_summary']}")
+                return
+
+            seen = row["emails_seen"] or 0
+            moved = row["emails_moved"] or 0
+
+            # Query audit_log for this run's breakdown
+            audit_rows = db.execute(
+                "SELECT classification_source, skip_reason, moved FROM audit_log WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+
+            sources: dict[str, int] = {}
+            would_move = 0
+            skip_reasons: dict[str, int] = {}
+            for a in audit_rows:
+                src = a["classification_source"] or "unknown"
+                sources[src] = sources.get(src, 0) + 1
+                if a["skip_reason"]:
+                    r = a["skip_reason"]
+                    skip_reasons[r] = skip_reasons.get(r, 0) + 1
+                else:
+                    would_move += 1
+
+            source_str = ", ".join(f"{s}: {n}" for s, n in sorted(sources.items(), key=lambda x: -x[1]))
+
+            click.echo(f"  Emails:          {len(audit_rows)}")
+            if source_str:
+                click.echo(f"  Classification:  {source_str}")
+            move_label = "Moved" if not dry_run else "Would move"
+            click.echo(f"  {move_label + ':':15s}{moved if not dry_run else would_move}")
+            for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+                label = reason.replace("_", " ").title()
+                click.echo(f"  {label + ':':15s}{count}")
 
 
 @cli.command()

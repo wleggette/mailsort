@@ -25,18 +25,6 @@ from mailsort.jmap.models import EmailFeatures
 
 logger = logging.getLogger(__name__)
 
-# Full properties including list-id (needed for the most reliable rule type).
-_FULL_PROPERTIES = [
-    "id", "threadId", "mailboxIds", "from", "to",
-    "subject", "receivedAt", "keywords", "preview",
-    "header:list-id:asText",
-]
-
-# Fallback for folders where header properties cause invalidArguments.
-_MINIMAL_PROPERTIES = [
-    "id", "threadId", "mailboxIds", "from", "to",
-    "subject", "receivedAt", "keywords", "preview",
-]
 
 
 @dataclass
@@ -145,19 +133,12 @@ def _collect_evidence(
             report.errors.append(f"Skipping {folder_path}")
             continue
 
-        # Try full properties first (includes list-id for rule creation),
-        # fall back to minimal if the folder doesn't support header properties
-        # (e.g., read-only tokens may not support header:* access).
         try:
-            emails = jmap.get_emails(email_ids, properties=_FULL_PROPERTIES)
-        except Exception:
-            try:
-                emails = jmap.get_emails(email_ids, properties=_MINIMAL_PROPERTIES)
-                logger.debug("Folder %s: fell back to minimal properties", folder_path)
-            except Exception as e:
-                logger.warning("Skipping folder %s (fetch failed): %s", folder_path, e)
-                report.errors.append(f"Skipping {folder_path}")
-                continue
+            emails = jmap.get_emails(email_ids)
+        except Exception as e:
+            logger.warning("Skipping folder %s (fetch failed): %s", folder_path, e)
+            report.errors.append(f"Skipping {folder_path}")
+            continue
 
         report.folders_scanned += 1
         logger.info("  [%d/%d] %s — %d emails", idx, total_folders, folder_path, len(emails))
@@ -167,12 +148,13 @@ def _collect_evidence(
             if features.email_id in known_ids:
                 continue
             try:
+                received_at = features.received_at.strftime("%Y-%m-%dT%H:%M:%SZ")
                 db.execute(
                     "INSERT INTO audit_log "
                     "(run_id, email_id, thread_id, from_address, from_domain, "
                     " subject, list_id, source_folder, target_folder, confidence, "
-                    " classification_source, moved, skip_reason) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " classification_source, moved, skip_reason, email_received_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         run_id,
                         features.email_id,
@@ -187,6 +169,7 @@ def _collect_evidence(
                         "manual",
                         True,
                         None,
+                        received_at,
                     ),
                 )
                 known_ids.add(features.email_id)

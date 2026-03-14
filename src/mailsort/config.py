@@ -49,6 +49,7 @@ class ClassificationConfig(BaseModel):
     llm_skip_senders: list[str] = Field(default_factory=list)
     llm_skip_domains: list[str] = Field(default_factory=list)
     learner_lookback_days: int = 7
+    correction_penalty: float = 0.15
 
 
 class LoggingConfig(BaseModel):

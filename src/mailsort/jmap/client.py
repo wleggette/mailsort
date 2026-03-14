@@ -31,6 +31,19 @@ EMAIL_PROPERTIES = [
     "header:list-unsubscribe:asText",
 ]
 
+# Fallback for read-only tokens that reject header:* properties
+_EMAIL_PROPERTIES_MINIMAL = [
+    "id",
+    "threadId",
+    "mailboxIds",
+    "from",
+    "to",
+    "subject",
+    "receivedAt",
+    "keywords",
+    "preview",
+]
+
 
 class JMAPError(Exception):
     """Raised when a JMAP method call returns an error response."""
@@ -223,20 +236,37 @@ class JMAPClient:
         email_ids: list[str],
         properties: Optional[list[str]] = None,
     ) -> list[JMAPEmail]:
-        """Fetch full email objects for the given IDs."""
+        """Fetch full email objects for the given IDs.
+
+        If the full property set fails (e.g., read-only token rejecting
+        header:* properties), automatically retries with minimal properties.
+        """
         if not email_ids:
             return []
 
         session = self.get_session()
         props = properties or EMAIL_PROPERTIES
 
-        data = self.call([
-            ["Email/get", {
-                "accountId": session.account_id,
-                "ids": email_ids,
-                "properties": props,
-            }, "g1"],
-        ])
+        try:
+            data = self.call([
+                ["Email/get", {
+                    "accountId": session.account_id,
+                    "ids": email_ids,
+                    "properties": props,
+                }, "g1"],
+            ])
+        except JMAPError:
+            if properties is not None:
+                raise  # caller specified explicit properties, don't override
+            logger.debug("Email/get failed with full properties, retrying with minimal")
+            data = self.call([
+                ["Email/get", {
+                    "accountId": session.account_id,
+                    "ids": email_ids,
+                    "properties": _EMAIL_PROPERTIES_MINIMAL,
+                }, "g1"],
+            ])
+
         raw_list = data["methodResponses"][0][1].get("list", [])
         return [JMAPEmail.model_validate(e) for e in raw_list]
 

@@ -52,6 +52,14 @@ def test_parse_valid_response():
     assert result.reasoning == "bank alert"
 
 
+def test_parse_markdown_fenced_response():
+    clf = _make_classifier()
+    result = clf._parse_response('```json\n{"folder": "INBOX/Affairs/Banks", "confidence": 0.95, "reasoning": "bank alert"}\n```')
+    assert result.folder_path == "INBOX/Affairs/Banks"
+    assert result.confidence == 0.95
+    assert result.reasoning == "bank alert"
+
+
 def test_parse_invalid_json():
     clf = _make_classifier()
     result = clf._parse_response("This is not JSON at all")
