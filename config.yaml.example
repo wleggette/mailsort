@@ -1,0 +1,58 @@
+# Fastmail settings
+fastmail:
+  api_url: "https://api.fastmail.com/jmap/api/"
+  session_url: "https://api.fastmail.com/jmap/session"
+  # Token is in FASTMAIL_API_TOKEN env var
+
+# Scheduling
+scheduler:
+  interval_minutes: 15
+  min_age_hours: 4
+  max_batch_size: 100
+
+# Classification
+classification:
+  thresholds:
+    rule_move: 0.85
+    llm_move: 0.80
+    llm_move_known_contact: 0.93
+    rule_learn: 0.70
+  auto_rule_thresholds:
+    list_id: 2
+    exact_sender: 3
+    sender_domain: 5
+  auto_rule_domain_coherence: 0.80
+  llm_model: "claude-haiku-4-5-20251001"
+  llm_max_preview_chars: 500
+  llm_suggest_rule_after_n: 5
+  # learner_lookback_days: 7    # How many days back to search for manual sorts
+
+# Folder descriptions — OPTIONAL manual overrides only.
+# Bootstrap auto-generates descriptions for all folders by scanning their contents.
+# Only add entries here to correct a description the LLM got wrong.
+folder_description_overrides: {}
+  # "INBOX/Affairs/Legal": "Contracts, NDAs, and legal correspondence from attorneys"
+
+# Manual rules (override auto-generated rules)
+manual_rules: []
+  # - type: exact_sender
+  #   value: "important@example.com"
+  #   folder: "INBOX/Affairs/Legal"
+  #   confidence: 1.0
+
+# Skip list — never auto-move these senders
+skip_senders: []
+  # - "spouse@example.com"
+
+# Contacts loaded automatically from Fastmail (synced from Apple Contacts).
+# Use this section only to add relationship hints CardDAV doesn't carry.
+known_contact_overrides: {}
+  # "husband@gmail.com":
+  #   relationship: "spouse"
+
+# Logging
+logging_config:
+  level: INFO
+  file: "data/mailsort.log"
+  max_size_mb: 10
+  backup_count: 3

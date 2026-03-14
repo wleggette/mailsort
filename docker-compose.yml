@@ -1,0 +1,17 @@
+services:
+  mailsort:
+    build: .
+    container_name: mailsort
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - FASTMAIL_API_TOKEN=${FASTMAIL_API_TOKEN}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - TZ=America/Chicago
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

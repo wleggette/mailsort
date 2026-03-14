@@ -917,31 +917,35 @@ def load_folder_descriptions(config: Config) -> dict[str, str]:
 
 ### Learning from Manual Sorts
 
-`previously_skipped` is built at the start of each scan by querying the
-audit_log for emails that were skipped in recent completed runs and whose
-`email_id` is still present in the inbox (i.e., not yet moved by mailsort or
-the user since that run):
+The learner (`audit/learner.py`) runs at the start of each scan, before
+classification, so that newly learned rules are available for the current batch.
+It detects user sorts through four complementary categories:
 
-```python
-def load_previously_skipped(inbox_email_ids: set[str]) -> list[str]:
-    """Return emails skipped in recent completed runs that are still in the inbox."""
-    rows = db.execute("""
-        SELECT a.email_id
-        FROM audit_log a
-        JOIN runs r ON r.run_id = a.run_id
-        WHERE r.status = 'completed'
-          AND a.decision_status = 'skipped'
-          AND a.created_at >= datetime('now', '-7 days')
-        GROUP BY a.email_id
-    """).fetchall()
-    return [row["email_id"] for row in rows if row["email_id"] in inbox_email_ids]
-```
+| Category | What it catches | How it works |
+|----------|----------------|--------------|
+| **1. Skipped sorts** | Emails mailsort left in inbox that the user moved | Query `audit_log WHERE moved=0` in last 7 days, check current `mailboxIds` |
+| **2. Correction sorts** | Emails mailsort moved that the user relocated | Query `audit_log WHERE moved=1`, compare current mailbox to expected |
+| **3. Inbox departures** | Emails the user sorted before mailsort processed them | Diff previous inbox snapshot against current inbox IDs; fetch departed emails to see where they went |
+| **4. Daily folder scan** | Emails sorted outside any scan window entirely | Sample recent emails from each folder, find ones absent from `audit_log` |
 
-The 7-day window prevents the list from growing indefinitely. On each scan,
-before classifying new emails, check if any previously processed emails have
-been moved manually by the user — this covers corrections of skipped emails,
-corrections of mailsort-moved emails, and manual reclassification of
-thread-inherited moves:
+Categories 1–2 handle emails mailsort already knows about. Categories 3–4
+close the gap for emails mailsort never saw — the most common case being mail
+you read and sort within a few minutes of arrival, before the next poll.
+
+**Inbox snapshot (Category 3):** On each scan, the orchestrator queries ALL
+inbox email IDs (no read/flag/age filter) and stores them in the
+`inbox_snapshot` table. On the next scan, it diffs `previous - current -
+already_processed` to find departures. Snapshots older than 2 days are cleaned
+up automatically.
+
+**Daily folder scan (Category 4):** Once per 24 hours, the learner samples
+recent emails from each non-inbox folder and checks if any are absent from
+`audit_log`. This catches emails that arrived and were sorted between two
+consecutive scans (i.e., never appeared in any snapshot). The last-scan
+timestamp is tracked in the `learner_state` table.
+
+All four categories log detected sorts as `classification_source='manual'` in
+`audit_log` and feed them into auto-rule generation:
 
 ```python
 def detect_manual_sorts(jmap_client, previously_skipped: list[str], run_id: str):
@@ -1535,38 +1539,96 @@ def reconcile_stale_runs():
     db.execute("UPDATE runs SET status='abandoned' WHERE status='running'")
 ```
 
-### Error Recovery & API Failures
+### Error Handling Design
 
-JMAP move execution is treated as a set of per-email outcomes, not an atomic
-transaction. Mailsort persists planned decisions to `audit_log` before calling
-`Email/set`, then reconciles each message into `moved` or `move_failed` based
-on the JMAP response. If the process crashes mid-run, the incomplete run remains
-visible in `runs` with `status='running'` and is marked `abandoned` on the next
-startup via `reconcile_stale_runs()`.
+Every I/O boundary (JMAP API, Anthropic API, SQLite) is wrapped so that
+failures are logged, partial progress is preserved, and one bad email never
+kills the entire batch. Four principles govern error handling:
+
+#### 1. Guaranteed audit logging
+
+Classification decisions are always written to `audit_log`, even when the
+JMAP move call crashes. The orchestrator wraps the move step in `try/except`
+and writes audit rows in a `finally` block:
 
 ```python
-# In the main run loop:
-run_id = str(uuid4())
+outcomes: dict[str, bool] = {}
 try:
-    if not acquire_run_lock(run_id):
-        return
-    run_classification_batch(run_id)
-    finish_run(run_id, status="completed")
-except JMAPError as e:
-    logger.error(f"JMAP API error, aborting run: {e}")
-    finish_run(run_id, status="failed", error_summary=str(e))
-except AnthropicError as e:
-    logger.error(f"Anthropic API error: {e}")
-    # Rule-matched emails that don't need LLM can still be moved;
-    # LLM-dependent emails are skipped for this run.
-    # The run continues — only LLM classifications are affected.
-    finish_run(run_id, status="completed", error_summary=f"LLM partial failure: {e}")
-except Exception as e:
-    logger.exception(f"Unexpected error in run {run_id}")
-    finish_run(run_id, status="failed", error_summary=str(e))
+    if planned and not dry_run:
+        outcomes = jmap.move_emails(moves)
+except Exception:
+    logger.exception("JMAP move_emails failed — decisions will still be logged")
+finally:
+    # Always log, even on move crash. When outcomes is empty,
+    # planned decisions are recorded as moved=False — accurate
+    # since nothing was confirmed moved.
+    audit.log_decisions(run_id, decisions, outcomes)
 ```
 
-Anthropic API failures are handled more granularly: since rules don't need the
+The outer `run_classification_pass` also catches any exception from the full
+run body and calls `finish_run(status="failed")`, so the `runs` table always
+reflects what happened.
+
+#### 2. Per-email isolation
+
+A classification failure for one email must not prevent the remaining emails
+from being processed. The orchestrator wraps each `pipeline.classify()` call:
+
+```python
+for features in eligible:
+    try:
+        classification, skip_reason = pipeline.classify(features)
+    except Exception:
+        logger.exception("Classification failed for %s, skipping", features.email_id)
+        classification, skip_reason = None, "classification_error"
+```
+
+Within the pipeline itself, the thread context DB lookup and JMAP fallback
+are each individually wrapped so failures degrade to the next classification
+tier (rules, then LLM) rather than crashing.
+
+#### 3. Defensive audit writes
+
+`AuditWriter.finish_run()` is called from exception handlers and must never
+mask the original error. It catches and logs its own DB failures internally:
+
+```python
+def finish_run(self, run_id, *, status, ...):
+    try:
+        self._db.execute("UPDATE runs SET status=? ...", ...)
+        self._db.commit()
+    except Exception:
+        logger.exception("Failed to write finish_run for %s", run_id)
+```
+
+`AuditWriter.log_decisions()` uses per-row isolation — if one insert fails
+(e.g., constraint violation), remaining rows are still written:
+
+```python
+for d in decisions:
+    try:
+        self.log_decision(run_id, d, moved=moved)
+        logged += 1
+    except Exception:
+        logger.exception("Failed to log audit row for %s", d.email_id)
+```
+
+#### 4. Graceful degradation across tiers
+
+Each I/O tier degrades independently without blocking the others:
+
+| Tier | Failure mode | Behavior |
+|------|-------------|----------|
+| **JMAP query/fetch** | Network error, HTTP 5xx | Run marked `failed`, exception propagated to caller |
+| **Thread context DB** | SQLite error | Logged, returns `None` — falls through to rule engine |
+| **Thread context JMAP** | `Thread/get` or `Email/get` failure | Logged, returns `None` — falls through to rule engine |
+| **Rule engine** | Bad regex in `subject_regex` rule | Logged per-rule, continues to next rule |
+| **LLM (Anthropic)** | API timeout, rate limit, parse error | Returns `Classification(confidence=0.0, reasoning="api_error")` — email is skipped, not crashed |
+| **JMAP move** | `Email/set` network error | Logged, `outcomes` stays empty, all decisions logged as `moved=False` |
+| **Audit DB** | Insert/commit failure | Logged per-row, remaining rows still attempted |
+
+Anthropic API failures are handled at the LLM classifier level — `classify()`
+catches all exceptions and returns a safe default. Since rules don't need the
 LLM, rule-matched emails can still be moved in the same run. Only emails that
 require LLM classification are skipped.
 
@@ -1695,43 +1757,57 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ## 15. Development Phases
 
-### Phase 1: Foundation (start here)
-- [ ] Project scaffolding (pyproject.toml, directory structure)
-- [ ] Config loading with pydantic-settings
-- [ ] JMAP client: session discovery, auth, basic method calls
-- [ ] Mailbox tree discovery and path resolution
-- [ ] Email querying with eligibility filters
-- [ ] SQLite database setup with migrations
+### Phase 1: Foundation ✅
+- [x] Project scaffolding (`pyproject.toml`, `src/` layout, hatchling build)
+- [x] Config loading with pydantic (`config.py`, `config.yaml`, env var secrets)
+- [x] JMAP client: session discovery, auth, method calls (`jmap/client.py`)
+- [x] Mailbox tree discovery and path resolution (`jmap/mailbox_tree.py`)
+- [x] Email querying with eligibility filters (`query_inbox_emails`)
+- [x] SQLite database setup with versioned migrations (`db/database.py`, `db/migrations.py`)
 
-### Phase 2: Classification
-- [ ] Feature extractor
-- [ ] Rule engine (CRUD operations, matching logic)
-- [ ] LLM classifier with structured prompt
-- [ ] Classification pipeline orchestrator
-- [ ] Confidence gate logic
+### Phase 2: Classification ✅
+- [x] Feature extractor (`classifier/features.py`)
+- [x] Rule engine: CRUD, specificity-ordered matching (`classifier/rules.py`)
+- [x] LLM classifier with structured prompt + privacy gate (`classifier/llm.py`)
+- [x] Classification pipeline: thread context → rules → LLM (`classifier/pipeline.py`)
+- [x] Confidence gate logic (`mover/mover.py`)
 
-### Phase 3: Moving & Logging
-- [ ] Email mover (single + batch via Email/set)
-- [ ] Audit log writer
-- [ ] Dry-run mode (classify but don't move, just log)
-- [ ] Undo via keyword tagging: tag moved emails with `$mailsort-moved` keyword
-      so they can be identified and bulk-reverted if something goes wrong
+### Phase 3: Moving & Logging ✅
+- [x] Email mover: batch `Email/set` via `move_emails` (`jmap/client.py`)
+- [x] Audit log writer with run lifecycle (`audit/writer.py`)
+- [x] Run orchestrator: full classify → move → log pass (`orchestrator.py`)
+- [x] Dry-run mode: `mailsort dry-run` CLI command (`main.py`)
+- [x] Error handling: per-email isolation, guaranteed audit logging, defensive
+      DB writes (see §13 Error Handling Design)
+- [x] Undo via keyword tagging: `$mailsort-moved` keyword added to moved emails
+      via JMAP patch in `Email/set` (`jmap/client.py`)
 
-### Phase 4: Learning
-- [ ] Bootstrap script (scan existing folders → seed rules)
-- [ ] Manual sort detection (what moved since last scan?)
-- [ ] Auto-rule generation from repeated patterns
-- [ ] Rule confidence adjustment over time
+### Phase 4: Learning ✅
+- [x] Bootstrap: scan existing folders → seed rules + folder descriptions
+      (`bootstrap.py`, `mailsort bootstrap` CLI command)
+- [x] Manual sort detection — four categories (`audit/learner.py`):
+  - [x] Category 1: skipped emails the user moved out of inbox
+  - [x] Category 2: mailsort-moved emails the user relocated
+  - [x] Category 3: inbox departures via snapshot diff (emails sorted before
+        mailsort processed them) — `inbox_snapshot` table, migration 7
+  - [x] Category 4: daily folder scan for emails with no audit_log record
+        (`learner_state` table tracks last-scan time)
+- [x] Auto-rule generation from repeated patterns: list_id → sender_domain
+      (with coherence check) → exact_sender (`audit/learner.py`)
+- [x] Rule confidence adjustment: decay by 0.10 for rules not hit in 90+ days,
+      floor at 0.50 (`audit/learner.py`)
 
-### Phase 5: Scheduling & Deployment
-- [ ] APScheduler integration
-- [ ] Dockerfile and docker-compose
-- [ ] Graceful shutdown handling
+### Phase 5: Scheduling & Deployment ✅
+- [x] APScheduler integration: `BlockingScheduler` with `max_instances=1`,
+      runs on configurable interval (`scheduler.py`, `mailsort start` CLI)
+- [x] Dockerfile and docker-compose (`Dockerfile`, `docker-compose.yml`)
+- [x] Graceful shutdown: SIGTERM/SIGINT handlers stop the scheduler cleanly
+      (`scheduler.py`)
 - [ ] Health check endpoint (optional: tiny HTTP server)
 
 ### Phase 6: Observability & Tuning
 - [ ] Structured logging
-- [ ] Dry-run / export-rules scripts
+- [ ] Export-rules script
 - [ ] Confidence threshold tuning based on audit data
 - [ ] Optional: simple web UI for reviewing audit log and rules
 

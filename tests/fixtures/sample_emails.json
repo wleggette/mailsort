@@ -1,0 +1,67 @@
+[
+  {
+    "id": "email-001",
+    "threadId": "thread-001",
+    "mailboxIds": {"mb-inbox": true},
+    "from": [{"name": "Chase Bank", "email": "noreply@chase.com"}],
+    "to": [{"name": "Test User", "email": "user@fastmail.com"}],
+    "subject": "Your Chase statement is ready",
+    "receivedAt": "2026-03-10T10:00:00Z",
+    "keywords": {"$seen": true},
+    "preview": "Your January statement for account ending 1234 is now available.",
+    "header:list-id:asText": null,
+    "header:list-unsubscribe:asText": null
+  },
+  {
+    "id": "email-002",
+    "threadId": "thread-002",
+    "mailboxIds": {"mb-inbox": true},
+    "from": [{"name": "GitHub", "email": "noreply@github.com"}],
+    "to": [{"name": "Test User", "email": "user@fastmail.com"}],
+    "subject": "[mailsort] PR #42 opened by contributor",
+    "receivedAt": "2026-03-10T11:30:00Z",
+    "keywords": {"$seen": true},
+    "preview": "contributor opened a pull request: Add feature X",
+    "header:list-id:asText": "<mailsort.github.com>",
+    "header:list-unsubscribe:asText": "<https://github.com/settings/notifications>"
+  },
+  {
+    "id": "email-003",
+    "threadId": "thread-003",
+    "mailboxIds": {"mb-inbox": true},
+    "from": [{"name": "Amazon", "email": "shipment-tracking@amazon.com"}],
+    "to": [{"name": "Test User", "email": "user@fastmail.com"}],
+    "subject": "Your order has shipped",
+    "receivedAt": "2026-03-11T08:00:00Z",
+    "keywords": {"$seen": true},
+    "preview": "Order #112-3456789 has shipped. Expected delivery: March 13.",
+    "header:list-id:asText": null,
+    "header:list-unsubscribe:asText": null
+  },
+  {
+    "id": "email-004",
+    "threadId": "thread-001",
+    "mailboxIds": {"mb-inbox": true},
+    "from": [{"name": "Husband", "email": "husband@gmail.com"}],
+    "to": [{"name": "Test User", "email": "user@fastmail.com"}],
+    "subject": "Re: Your Chase statement is ready",
+    "receivedAt": "2026-03-10T14:00:00Z",
+    "keywords": {"$seen": true},
+    "preview": "Looks good, I already paid it.",
+    "header:list-id:asText": null,
+    "header:list-unsubscribe:asText": null
+  },
+  {
+    "id": "email-005",
+    "threadId": "thread-005",
+    "mailboxIds": {"mb-inbox": true, "$flagged": true},
+    "from": [{"name": "Important Sender", "email": "important@example.com"}],
+    "to": [{"name": "Test User", "email": "user@fastmail.com"}],
+    "subject": "Flagged email — should be skipped",
+    "receivedAt": "2026-03-10T09:00:00Z",
+    "keywords": {"$seen": true, "$flagged": true},
+    "preview": "This email is flagged and should not be processed.",
+    "header:list-id:asText": null,
+    "header:list-unsubscribe:asText": null
+  }
+]

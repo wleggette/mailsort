@@ -1,0 +1,15 @@
+[
+  {"id": "mb-inbox",      "name": "Inbox",         "parentId": null, "role": "inbox",  "totalEmails": 42, "unreadEmails": 5},
+  {"id": "mb-sent",       "name": "Sent",           "parentId": null, "role": "sent",   "totalEmails": 100, "unreadEmails": 0},
+  {"id": "mb-trash",      "name": "Trash",          "parentId": null, "role": "trash",  "totalEmails": 10, "unreadEmails": 0},
+  {"id": "mb-affairs",    "name": "Affairs",        "parentId": "mb-inbox", "role": null,     "totalEmails": 0,  "unreadEmails": 0},
+  {"id": "mb-alerts",     "name": "Alerts",         "parentId": "mb-affairs", "role": null, "totalEmails": 15, "unreadEmails": 0},
+  {"id": "mb-banks",      "name": "Banks",          "parentId": "mb-affairs", "role": null, "totalEmails": 30, "unreadEmails": 0},
+  {"id": "mb-medical",    "name": "Medical",        "parentId": "mb-affairs", "role": null, "totalEmails": 8,  "unreadEmails": 0},
+  {"id": "mb-shopping",   "name": "Shopping",       "parentId": "mb-inbox",   "role": null, "totalEmails": 0,  "unreadEmails": 0},
+  {"id": "mb-orders",     "name": "Orders",         "parentId": "mb-shopping", "role": null, "totalEmails": 50, "unreadEmails": 0},
+  {"id": "mb-receipts",   "name": "Receipts",       "parentId": "mb-shopping", "role": null, "totalEmails": 20, "unreadEmails": 0},
+  {"id": "mb-tech",       "name": "Tech",           "parentId": "mb-inbox",   "role": null, "totalEmails": 0,  "unreadEmails": 0},
+  {"id": "mb-github",     "name": "GitHub",         "parentId": "mb-tech", "role": null, "totalEmails": 200, "unreadEmails": 0},
+  {"id": "mb-travel",     "name": "Travel",         "parentId": "mb-inbox",   "role": null, "totalEmails": 12, "unreadEmails": 0}
+]
