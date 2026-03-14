@@ -163,6 +163,102 @@ def test_auto_rule_domain_rejected_low_coherence(db: Database):
     assert rule_id is None
 
 
+def test_auto_rule_exact_sender_rejected_low_coherence(db: Database):
+    """A sender that appears across multiple folders with low coherence should NOT get a rule."""
+    learner = _make_learner(db)
+
+    # noreply@okta.com: 3 to Alerts, 5 to other folders → coherence = 3/8 = 37%
+    for i in range(3):
+        _seed_audit_row(db, email_id=f"okta-alerts-{i}", from_address="noreply@okta.com",
+                        from_domain="okta.com", target_folder="INBOX/Affairs/Alerts")
+    for i in range(5):
+        _seed_audit_row(db, email_id=f"okta-other-{i}", from_address="noreply@okta.com",
+                        from_domain="okta.com", target_folder="INBOX/Affairs/Banks")
+
+    # Count threshold met (3 >= 3) but coherence too low (37% < 80%)
+    rule_id = learner.maybe_create_rule(
+        from_address="noreply@okta.com",
+        from_domain="okta.com",
+        list_id=None,
+        target_folder="INBOX/Affairs/Alerts",
+    )
+    assert rule_id is None
+
+
+def test_auto_rule_list_id_rejected_low_coherence(db: Database):
+    """A list_id that appears across multiple folders should NOT get a rule."""
+    learner = _make_learner(db)
+
+    # Same list_id sent to two different folders: 2 to Newsletters, 2 to Spam
+    # Coherence = 2/4 = 50% — below the 80% threshold
+    for i in range(2):
+        _seed_audit_row(db, email_id=f"news-{i}", from_address=f"bot{i}@news.com",
+                        from_domain="news.com", target_folder="INBOX/Social/Newsletters",
+                        list_id="<weekly-digest.news.com>")
+    for i in range(2):
+        _seed_audit_row(db, email_id=f"spam-{i}", from_address=f"bot{i+2}@news.com",
+                        from_domain="news.com", target_folder="INBOX/Affairs/Banks",
+                        list_id="<weekly-digest.news.com>")
+
+    rule_id = learner.maybe_create_rule(
+        from_address="bot0@news.com",
+        from_domain="news.com",
+        list_id="<weekly-digest.news.com>",
+        target_folder="INBOX/Social/Newsletters",
+    )
+    assert rule_id is None
+
+
+def test_auto_rule_exact_sender_high_coherence_created(db: Database):
+    """A sender with enough volume AND high coherence SHOULD get a rule."""
+    learner = _make_learner(db)
+
+    # 10 to Banks, 1 to Alerts → coherence = 10/11 = 91%
+    for i in range(10):
+        _seed_audit_row(db, email_id=f"chase-banks-{i}", from_address="noreply@chase.com",
+                        from_domain="chase.com", target_folder="INBOX/Affairs/Banks")
+    _seed_audit_row(db, email_id="chase-alert-0", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Affairs/Alerts")
+
+    rule_id = learner.maybe_create_rule(
+        from_address="noreply@chase.com",
+        from_domain="chase.com",
+        list_id=None,
+        target_folder="INBOX/Affairs/Banks",
+    )
+    assert rule_id is not None
+
+    row = db.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
+    assert row["rule_type"] == "exact_sender"
+
+
+def test_auto_rule_personal_sender_across_many_folders_rejected(db: Database):
+    """A personal sender (like a spouse) who emails about many topics should NOT get a rule."""
+    learner = _make_learner(db)
+
+    # husband@gmail.com sends to 5 different folders — coherence per folder is ~20%
+    folders = [
+        "INBOX/Affairs/Banks",
+        "INBOX/Affairs/Medical",
+        "INBOX/Shopping/Orders",
+        "INBOX/Projects/2025/Taxes",
+        "INBOX/People/Family",
+    ]
+    for i, folder in enumerate(folders):
+        for j in range(3):
+            _seed_audit_row(db, email_id=f"husband-{i}-{j}", from_address="husband@gmail.com",
+                            from_domain="gmail.com", target_folder=folder)
+
+    # Try to create a rule for any one folder — should fail (coherence = 3/15 = 20%)
+    rule_id = learner.maybe_create_rule(
+        from_address="husband@gmail.com",
+        from_domain="gmail.com",
+        list_id=None,
+        target_folder="INBOX/People/Family",
+    )
+    assert rule_id is None
+
+
 def test_auto_rule_not_duplicated(db: Database):
     learner = _make_learner(db)
 

@@ -42,6 +42,17 @@ class JMAPError(Exception):
         super().__init__(f"JMAP error in {method}: {error_type} — {description}")
 
 
+class ReadOnlyTokenError(Exception):
+    """Raised when a write operation is attempted with a read-only API token."""
+
+    def __init__(self, operation: str):
+        self.operation = operation
+        super().__init__(
+            f"Cannot {operation}: Fastmail API token is read-only. "
+            f"Generate a read/write token at Settings → Privacy & Security → Manage API tokens."
+        )
+
+
 class JMAPClient:
     """Thin JMAP client for Fastmail.
 
@@ -89,15 +100,24 @@ class JMAPClient:
     def session_capabilities(self) -> set[str]:
         return self.get_session().capabilities
 
+    @property
+    def is_read_only(self) -> bool:
+        return self.get_session().is_read_only
+
     # ------------------------------------------------------------------
     # Raw method calls
     # ------------------------------------------------------------------
 
-    def call(self, method_calls: list[list]) -> dict:
+    def call(
+        self,
+        method_calls: list[list],
+        using: list[str] | None = None,
+    ) -> dict:
         """POST one or more JMAP method calls and return the full response dict.
 
         Args:
             method_calls: List of [method_name, args_dict, call_id] triples.
+            using: JMAP capability URNs. Defaults to core + mail.
 
         Raises:
             JMAPError: If any method response is an error.
@@ -105,7 +125,7 @@ class JMAPClient:
         """
         session = self.get_session()
         payload = {
-            "using": JMAP_MAIL_USING,
+            "using": using or JMAP_MAIL_USING,
             "methodCalls": method_calls,
         }
         logger.debug("JMAP call: %s", [m[0] for m in method_calls])
@@ -234,6 +254,35 @@ class JMAPClient:
             return []
         return threads[0].get("emailIds", [])
 
+    # ------------------------------------------------------------------
+    # Contacts
+    # ------------------------------------------------------------------
+
+    def get_contacts(self) -> list[dict]:
+        """Fetch all contacts from Fastmail via ContactCard/get.
+
+        Returns a list of dicts with 'name' and 'emails' keys.
+        Returns empty list if contacts scope is not available.
+        """
+        if "urn:ietf:params:jmap:contacts" not in self.session_capabilities:
+            logger.warning(
+                "Contacts scope not available — contact enrichment disabled. "
+                "Grant the contacts scope to enable."
+            )
+            return []
+
+        session = self.get_session()
+        data = self.call(
+            [
+                ["ContactCard/get", {
+                    "accountId": session.account_id,
+                    "properties": ["uid", "name", "emails"],
+                }, "c1"],
+            ],
+            using=JMAP_MAIL_USING + ["urn:ietf:params:jmap:contacts"],
+        )
+        return data["methodResponses"][0][1].get("list", [])
+
     def move_emails(
         self,
         moves: list[tuple[str, str, dict[str, bool]]],
@@ -257,6 +306,9 @@ class JMAPClient:
         """
         if not moves:
             return {}
+
+        if self.is_read_only:
+            raise ReadOnlyTokenError("move emails")
 
         session = self.get_session()
         updates: dict[str, dict] = {}

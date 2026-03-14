@@ -68,6 +68,8 @@ class JMAPSession(BaseModel):
     account_id: str
     api_url: str
     capabilities: set[str]
+    account_capabilities: dict[str, dict] = Field(default_factory=dict)
+    is_read_only: bool = False
 
     @classmethod
     def from_response(cls, data: dict) -> "JMAPSession":
@@ -76,10 +78,23 @@ class JMAPSession(BaseModel):
         primary_accounts = data.get("primaryAccounts", {})
         account_id = primary_accounts.get(mail_cap) or next(iter(data.get("accounts", {})), "")
 
+        # Parse account-level capabilities and read-only status
+        accounts = data.get("accounts", {})
+        account_data = accounts.get(account_id, {})
+        account_caps = account_data.get("accountCapabilities", {})
+        is_read_only = account_data.get("isReadOnly", False)
+
+        # Fastmail also indicates per-capability read-only in some cases
+        mail_caps = account_caps.get(mail_cap, {})
+        if mail_caps.get("isReadOnly", False):
+            is_read_only = True
+
         return cls(
             account_id=account_id,
             api_url=data["apiUrl"],
             capabilities=set(data.get("capabilities", {}).keys()),
+            account_capabilities=account_caps,
+            is_read_only=is_read_only,
         )
 
 

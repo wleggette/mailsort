@@ -415,11 +415,16 @@ class Learner:
 
         # 1. List-Id rule
         if list_id:
-            count = self._db.execute(
+            to_target = self._db.execute(
                 "SELECT COUNT(*) FROM audit_log WHERE list_id = ? AND target_folder = ? AND moved = 1",
                 (list_id, target_folder),
             ).fetchone()[0]
-            if count >= thresholds.list_id:
+            total = self._db.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE list_id = ? AND moved = 1",
+                (list_id,),
+            ).fetchone()[0]
+            coherence = to_target / total if total > 0 else 0.0
+            if to_target >= thresholds.list_id and coherence >= coherence_min:
                 existing = self._rules.find_existing_rule("list_id", list_id)
                 if not existing:
                     rule_id = self._rules.create_rule(
@@ -429,7 +434,10 @@ class Learner:
                         confidence=0.95,
                         source="auto",
                     )
-                    logger.info("Auto-created list_id rule: %s → %s", list_id, target_folder)
+                    logger.info(
+                        "Auto-created list_id rule: %s → %s (coherence=%.0f%%, n=%d)",
+                        list_id, target_folder, coherence * 100, to_target,
+                    )
                     return rule_id
 
         # 2. Sender domain rule (with coherence check)
@@ -473,14 +481,19 @@ class Learner:
 
         # 3. Exact sender fallback
         if from_address:
-            count = self._db.execute(
+            to_target = self._db.execute(
                 "SELECT COUNT(*) FROM audit_log WHERE from_address = ? AND target_folder = ? AND moved = 1",
                 (from_address, target_folder),
             ).fetchone()[0]
-            if count >= thresholds.exact_sender:
+            total = self._db.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE from_address = ? AND moved = 1",
+                (from_address,),
+            ).fetchone()[0]
+            coherence = to_target / total if total > 0 else 0.0
+            if to_target >= thresholds.exact_sender and coherence >= coherence_min:
                 existing = self._rules.find_existing_rule("exact_sender", from_address)
                 if not existing:
-                    confidence = min(0.95, 0.80 + (count * 0.03))
+                    confidence = min(0.95, 0.80 + (to_target * 0.03))
                     rule_id = self._rules.create_rule(
                         rule_type="exact_sender",
                         condition_value=from_address,
@@ -488,7 +501,10 @@ class Learner:
                         confidence=confidence,
                         source="auto",
                     )
-                    logger.info("Auto-created sender rule: %s → %s", from_address, target_folder)
+                    logger.info(
+                        "Auto-created sender rule: %s → %s (coherence=%.0f%%, n=%d)",
+                        from_address, target_folder, coherence * 100, to_target,
+                    )
                     return rule_id
 
         return None

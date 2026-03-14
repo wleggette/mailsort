@@ -64,6 +64,134 @@ def get_contact_for_sender(
 
 
 # ---------------------------------------------------------------------------
+# Contact refresh from Fastmail
+# ---------------------------------------------------------------------------
+
+def refresh_contacts(
+    db: Database,
+    jmap_client: "JMAPClient",
+    known_contact_overrides: dict | None = None,
+) -> int:
+    """Fetch contacts from Fastmail and update the contacts table.
+
+    Per-contact isolation: one bad contact record doesn't prevent the rest.
+    Returns count of contact emails imported.
+
+    Args:
+        db: Database connection.
+        jmap_client: Authenticated JMAP client.
+        known_contact_overrides: Config overrides with relationship hints.
+    """
+    try:
+        raw_contacts = jmap_client.get_contacts()
+    except Exception as e:
+        logger.warning("Failed to fetch contacts from Fastmail: %s", e)
+        return 0
+
+    if not raw_contacts:
+        logger.info("No contacts returned from Fastmail (scope may be unavailable)")
+        return 0
+
+    overrides = known_contact_overrides or {}
+    count = 0
+
+    for contact in raw_contacts:
+        try:
+            count += _import_single_contact(db, contact, overrides)
+        except Exception:
+            logger.debug("Failed to import contact uid=%s", contact.get("uid", "?"))
+
+    try:
+        db.commit()
+    except Exception:
+        logger.warning("Failed to commit contacts batch")
+
+    logger.info("Refreshed %d contact email(s) from Fastmail", count)
+    return count
+
+
+def _import_single_contact(
+    db: Database,
+    contact: dict,
+    overrides: dict,
+) -> int:
+    """Parse and insert one ContactCard. Returns number of email addresses imported."""
+    name_map = contact.get("name", {})
+    display_name = ""
+    if isinstance(name_map, dict):
+        display_name = name_map.get("full", "")
+        if not display_name:
+            given = name_map.get("given", "")
+            surname = name_map.get("surname", "")
+            display_name = f"{given} {surname}".strip()
+    else:
+        display_name = str(name_map)
+    if not display_name:
+        display_name = "(unknown)"
+
+    emails_map = contact.get("emails", {})
+    if not isinstance(emails_map, dict):
+        return 0
+
+    imported = 0
+    for _entry_id, entry in emails_map.items():
+        addr = entry.get("address") or entry.get("value", "") if isinstance(entry, dict) else str(entry)
+        if not addr:
+            continue
+        addr = addr.lower().strip()
+
+        override = overrides.get(addr)
+        relationship = None
+        if override and hasattr(override, "relationship"):
+            relationship = override.relationship
+
+        db.execute(
+            "INSERT OR REPLACE INTO contacts "
+            "(email_address, display_name, relationship, fastmail_uid, refreshed_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (addr, display_name, relationship, contact.get("uid")),
+        )
+        imported += 1
+
+    return imported
+
+
+def should_refresh_contacts(db: Database, refresh_hours: int = 24) -> bool:
+    """Check if contacts should be refreshed based on configurable interval."""
+    try:
+        row = db.execute(
+            "SELECT value FROM learner_state WHERE key = 'last_contacts_refresh'"
+        ).fetchone()
+        if not row:
+            return True
+        check = db.execute(
+            "SELECT ? < datetime('now', ? || ' hours') AS due",
+            (row["value"], f"-{refresh_hours}"),
+        ).fetchone()
+        return bool(check and check["due"])
+    except Exception:
+        return True
+
+
+def mark_contacts_refreshed(db: Database) -> None:
+    """Record that contacts were just refreshed."""
+    try:
+        db.execute(
+            "INSERT OR REPLACE INTO learner_state (key, value) "
+            "VALUES ('last_contacts_refresh', datetime('now'))"
+        )
+        db.commit()
+    except Exception:
+        logger.warning("Failed to mark contacts refresh time")
+
+
+# Type import for the JMAP client (avoid circular import at module level)
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from mailsort.jmap.client import JMAPClient
+
+
+# ---------------------------------------------------------------------------
 # Preview redaction
 # ---------------------------------------------------------------------------
 

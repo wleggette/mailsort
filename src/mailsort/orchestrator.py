@@ -13,11 +13,16 @@ Implements the Phase 3 pipeline:
 from __future__ import annotations
 
 import logging
+import time
+from collections import Counter
 from typing import Optional
 
 from mailsort.audit.learner import Learner
 from mailsort.audit.writer import AuditWriter
-from mailsort.classifier.features import extract_features, load_contacts
+from mailsort.classifier.features import (
+    extract_features, load_contacts,
+    refresh_contacts, should_refresh_contacts, mark_contacts_refreshed,
+)
 from mailsort.classifier.llm import LLMClassifier
 from mailsort.classifier.pipeline import ClassificationPipeline
 from mailsort.classifier.rules import RuleEngine
@@ -69,61 +74,91 @@ def _execute_run(
     dry_run: bool = False,
 ) -> tuple[int, int]:
     """Inner run logic. Returns (emails_seen, emails_moved)."""
+    run_start = time.monotonic()
+    mode = "DRY RUN" if dry_run else "live"
+    short_id = run_id[:8]
 
-    # 0. Learning: detect manual sorts, inbox departures, daily folder scan,
-    #    and adjust stale rule confidence. Runs before classification so
-    #    newly created rules are available for the current batch.
+    logger.info("── Run %s started (%s) ──", short_id, mode)
+
+    # ------------------------------------------------------------------
+    # 0. Learning
+    # ------------------------------------------------------------------
     rule_engine = RuleEngine(db, cfg.classification.thresholds)
     learner = Learner(db, rule_engine, cfg.classification)
 
-    # Query ALL current inbox email IDs (no age/read filter) for snapshot diff.
-    # This is a broader query than the eligibility query — we want to track
-    # every email in the inbox so we can detect when ANY of them depart.
     try:
         all_inbox_ids = set(jmap.query_inbox_emails(
             inbox_id=tree.inbox_id, limit=500, filter_eligible=False,
         ))
     except Exception:
-        logger.exception("Failed to query inbox for snapshot, skipping departure detection")
+        logger.warning("Failed to query inbox for snapshot, skipping departure detection")
         all_inbox_ids = None
 
+    manual_sorts = 0
+    folder_scan_sorts = 0
+    rules_adjusted = 0
     try:
-        learner.detect_manual_sorts(jmap, tree, run_id, current_inbox_ids=all_inbox_ids)
-        learner.scan_folders_for_unknown_sorts(jmap, tree, run_id)
-        learner.adjust_rule_confidence()
+        manual_sorts = learner.detect_manual_sorts(jmap, tree, run_id, current_inbox_ids=all_inbox_ids)
+        folder_scan_sorts = learner.scan_folders_for_unknown_sorts(jmap, tree, run_id)
+        rules_adjusted = learner.adjust_rule_confidence()
         learner.cleanup_old_snapshots()
     except Exception:
         logger.exception("Learning step failed, continuing with classification")
 
-    # 1. Query eligible inbox emails (read, unflagged, old enough)
+    logger.info(
+        "Learning: %d manual sort(s) detected, %d folder scan finding(s), %d rule(s) adjusted",
+        manual_sorts, folder_scan_sorts, rules_adjusted,
+    )
+
+    # Daily contact refresh
+    try:
+        if should_refresh_contacts(db, refresh_hours=cfg.scheduler.contacts_refresh_hours):
+            count = refresh_contacts(db, jmap, cfg.known_contact_overrides)
+            mark_contacts_refreshed(db)
+            logger.info("Contacts: refreshed %d contact email(s)", count)
+        else:
+            logger.debug("Contacts: up to date")
+    except Exception:
+        logger.warning("Contacts: refresh failed, using cached data")
+
+    # ------------------------------------------------------------------
+    # 1. Query eligible inbox emails
+    # ------------------------------------------------------------------
     email_ids = jmap.query_inbox_emails(
         inbox_id=tree.inbox_id,
         min_age_hours=cfg.scheduler.min_age_hours,
         limit=cfg.scheduler.max_batch_size,
     )
-    logger.info("Found %d eligible inbox emails", len(email_ids))
+    inbox_total = len(all_inbox_ids) if all_inbox_ids is not None else "?"
+    logger.info("Inbox: %d eligible emails (%s total in inbox)", len(email_ids), inbox_total)
 
-    # Save inbox snapshot for next run's departure detection (Option C).
-    # Uses the broader all_inbox_ids set, not just the eligible ones.
+    # Save inbox snapshot for next run's departure detection
     if all_inbox_ids is not None:
         try:
             learner.save_inbox_snapshot(run_id, list(all_inbox_ids))
         except Exception:
-            logger.exception("Failed to save inbox snapshot")
+            logger.warning("Failed to save inbox snapshot")
 
     if not email_ids:
+        elapsed = time.monotonic() - run_start
+        logger.info("── Run %s completed (%.1fs) — nothing to process ──", short_id, elapsed)
         return 0, 0
 
-    # 2. Fetch full email objects and extract features
+    # ------------------------------------------------------------------
+    # 2. Fetch and extract features
+    # ------------------------------------------------------------------
     emails = jmap.get_emails(email_ids)
     features_list = [extract_features(email) for email in emails]
 
-    # Filter skip_senders
     skip_senders = set(cfg.skip_senders)
     eligible = [f for f in features_list if f.from_address not in skip_senders]
-    logger.info("%d emails eligible after skip_senders filter", len(eligible))
+    skipped_by_sender = len(features_list) - len(eligible)
+    if skipped_by_sender:
+        logger.debug("Filtered %d email(s) by skip_senders", skipped_by_sender)
 
-    # 3. Load contacts + folder descriptions, build pipeline
+    # ------------------------------------------------------------------
+    # 3. Build pipeline
+    # ------------------------------------------------------------------
     contacts = load_contacts(db)
     folder_descriptions = _load_folder_descriptions(cfg, db)
 
@@ -145,9 +180,12 @@ def _execute_run(
         folder_descriptions=folder_descriptions,
     )
 
+    # ------------------------------------------------------------------
     # 4. Classify + build move decisions
-    #    Per-email isolation: one classification failure doesn't block the batch.
+    # ------------------------------------------------------------------
     decisions: list[MoveDecision] = []
+    source_counts: Counter = Counter()
+
     for features in eligible:
         try:
             classification, skip_reason = pipeline.classify(features)
@@ -174,14 +212,37 @@ def _execute_run(
                 )
                 decision.should_move = False
                 decision.skip_reason = "unknown_folder"
+
+        # Track source for summary
+        source_counts[decision.classification.source] += 1
+
+        # DEBUG: per-email detail
+        if decision.should_move:
+            logger.debug(
+                "  → %s: %s (%s, conf=%.2f) → %s",
+                features.email_id[:12], features.from_address,
+                decision.classification.source, decision.classification.confidence,
+                decision.classification.folder_path,
+            )
+        else:
+            logger.debug(
+                "  ✕ %s: %s — skipped (%s)",
+                features.email_id[:12], features.from_address,
+                decision.skip_reason or "unknown",
+            )
+
         decisions.append(decision)
 
     planned = [d for d in decisions if d.should_move]
-    logger.info("Classification done: %d to move, %d to skip", len(planned), len(decisions) - len(planned))
+    skipped_count = len(decisions) - len(planned)
 
-    # 5. Execute moves (unless dry-run)
-    #    Wrapped in try/except so audit logging always happens even if the
-    #    JMAP call crashes. Decisions are logged in the finally block.
+    # Classification summary
+    source_parts = ", ".join(f"{n} {src}" for src, n in source_counts.most_common())
+    logger.info("Classification: %s, %d skipped", source_parts, skipped_count)
+
+    # ------------------------------------------------------------------
+    # 5. Execute moves
+    # ------------------------------------------------------------------
     outcomes: dict[str, bool] = {}
     try:
         if planned and not dry_run:
@@ -193,18 +254,20 @@ def _execute_run(
             outcomes = jmap.move_emails(moves, inbox_id=tree.inbox_id)
             moved_count = sum(1 for v in outcomes.values() if v)
             failed_count = sum(1 for v in outcomes.values() if not v)
-            logger.info("Moves executed: %d moved, %d failed", moved_count, failed_count)
+            logger.info("Moves: %d planned → %d moved, %d failed", len(planned), moved_count, failed_count)
         elif planned and dry_run:
-            logger.info("Dry run — skipping %d moves", len(planned))
+            logger.info("Moves: %d planned → DRY RUN (not moved)", len(planned))
+        else:
+            logger.info("Moves: nothing to move")
     except Exception:
         logger.exception("JMAP move_emails failed — decisions will still be logged")
     finally:
-        # 6. Always log decisions, even if the move call crashed.
-        #    If move_emails threw, outcomes is empty so all planned decisions
-        #    are logged as moved=False — accurate since nothing was confirmed moved.
         audit.log_decisions(run_id, decisions, outcomes)
 
     emails_moved = sum(1 for v in outcomes.values() if v)
+    elapsed = time.monotonic() - run_start
+    logger.info("── Run %s completed (%.1fs) ──", short_id, elapsed)
+
     return len(eligible), emails_moved
 
 

@@ -85,7 +85,7 @@ def _scheduled_run(cfg: Config) -> None:
         try:
             jmap = JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url)
             mailboxes = jmap.get_all_mailboxes()
-            tree = MailboxTree.build(mailboxes)
+            tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
 
             run_id = run_classification_pass(
                 cfg, db, jmap, tree, dry_run=False, trigger="scheduler",

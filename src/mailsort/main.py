@@ -66,6 +66,10 @@ def setup_logging(cfg: Config) -> None:
         handlers=handlers,
     )
 
+    # Suppress noisy HTTP client logging — only show on WARNING+ or DEBUG level
+    logging.getLogger("httpx").setLevel(max(level, logging.WARNING))
+    logging.getLogger("httpcore").setLevel(max(level, logging.WARNING))
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -141,7 +145,7 @@ def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
 
         with JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url) as jmap:
             mailboxes = jmap.get_all_mailboxes()
-            tree = MailboxTree.build(mailboxes)
+            tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
             logger.info(
                 "Mailbox tree loaded: %d folders, inbox=%s",
                 len(tree.all_folder_paths()),
@@ -183,6 +187,10 @@ def check_config(ctx: click.Context) -> None:
         click.echo(f"  Capabilities: {len(session.capabilities)}")
         contacts_ok = "urn:ietf:params:jmap:contacts" in session.capabilities
         click.echo(f"  Contacts    : {'available' if contacts_ok else 'NOT available (no contact enrichment)'}")
+        if session.is_read_only:
+            click.echo(f"  Permissions : READ-ONLY (bootstrap, dry-run, analyze OK; moves will fail)")
+        else:
+            click.echo(f"  Permissions : read/write")
 
         mailboxes = jmap.get_all_mailboxes()
         tree = MailboxTree.build(mailboxes)
@@ -193,7 +201,11 @@ def check_config(ctx: click.Context) -> None:
 @click.option("--max-per-folder", default=50, show_default=True, help="Max emails to sample per folder")
 @click.pass_context
 def bootstrap(ctx: click.Context, max_per_folder: int) -> None:
-    """Scan existing folders to seed rules and folder descriptions."""
+    """Scan existing folders to seed rules and folder descriptions.
+
+    Safe to run multiple times — existing evidence is never duplicated.
+    New emails that appeared since the last bootstrap are added.
+    """
     cfg = _safe_load_config(ctx.obj["config_path"])
     setup_logging(cfg)
     logger = logging.getLogger(__name__)
@@ -204,17 +216,22 @@ def bootstrap(ctx: click.Context, max_per_folder: int) -> None:
 
         with JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url) as jmap:
             mailboxes = jmap.get_all_mailboxes()
-            tree = MailboxTree.build(mailboxes)
+            tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
 
             report = run_bootstrap(
                 cfg, db, jmap, tree, max_per_folder=max_per_folder,
             )
 
+    pct = (report.emails_matched_by_rules / report.emails_sampled * 100
+           if report.emails_sampled > 0 else 0)
+
     click.echo(f"\nBootstrap complete:")
     click.echo(f"  Folders scanned : {report.folders_scanned}")
     click.echo(f"  Emails sampled  : {report.emails_sampled}")
     click.echo(f"  Rules created   : {report.rules_created}")
+    click.echo(f"  Rule coverage   : {report.emails_matched_by_rules}/{report.emails_sampled} ({pct:.0f}%) matched, {report.emails_unmatched} unmatched")
     click.echo(f"  Descriptions    : {report.descriptions_generated}")
+    click.echo(f"  Contacts        : {report.contacts_imported}")
     if report.errors:
         click.echo(f"  Errors          : {len(report.errors)}")
 
@@ -270,33 +287,38 @@ def analyze(ctx: click.Context, days: int) -> None:
 
 
 def _print_analysis(db: Database, cfg: Config, days: int) -> None:
-    """Query audit_log and print threshold analysis report."""
+    """Query audit_log and print threshold analysis report.
+
+    Excludes bootstrap runs — only analyzes real classification passes.
+    """
     window = f"-{days} days"
 
+    # Base filter: exclude bootstrap runs, only look at recent data
+    base = (
+        "FROM audit_log a JOIN runs r ON r.run_id = a.run_id "
+        "WHERE r.trigger != 'bootstrap' AND a.created_at >= datetime('now', ?)"
+    )
+
     # Overall counts
-    total = db.execute(
-        "SELECT COUNT(*) FROM audit_log WHERE created_at >= datetime('now', ?)", (window,)
-    ).fetchone()[0]
+    total = db.execute(f"SELECT COUNT(*) {base}", (window,)).fetchone()[0]
     if total == 0:
-        click.echo("No audit data found. Run mailsort first to generate data.")
+        click.echo("No classification data found. Run 'mailsort run' or 'mailsort dry-run' first.")
         return
 
     moved = db.execute(
-        "SELECT COUNT(*) FROM audit_log WHERE moved = 1 AND created_at >= datetime('now', ?)", (window,)
+        f"SELECT COUNT(*) {base} AND a.moved = 1", (window,)
     ).fetchone()[0]
     skipped = total - moved
 
     # By source
     source_rows = db.execute(
-        "SELECT classification_source, COUNT(*) as n, SUM(moved) as m "
-        "FROM audit_log WHERE created_at >= datetime('now', ?) "
-        "GROUP BY classification_source ORDER BY n DESC", (window,)
+        f"SELECT a.classification_source, COUNT(*) as n, SUM(a.moved) as m {base} "
+        "GROUP BY a.classification_source ORDER BY n DESC", (window,)
     ).fetchall()
 
-    # User corrections (manual sorts that override a prior mailsort move)
+    # User corrections: manual sorts from learner detection (not bootstrap seed data)
     corrections = db.execute(
-        "SELECT COUNT(*) FROM audit_log "
-        "WHERE classification_source = 'manual' AND created_at >= datetime('now', ?)", (window,)
+        f"SELECT COUNT(*) {base} AND a.classification_source = 'manual'", (window,)
     ).fetchone()[0]
 
     error_rate = corrections / moved * 100 if moved > 0 else 0.0
@@ -320,16 +342,15 @@ def _print_analysis(db: Database, cfg: Config, days: int) -> None:
     llm_rows = db.execute(
         "SELECT "
         "  CASE "
-        "    WHEN confidence >= 0.90 THEN '0.90–1.00' "
-        "    WHEN confidence >= 0.80 THEN '0.80–0.89' "
-        "    WHEN confidence >= 0.70 THEN '0.70–0.79' "
-        "    WHEN confidence >= 0.60 THEN '0.60–0.69' "
+        "    WHEN a.confidence >= 0.90 THEN '0.90–1.00' "
+        "    WHEN a.confidence >= 0.80 THEN '0.80–0.89' "
+        "    WHEN a.confidence >= 0.70 THEN '0.70–0.79' "
+        "    WHEN a.confidence >= 0.60 THEN '0.60–0.69' "
         "    ELSE '< 0.60' "
         "  END AS bucket, "
-        "  SUM(CASE WHEN moved = 1 THEN 1 ELSE 0 END) AS moved, "
-        "  SUM(CASE WHEN moved = 0 THEN 1 ELSE 0 END) AS skipped "
-        "FROM audit_log "
-        "WHERE classification_source = 'llm' AND created_at >= datetime('now', ?) "
+        "  SUM(CASE WHEN a.moved = 1 THEN 1 ELSE 0 END) AS moved, "
+        "  SUM(CASE WHEN a.moved = 0 THEN 1 ELSE 0 END) AS skipped "
+        f"{base} AND a.classification_source = 'llm' "
         "GROUP BY bucket ORDER BY bucket DESC", (window,)
     ).fetchall()
 
@@ -347,8 +368,11 @@ def _print_analysis(db: Database, cfg: Config, days: int) -> None:
         "SELECT a1.email_id, a1.target_folder AS llm_folder, a1.confidence, "
         "       a2.target_folder AS manual_folder "
         "FROM audit_log a1 "
+        "JOIN runs r1 ON r1.run_id = a1.run_id "
         "JOIN audit_log a2 ON a1.email_id = a2.email_id "
-        "WHERE a1.classification_source = 'llm' AND a1.moved = 0 "
+        "JOIN runs r2 ON r2.run_id = a2.run_id "
+        "WHERE r1.trigger != 'bootstrap' AND r2.trigger != 'bootstrap' "
+        "  AND a1.classification_source = 'llm' AND a1.moved = 0 "
         "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
         "  AND a1.created_at >= datetime('now', ?)", (window,)
     ).fetchall()
@@ -379,8 +403,11 @@ def _print_analysis(db: Database, cfg: Config, days: int) -> None:
 
     rule_corrections = db.execute(
         "SELECT COUNT(*) FROM audit_log a1 "
+        "JOIN runs r1 ON r1.run_id = a1.run_id "
         "JOIN audit_log a2 ON a1.email_id = a2.email_id "
-        "WHERE a1.classification_source = 'rule' AND a1.moved = 1 "
+        "JOIN runs r2 ON r2.run_id = a2.run_id "
+        "WHERE r1.trigger != 'bootstrap' AND r2.trigger != 'bootstrap' "
+        "  AND a1.classification_source = 'rule' AND a1.moved = 1 "
         "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
         "  AND a1.target_folder != a2.target_folder "
         "  AND a1.created_at >= datetime('now', ?)", (window,)

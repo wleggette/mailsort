@@ -20,6 +20,7 @@ class SchedulerConfig(BaseModel):
     min_age_hours: int = 4
     max_batch_size: int = 100
     health_check_port: int = 8025
+    contacts_refresh_hours: int = 24
 
 
 class ThresholdsConfig(BaseModel):
@@ -76,6 +77,7 @@ class Config(BaseModel):
     folder_description_overrides: dict[str, str] = Field(default_factory=dict)
     manual_rules: list[ManualRule] = Field(default_factory=list)
     skip_senders: list[str] = Field(default_factory=list)
+    exclude_folder_patterns: list[str] = Field(default_factory=list)
     known_contact_overrides: dict[str, KnownContactOverride] = Field(default_factory=dict)
     logging_config: LoggingConfig = Field(default_factory=LoggingConfig)
 

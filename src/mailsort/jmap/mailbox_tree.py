@@ -7,6 +7,7 @@ like "INBOX/Affairs/Banks".
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -57,28 +58,46 @@ class MailboxTree:
     # ------------------------------------------------------------------
 
     @classmethod
-    def build(cls, mailboxes: list[JMAPMailbox]) -> "MailboxTree":
-        """Build the tree from a flat list of JMAPMailbox objects."""
+    def build(
+        cls,
+        mailboxes: list[JMAPMailbox],
+        exclude_patterns: list[str] | None = None,
+    ) -> "MailboxTree":
+        """Build the tree from a flat list of JMAPMailbox objects.
+
+        Args:
+            exclude_patterns: Glob patterns for folder paths to exclude
+                (e.g., 'Junk Training/*', 'Spam Archive/*'). Matched
+                against the full folder path.
+        """
         tree = cls()
         by_id = {m.id: m for m in mailboxes}
+        patterns = exclude_patterns or []
+        excluded = 0
 
         for mailbox in mailboxes:
             if mailbox.role == "inbox":
                 tree._inbox_id = mailbox.id
-                # Don't add inbox itself to the path map — it's the source, not a target
                 continue
 
             if mailbox.role in _SYSTEM_ROLES:
                 continue
 
             path = _build_path(mailbox, by_id)
-            if path:
-                tree._id_to_path[mailbox.id] = path
-                tree._path_to_id[path] = mailbox.id
+            if not path:
+                continue
+
+            if any(fnmatch.fnmatch(path, pat) for pat in patterns):
+                excluded += 1
+                continue
+
+            tree._id_to_path[mailbox.id] = path
+            tree._path_to_id[path] = mailbox.id
 
         logger.info(
-            "Mailbox tree built: %d folders, inbox_id=%s",
+            "Mailbox tree built: %d folders, %d excluded, inbox_id=%s",
             len(tree._id_to_path),
+            excluded,
             tree._inbox_id,
         )
         return tree

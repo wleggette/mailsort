@@ -18,11 +18,12 @@ def _make_client() -> JMAPClient:
     client._session_url = "http://test"
     client._http = MagicMock()
 
-    # Pre-cache a fake session
+    # Pre-cache a fake session (read/write)
     session = MagicMock()
     session.account_id = "u12345"
     session.api_url = "http://test/api"
     session.capabilities = set()
+    session.is_read_only = False
     client._session = session
     return client
 

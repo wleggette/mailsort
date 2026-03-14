@@ -116,7 +116,7 @@ def test_analyze_no_data(db: Database, tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli, ["--config", str(config_path), "analyze"])
     assert result.exit_code == 0
-    assert "No audit data found" in result.output
+    assert "No classification data found" in result.output
 
 
 def test_analyze_with_data(tmp_path):

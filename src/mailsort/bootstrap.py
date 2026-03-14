@@ -14,14 +14,28 @@ from dataclasses import dataclass, field
 
 from mailsort.audit.learner import Learner
 from mailsort.audit.writer import AuditWriter
-from mailsort.classifier.features import extract_features
+from mailsort.classifier.features import extract_features, refresh_contacts
 from mailsort.classifier.rules import RuleEngine
 from mailsort.config import Config
 from mailsort.db.database import Database
 from mailsort.jmap.client import JMAPClient
 from mailsort.jmap.mailbox_tree import MailboxTree
+from mailsort.jmap.models import EmailFeatures
 
 logger = logging.getLogger(__name__)
+
+# Full properties including list-id (needed for the most reliable rule type).
+_FULL_PROPERTIES = [
+    "id", "threadId", "mailboxIds", "from", "to",
+    "subject", "receivedAt", "keywords", "preview",
+    "header:list-id:asText",
+]
+
+# Fallback for folders where header properties cause invalidArguments.
+_MINIMAL_PROPERTIES = [
+    "id", "threadId", "mailboxIds", "from", "to",
+    "subject", "receivedAt", "keywords", "preview",
+]
 
 
 @dataclass
@@ -30,6 +44,9 @@ class BootstrapReport:
     emails_sampled: int = 0
     rules_created: int = 0
     descriptions_generated: int = 0
+    contacts_imported: int = 0
+    emails_matched_by_rules: int = 0
+    emails_unmatched: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -54,13 +71,29 @@ def run_bootstrap(
 
     try:
         # Phase 1: Collect evidence from all folders
+        logger.info("Phase 1/4: Scanning folders for email evidence...")
         _collect_evidence(
             cfg, db, jmap, tree, run_id, report,
             max_per_folder=max_per_folder,
         )
+        logger.info(
+            "Phase 1/4 complete: %d folders scanned, %d emails sampled",
+            report.folders_scanned, report.emails_sampled,
+        )
 
         # Phase 2: Evaluate candidate rules using learner's coherence checks
+        logger.info("Phase 2/4: Creating rules from evidence...")
         _create_rules_from_evidence(db, learner, report)
+        logger.info("Phase 2/4 complete: %d rules created", report.rules_created)
+
+        # Phase 3: Import contacts from Fastmail
+        logger.info("Phase 3/4: Importing contacts from Fastmail...")
+        report.contacts_imported = refresh_contacts(db, jmap, cfg.known_contact_overrides)
+        logger.info("Phase 3/4 complete: %d contacts imported", report.contacts_imported)
+
+        # Phase 4: Calculate rule coverage
+        logger.info("Phase 4/4: Calculating rule coverage...")
+        _calculate_coverage(db, rule_engine, report)
 
         audit.finish_run(
             run_id,
@@ -88,9 +121,16 @@ def _collect_evidence(
     max_per_folder: int = 50,
 ) -> None:
     """Scan each target folder and record emails as bootstrap evidence."""
-    folder_paths = tree.all_folder_paths()
+    # Pre-load known email_ids so re-running bootstrap doesn't duplicate evidence
+    known_ids = {
+        row["email_id"]
+        for row in db.execute("SELECT DISTINCT email_id FROM audit_log").fetchall()
+    }
 
-    for folder_path in sorted(folder_paths):
+    folder_paths = sorted(tree.all_folder_paths())
+    total_folders = len(folder_paths)
+
+    for idx, folder_path in enumerate(folder_paths, 1):
         mailbox_id = tree.id_for(folder_path)
         if not mailbox_id:
             continue
@@ -99,17 +139,32 @@ def _collect_evidence(
             email_ids = jmap.query_folder_emails(mailbox_id, limit=max_per_folder)
             if not email_ids:
                 continue
-
-            emails = jmap.get_emails(email_ids)
-        except Exception:
-            logger.exception("Failed to scan folder %s, skipping", folder_path)
-            report.errors.append(f"Failed to scan {folder_path}")
+        except Exception as e:
+            logger.warning("Skipping folder %s (query failed): %s", folder_path, e)
+            report.errors.append(f"Skipping {folder_path}")
             continue
 
+        # Try full properties first (includes list-id for rule creation),
+        # fall back to minimal if the folder doesn't support header properties
+        # (e.g., read-only tokens may not support header:* access).
+        try:
+            emails = jmap.get_emails(email_ids, properties=_FULL_PROPERTIES)
+        except Exception:
+            try:
+                emails = jmap.get_emails(email_ids, properties=_MINIMAL_PROPERTIES)
+                logger.debug("Folder %s: fell back to minimal properties", folder_path)
+            except Exception as e:
+                logger.warning("Skipping folder %s (fetch failed): %s", folder_path, e)
+                report.errors.append(f"Skipping {folder_path}")
+                continue
+
         report.folders_scanned += 1
+        logger.info("  [%d/%d] %s — %d emails", idx, total_folders, folder_path, len(emails))
 
         for email in emails:
             features = extract_features(email)
+            if features.email_id in known_ids:
+                continue
             try:
                 db.execute(
                     "INSERT INTO audit_log "
@@ -133,9 +188,10 @@ def _collect_evidence(
                         None,
                     ),
                 )
+                known_ids.add(features.email_id)
                 report.emails_sampled += 1
             except Exception:
-                logger.debug("Duplicate or failed audit insert for %s", features.email_id)
+                logger.debug("Failed audit insert for %s", features.email_id)
 
         db.commit()
 
@@ -207,14 +263,56 @@ def _maybe_generate_description(
     db.commit()
 
 
+
+def _calculate_coverage(
+    db: Database,
+    rule_engine: RuleEngine,
+    report: BootstrapReport,
+) -> None:
+    """Check how many sampled emails would be matched by the created rules."""
+    rows = db.execute(
+        "SELECT DISTINCT email_id, from_address, from_domain, list_id, target_folder "
+        "FROM audit_log WHERE classification_source = 'manual' AND moved = 1"
+    ).fetchall()
+
+    matched = 0
+    for row in rows:
+        features = EmailFeatures(
+            email_id=row["email_id"],
+            thread_id="",
+            from_address=row["from_address"] or "",
+            from_domain=row["from_domain"] or "",
+            to_addresses=[],
+            subject="",
+            list_id=row["list_id"],
+            received_at="2000-01-01T00:00:00+00:00",
+            preview="",
+            keywords=[],
+            current_mailbox_ids={},
+        )
+        clf = rule_engine.classify(features)
+        if clf and clf.folder_path == row["target_folder"]:
+            matched += 1
+
+    report.emails_matched_by_rules = matched
+    report.emails_unmatched = report.emails_sampled - matched
+    logger.info(
+        "Rule coverage: %d/%d emails matched (%.0f%%), %d unmatched",
+        matched, report.emails_sampled,
+        matched / report.emails_sampled * 100 if report.emails_sampled > 0 else 0,
+        report.emails_unmatched,
+    )
+
+
 def _log_report(report: BootstrapReport) -> None:
     logger.info(
         "Bootstrap complete: %d folders scanned, %d emails sampled, "
-        "%d rules created, %d descriptions generated",
+        "%d rules created, %d descriptions generated, %d contacts imported",
         report.folders_scanned,
         report.emails_sampled,
         report.rules_created,
         report.descriptions_generated,
+        report.contacts_imported,
     )
     if report.errors:
         logger.warning("Bootstrap had %d error(s): %s", len(report.errors), "; ".join(report.errors))

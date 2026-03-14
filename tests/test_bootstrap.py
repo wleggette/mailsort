@@ -65,12 +65,18 @@ def test_bootstrap_creates_sender_rules(db: Database):
     ]
 
     mock_jmap = MagicMock()
-    mock_jmap.query_folder_emails.return_value = [e.id for e in emails]
+    # Only return emails when scanning the Banks folder
+    def query_side_effect(mailbox_id, limit=50):
+        if mailbox_id == "mb-banks":
+            return [e.id for e in emails]
+        return []
+    mock_jmap.query_folder_emails.side_effect = query_side_effect
     mock_jmap.get_emails.return_value = emails
+    mock_jmap.get_contacts.return_value = []
 
     report = run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
 
-    assert report.folders_scanned > 0
+    assert report.folders_scanned >= 1
     assert report.emails_sampled >= 3
 
     # Should have created an exact_sender rule for chase
@@ -93,8 +99,13 @@ def test_bootstrap_creates_list_id_rules(db: Database):
     ]
 
     mock_jmap = MagicMock()
-    mock_jmap.query_folder_emails.return_value = [e.id for e in emails]
+    def query_side_effect(mailbox_id, limit=50):
+        if mailbox_id == "mb-banks":
+            return [e.id for e in emails]
+        return []
+    mock_jmap.query_folder_emails.side_effect = query_side_effect
     mock_jmap.get_emails.return_value = emails
+    mock_jmap.get_contacts.return_value = []
 
     report = run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
 
@@ -114,6 +125,7 @@ def test_bootstrap_generates_folder_descriptions(db: Database):
     mock_jmap = MagicMock()
     mock_jmap.query_folder_emails.return_value = ["e-0"]
     mock_jmap.get_emails.return_value = emails
+    mock_jmap.get_contacts.return_value = []
 
     run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
 
@@ -131,6 +143,7 @@ def test_bootstrap_empty_folders_no_crash(db: Database):
     mock_jmap = MagicMock()
     mock_jmap.query_folder_emails.return_value = []
     mock_jmap.get_emails.return_value = []
+    mock_jmap.get_contacts.return_value = []
 
     report = run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
 
@@ -139,6 +152,38 @@ def test_bootstrap_empty_folders_no_crash(db: Database):
     # Run should still be completed
     row = db.execute("SELECT status FROM runs ORDER BY started_at DESC LIMIT 1").fetchone()
     assert row["status"] == "completed"
+
+
+def test_bootstrap_idempotent_no_duplicate_evidence(db: Database):
+    """Running bootstrap twice should not duplicate audit_log evidence rows."""
+    cfg = _make_config()
+    tree = _make_tree()
+
+    emails = [
+        _make_jmap_email(f"e-{i}", "noreply@chase.com") for i in range(3)
+    ]
+
+    def query_side_effect(mailbox_id, limit=50):
+        if mailbox_id == "mb-banks":
+            return [e.id for e in emails]
+        return []
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_folder_emails.side_effect = query_side_effect
+    mock_jmap.get_emails.return_value = emails
+    mock_jmap.get_contacts.return_value = []
+
+    # First bootstrap
+    report1 = run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
+    assert report1.emails_sampled == 3
+
+    # Second bootstrap — same emails should be skipped
+    report2 = run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
+    assert report2.emails_sampled == 0
+
+    # Total audit_log rows should still be 3, not 6
+    count = db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    assert count == 3
 
 
 def test_bootstrap_jmap_error_handled(db: Database):

@@ -883,10 +883,15 @@ CREATE TABLE contacts (
 -- No index needed on email_address — it's the PRIMARY KEY
 ```
 
-Populated at startup from Fastmail JMAP (`ContactCard/get`) and refreshed
-daily. Config `known_contact_overrides` entries are merged in after the JMAP
-fetch, with the override's `relationship` field augmenting (not replacing) the
-name from the address book.
+Populated during bootstrap and refreshed daily by the orchestrator via
+`refresh_contacts()` in `classifier/features.py`. The refresh:
+
+- Fetches all contacts via JMAP `ContactCard/get`
+- Parses name maps (full → given+surname fallback) and email maps
+- Merges `known_contact_overrides` from config (adds relationship hints)
+- Uses per-contact error isolation (one bad record doesn't block the rest)
+- Tracks last refresh time in `learner_state` table (at most once per 24h)
+- Gracefully degrades if `urn:ietf:params:jmap:contacts` scope is unavailable
 
 ### Folder Descriptions Schema
 
@@ -1186,6 +1191,13 @@ Body preview (`preview`) is used only by the LLM classifier, not rule matching.
 ---
 
 ## 9. Bootstrapping
+
+Bootstrap is **idempotent** — safe to run multiple times. On each run it skips
+emails already present in `audit_log`, so evidence is never duplicated. New
+emails that appeared in folders since the last bootstrap are added. Rules,
+contacts, and folder descriptions all use upsert/dedup logic. This means you
+can re-bootstrap after adding new folders or to pick up recent mail without
+corrupting existing data.
 
 Bootstrap does not use a separate, looser rule-creation strategy. Historical
 emails are treated as evidence inputs to the same candidate evaluation logic

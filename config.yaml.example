@@ -9,6 +9,7 @@ scheduler:
   interval_minutes: 15
   min_age_hours: 4
   max_batch_size: 100
+  contacts_refresh_hours: 24   # How often to re-fetch contacts from Fastmail
 
 # Classification
 classification:
@@ -39,6 +40,13 @@ manual_rules: []
   #   value: "important@example.com"
   #   folder: "INBOX/Affairs/Legal"
   #   confidence: 1.0
+
+# Folders to exclude from classification, bootstrap, and learning.
+# Uses glob patterns matched against folder paths.
+# Spam handling should be left to Fastmail — mailsort is for non-spam routing.
+exclude_folder_patterns:
+  - "Junk Training/*"
+  - "Spam Archive/*"
 
 # Skip list — never auto-move these senders
 skip_senders: []

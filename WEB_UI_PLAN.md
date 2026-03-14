@@ -1,0 +1,270 @@
+# Mailsort Web UI — Planning Document
+
+## Goals
+
+1. **Full visibility** into mailsort's internal state — audit logs, rules, contacts,
+   folder descriptions, classification decisions, and threshold analysis
+2. **Bookmarkable URLs** — every page and filtered view has a real URL that works
+   with browser back/forward and can be shared or bookmarked
+3. **Clean, minimal design** — modern aesthetic inspired by shadcn/ui: good typography,
+   subtle grays, card-based layouts, readable data tables
+4. **No separate build tooling** — no Node, npm, or webpack; deploys in the same
+   Docker container as the scheduler
+5. **Read-mostly** — primarily a monitoring/inspection tool; limited write operations
+   (rule activation/deactivation, manual rule creation, trigger actions)
+
+---
+
+## Pages & Features
+
+### 1. Dashboard (`/`)
+
+The landing page. At-a-glance overview of system health.
+
+- **Last run card** — status badge (completed/failed/abandoned), timing, trigger type,
+  emails seen/moved/skipped/failed
+- **Run history** — compact table of the last 20 runs with status, timing, counts
+- **Quick stats row** — total active rules, total contacts, folders tracked,
+  emails processed (lifetime), rules auto-created this week
+- **System health** — scheduler status, last contact refresh, last folder scan,
+  DB size
+
+### 2. Audit Log (`/audit`)
+
+The core inspection tool. Every classification decision mailsort has made.
+
+- **Filterable table** with columns: timestamp, email_id, from, subject,
+  classification source, target folder, confidence, moved, skip reason
+- **Filter bar** (query params, all bookmarkable):
+  - `?source=rule|llm|thread|manual`
+  - `?moved=1|0`
+  - `?folder=INBOX/Affairs/Banks`
+  - `?sender=noreply@chase.com`
+  - `?days=7|30|90`
+  - `?run_id=...`
+- **Click a row** → detail view at `/audit/{id}` showing full email metadata,
+  classification reasoning, rule ID if applicable
+- **Export CSV** button
+- **Pagination** — 50 rows per page, page number in query params
+
+### 3. Audit Detail (`/audit/{id}`)
+
+Single audit log entry with full context.
+
+- Email metadata: from, to, subject, date, list-id, preview
+- Classification: source, confidence, reasoning, rule ID (linked)
+- Decision: moved/skipped, skip reason
+- Thread context: thread ID, sibling audit entries
+- Run context: link to run, trigger type
+
+### 4. Rules (`/rules`)
+
+All classification rules with management capabilities.
+
+- **Table** with columns: type, value, folder, confidence, source, hits, last hit, active
+- **Filter tabs**: All / Active / Inactive / Suggested
+- **Sort** by any column (click header)
+- **Search** by value or folder
+- **Actions per rule**:
+  - Toggle active/inactive
+  - Edit confidence
+  - Delete (soft — deactivate)
+- **Create rule form** — type, value, folder, confidence
+- **Coherence indicator** — show current coherence for each rule's condition
+
+### 5. Rules Detail (`/rules/{id}`)
+
+Single rule with full history.
+
+- Rule metadata: type, value, folder, confidence, source, created, updated
+- Hit history: count, last hit
+- Audit log entries that matched this rule (recent 50)
+- Coherence stats: current n and coherence % for this rule's condition
+
+### 6. Threshold Analysis (`/analyze`)
+
+Interactive version of `mailsort analyze`.
+
+- **Date range picker** (default 30 days)
+- **Classification sources** — bar chart with counts and percentages
+- **Move outcomes** — moved / skipped / corrections with error rate
+- **LLM confidence histogram** — bucketed distribution with current threshold marked
+- **Skipped-then-sorted table** — emails where the LLM was right but threshold blocked it,
+  with average confidence and suggested threshold adjustment
+- **Rule corrections table** — emails where mailsort moved and user relocated
+
+### 7. Contacts (`/contacts`)
+
+Contacts synced from Fastmail.
+
+- **Table**: email address, display name, relationship, fastmail UID, last refreshed
+- **Count** and last refresh timestamp in header
+- **Search** by name or email
+- **Config overrides** highlighted (relationship column)
+- **Refresh now** button (triggers contact refresh via API)
+
+### 8. Folders (`/folders`)
+
+Folder structure and descriptions.
+
+- **Tree view** or indented table showing folder hierarchy
+- Columns: folder path, description, source (auto/manual), email count (from audit_log)
+- **Excluded folders** shown grayed out with the matching pattern
+- **Inline edit** for descriptions (saves to folder_descriptions table)
+
+### 9. Settings (`/settings`)
+
+Read-only view of current configuration.
+
+- **Fastmail** — session URL, account ID, permissions (read-only/read-write),
+  capabilities, contacts scope available
+- **Scheduler** — interval, min age, batch size, health check port,
+  contacts refresh interval
+- **Classification** — all thresholds, auto-rule thresholds, coherence min,
+  LLM model, privacy settings
+- **Skip senders** list
+- **Exclude folder patterns** list
+- **Known contact overrides** list
+
+---
+
+## Architecture
+
+### Stack
+
+| Component | Choice | Rationale |
+|-----------|--------|-----------|
+| **Web framework** | FastAPI | Already in the Python ecosystem, async, auto-generates OpenAPI docs |
+| **Templating** | Jinja2 | Server-rendered HTML, proper URL routing, no client-side router |
+| **Styling** | Tailwind CSS (CDN) | Clean minimal aesthetic, no build step |
+| **Interactivity** | htmx | Fragment swaps for filtering/sorting without full page reloads |
+| **Icons** | Lucide (CDN) | Clean line icons, works well with Tailwind |
+| **ASGI server** | Uvicorn | Standard FastAPI deployment |
+| **Database** | Existing SQLite | Same DB file, read by the web server |
+
+### New Dependencies
+
+```
+fastapi
+uvicorn[standard]
+jinja2
+```
+
+### URL Routing
+
+All pages are server-rendered with proper HTTP routes. Filtered views use query
+parameters so they're bookmarkable. htmx handles in-page updates (filter
+changes, pagination, inline edits) by swapping HTML fragments from dedicated
+API endpoints.
+
+```
+GET /                     → Dashboard
+GET /audit                → Audit log (filterable via query params)
+GET /audit/{id}           → Audit detail
+GET /rules                → Rules list
+GET /rules/{id}           → Rule detail
+GET /analyze              → Threshold analysis
+GET /contacts             → Contacts list
+GET /folders              → Folder descriptions
+GET /settings             → Config view
+
+# htmx fragment endpoints (partial HTML responses)
+GET /api/audit/table      → Audit table rows (for htmx filter/paginate)
+GET /api/rules/table      → Rules table rows
+GET /api/contacts/table   → Contacts table rows
+
+# Action endpoints
+POST /api/rules/{id}/toggle    → Activate/deactivate rule
+POST /api/rules/{id}/edit      → Update rule confidence/folder
+POST /api/rules/create         → Create new rule
+POST /api/contacts/refresh     → Trigger contact refresh
+```
+
+### File Structure
+
+```
+src/mailsort/
+  web/
+    __init__.py
+    app.py              ← FastAPI app factory, route registration
+    routes/
+      __init__.py
+      dashboard.py      ← GET /
+      audit.py          ← GET /audit, /audit/{id}
+      rules.py          ← GET /rules, /rules/{id}, POST actions
+      analyze.py        ← GET /analyze
+      contacts.py       ← GET /contacts, POST refresh
+      folders.py        ← GET /folders
+      settings.py       ← GET /settings
+    templates/
+      base.html         ← Layout: nav, head, Tailwind/htmx CDN links
+      dashboard.html
+      audit/
+        list.html
+        detail.html
+        _table.html     ← Partial for htmx swaps
+      rules/
+        list.html
+        detail.html
+        _table.html
+        _create_form.html
+      analyze.html
+      contacts/
+        list.html
+        _table.html
+      folders.html
+      settings.html
+      components/
+        nav.html        ← Sidebar/top navigation
+        pagination.html ← Reusable pagination
+        filters.html    ← Reusable filter bar
+        badge.html      ← Status badges
+    static/
+      style.css         ← Minimal custom CSS (if any beyond Tailwind)
+```
+
+### Integration with Existing System
+
+- The web server runs in the **same process** as the scheduler (or as a
+  separate `mailsort web` CLI command)
+- Reads the **same SQLite database** — no API layer between web and data
+- Write operations (rule toggle, contact refresh) use the existing
+  `RuleEngine` and `refresh_contacts` functions
+- The scheduler continues running independently; the web UI is read-mostly
+
+### CLI Command
+
+```
+mailsort web [--port 8080]
+```
+
+Starts the web UI server. Can run alongside `mailsort start` or standalone.
+In Docker, could be a separate service or run in the same container on a
+different port from the health check.
+
+---
+
+## Design Language
+
+- **Colors**: Neutral grays for backgrounds/borders, blue for primary actions,
+  green for success/moved, amber for warnings/skipped, red for failures/errors
+- **Typography**: System font stack (Inter-like), monospace for email addresses,
+  rule values, and IDs
+- **Layout**: Max-width container (~1200px), left sidebar nav on desktop,
+  top nav on mobile
+- **Cards**: White background, subtle border, small border-radius, light shadow
+- **Tables**: Alternating row backgrounds, sticky headers, compact row height
+- **Badges**: Rounded pills for status (completed/failed/abandoned) and
+  classification source (rule/llm/thread/manual)
+- **Empty states**: Friendly message + suggested action when no data
+
+---
+
+## Implementation Order
+
+1. Skeleton: FastAPI app, base template, nav, Tailwind/htmx setup
+2. Dashboard — quick wins, shows data immediately
+3. Rules — most actionable page (review bootstrap output)
+4. Audit log — highest data volume, needs filtering/pagination
+5. Threshold analysis — interactive charts
+6. Contacts + Folders + Settings — simpler data views
