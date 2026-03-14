@@ -1803,7 +1803,9 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 - [x] Dockerfile and docker-compose (`Dockerfile`, `docker-compose.yml`)
 - [x] Graceful shutdown: SIGTERM/SIGINT handlers stop the scheduler cleanly
       (`scheduler.py`)
-- [ ] Health check endpoint (optional: tiny HTTP server)
+- [x] Health check endpoint: `GET /health` on configurable port (default 8025),
+      returns JSON with last run status, Docker HEALTHCHECK wired up
+      (`health.py`, `scheduler.health_check_port` config)
 
 ### Phase 6: Observability & Tuning
 - [ ] Structured logging

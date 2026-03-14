@@ -17,6 +17,7 @@ from mailsort.audit.writer import AuditWriter
 from mailsort.config import Config
 from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
+from mailsort.health import start_health_server
 from mailsort.jmap.client import JMAPClient
 from mailsort.jmap.mailbox_tree import MailboxTree
 from mailsort.orchestrator import run_classification_pass
@@ -50,6 +51,9 @@ def start_scheduler(cfg: Config) -> None:
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
+    # Start health check server in background thread
+    health_server = start_health_server(cfg.db_path, port=cfg.scheduler.health_check_port)
+
     logger.info(
         "Scheduler started: running every %d minutes",
         cfg.scheduler.interval_minutes,
@@ -65,6 +69,9 @@ def start_scheduler(cfg: Config) -> None:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         logger.info("Scheduler stopped")
+    finally:
+        if health_server:
+            health_server.shutdown()
 
 
 def _scheduled_run(cfg: Config) -> None:

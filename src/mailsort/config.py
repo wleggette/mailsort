@@ -19,6 +19,7 @@ class SchedulerConfig(BaseModel):
     interval_minutes: int = 15
     min_age_hours: int = 4
     max_batch_size: int = 100
+    health_check_port: int = 8025
 
 
 class ThresholdsConfig(BaseModel):
@@ -54,6 +55,7 @@ class LoggingConfig(BaseModel):
     file: str = "data/mailsort.log"
     max_size_mb: int = 10
     backup_count: int = 3
+    format: str = "text"  # "text" or "json"
 
 
 class ManualRule(BaseModel):

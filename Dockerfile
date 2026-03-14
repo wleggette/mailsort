@@ -11,4 +11,8 @@ RUN pip install --no-cache-dir .
 COPY config.yaml ./config.yaml
 RUN mkdir -p /app/data
 
+EXPOSE 8025
+HEALTHCHECK --interval=60s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8025/health')" || exit 1
+
 CMD ["mailsort", "start"]
