@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Settings — Mailsort{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold text-gray-900">Settings</h1>
+  <p class="text-sm text-gray-500 mt-1">Current configuration (read-only — edit config.yaml to change)</p>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+  <!-- Fastmail -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Fastmail</h2>
+    <div class="space-y-3">
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Session URL</span>
+        <span class="text-sm font-mono text-gray-900">{{ cfg.fastmail.session_url }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">API Token</span>
+        <span class="text-sm font-mono text-gray-500">{{ cfg.fastmail_api_token[:8] if cfg.fastmail_api_token else '(not set)' }}…</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheduler -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Scheduler</h2>
+    <div class="space-y-3">
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Interval</span>
+        <span class="text-sm text-gray-900">{{ cfg.scheduler.interval_minutes }} minutes</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Min Email Age</span>
+        <span class="text-sm text-gray-900">{{ cfg.scheduler.min_age_hours }} hours</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Max Batch Size</span>
+        <span class="text-sm text-gray-900">{{ cfg.scheduler.max_batch_size }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Health Check Port</span>
+        <span class="text-sm text-gray-900">{{ cfg.scheduler.health_check_port }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Contact Refresh</span>
+        <span class="text-sm text-gray-900">Every {{ cfg.scheduler.contacts_refresh_hours }} hours</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Classification Thresholds -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Classification Thresholds</h2>
+    <div class="space-y-3">
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Rule Move</span>
+        <span class="text-sm font-mono font-semibold text-gray-900">{{ cfg.classification.thresholds.rule_move }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">LLM Move</span>
+        <span class="text-sm font-mono font-semibold text-gray-900">{{ cfg.classification.thresholds.llm_move }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">LLM Move (Known Contact)</span>
+        <span class="text-sm font-mono font-semibold text-gray-900">{{ cfg.classification.thresholds.llm_move_known_contact }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Rule Learn</span>
+        <span class="text-sm font-mono font-semibold text-gray-900">{{ cfg.classification.thresholds.rule_learn }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auto-Rule Thresholds -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Auto-Rule Creation</h2>
+    <div class="space-y-3">
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">list_id threshold</span>
+        <span class="text-sm font-mono text-gray-900">{{ cfg.classification.auto_rule_thresholds.list_id }} emails</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">exact_sender threshold</span>
+        <span class="text-sm font-mono text-gray-900">{{ cfg.classification.auto_rule_thresholds.exact_sender }} emails</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">sender_domain threshold</span>
+        <span class="text-sm font-mono text-gray-900">{{ cfg.classification.auto_rule_thresholds.sender_domain }} emails</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Domain Coherence Min</span>
+        <span class="text-sm font-mono text-gray-900">{{ (cfg.classification.auto_rule_domain_coherence * 100)|int }}%</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Learner Lookback</span>
+        <span class="text-sm text-gray-900">{{ cfg.classification.learner_lookback_days }} days</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- LLM -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">LLM Classifier</h2>
+    <div class="space-y-3">
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Model</span>
+        <span class="text-sm font-mono text-gray-900">{{ cfg.classification.llm_model }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Max Preview Chars</span>
+        <span class="text-sm text-gray-900">{{ cfg.classification.llm_max_preview_chars }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Use Preview</span>
+        <span class="text-sm text-gray-900">{{ 'Yes' if cfg.classification.llm_use_preview else 'No' }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Allow Known Contacts</span>
+        <span class="text-sm text-gray-900">{{ 'Yes' if cfg.classification.llm_allow_known_contacts else 'No' }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">API Key</span>
+        <span class="text-sm font-mono text-gray-500">{{ cfg.anthropic_api_key[:12] if cfg.anthropic_api_key else '(not set)' }}…</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lists -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Filters & Exclusions</h2>
+    <div class="space-y-4">
+      <div>
+        <span class="text-sm font-medium text-gray-600">Skip Senders</span>
+        {% if cfg.skip_senders %}
+        <div class="mt-1 space-y-1">
+          {% for s in cfg.skip_senders %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-700 mr-1">{{ s }}</span>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-400 mt-1">(none)</p>
+        {% endif %}
+      </div>
+      <div>
+        <span class="text-sm font-medium text-gray-600">Exclude Folder Patterns</span>
+        {% if cfg.exclude_folder_patterns %}
+        <div class="mt-1 space-y-1">
+          {% for p in cfg.exclude_folder_patterns %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-red-50 text-red-700 mr-1">{{ p }}</span>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-400 mt-1">(none)</p>
+        {% endif %}
+      </div>
+      <div>
+        <span class="text-sm font-medium text-gray-600">LLM Skip Senders</span>
+        {% if cfg.classification.llm_skip_senders %}
+        <div class="mt-1 space-y-1">
+          {% for s in cfg.classification.llm_skip_senders %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-700 mr-1">{{ s }}</span>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-400 mt-1">(none)</p>
+        {% endif %}
+      </div>
+      <div>
+        <span class="text-sm font-medium text-gray-600">LLM Skip Domains</span>
+        {% if cfg.classification.llm_skip_domains %}
+        <div class="mt-1 space-y-1">
+          {% for d in cfg.classification.llm_skip_domains %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-700 mr-1">{{ d }}</span>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-400 mt-1">(none)</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Logging -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Logging</h2>
+    <div class="space-y-3">
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Level</span>
+        <span class="text-sm font-mono text-gray-900">{{ cfg.logging_config.level }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Format</span>
+        <span class="text-sm text-gray-900">{{ cfg.logging_config.format }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">File</span>
+        <span class="text-sm font-mono text-gray-900">{{ cfg.logging_config.file }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

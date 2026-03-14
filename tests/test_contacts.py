@@ -151,6 +151,33 @@ def test_refresh_contacts_name_fallback(db: Database):
 # Daily refresh check
 # ------------------------------------------------------------------
 
+def test_refresh_contacts_removes_stale(db: Database):
+    """Contacts removed from Fastmail should be deleted locally on refresh."""
+    # First, seed a contact that will become stale
+    db.execute(
+        "INSERT INTO contacts (email_address, display_name, refreshed_at) "
+        "VALUES ('stale@example.com', 'Stale Person', datetime('now'))"
+    )
+    db.commit()
+
+    # Refresh returns only a different contact — stale one should be removed
+    mock_jmap = MagicMock()
+    mock_jmap.session_capabilities = {"urn:ietf:params:jmap:contacts"}
+    mock_jmap.get_contacts.return_value = [
+        {
+            "uid": "c1",
+            "name": {"full": "Current Person"},
+            "emails": {"e1": {"address": "current@example.com"}},
+        },
+    ]
+
+    refresh_contacts(db, mock_jmap)
+
+    contacts = load_contacts(db)
+    assert "current@example.com" in contacts
+    assert "stale@example.com" not in contacts
+
+
 def test_should_refresh_contacts_first_time(db: Database):
     """First time ever — should return True."""
     assert should_refresh_contacts(db) is True

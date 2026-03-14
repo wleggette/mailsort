@@ -94,18 +94,35 @@ def refresh_contacts(
 
     overrides = known_contact_overrides or {}
     count = 0
+    seen_addresses: set[str] = set()
 
     for contact in raw_contacts:
         try:
-            count += _import_single_contact(db, contact, overrides)
+            imported = _import_single_contact(db, contact, overrides, seen_addresses)
+            count += imported
         except Exception:
             logger.debug("Failed to import contact uid=%s", contact.get("uid", "?"))
+
+    # Remove contacts that no longer exist in Fastmail
+    removed = 0
+    if seen_addresses:
+        try:
+            placeholders = ",".join("?" for _ in seen_addresses)
+            cursor = db.execute(
+                f"DELETE FROM contacts WHERE email_address NOT IN ({placeholders})",
+                tuple(seen_addresses),
+            )
+            removed = cursor.rowcount
+        except Exception:
+            logger.warning("Failed to clean up stale contacts")
 
     try:
         db.commit()
     except Exception:
         logger.warning("Failed to commit contacts batch")
 
+    if removed:
+        logger.info("Removed %d stale contact(s) no longer in Fastmail", removed)
     logger.info("Refreshed %d contact email(s) from Fastmail", count)
     return count
 
@@ -114,6 +131,7 @@ def _import_single_contact(
     db: Database,
     contact: dict,
     overrides: dict,
+    seen_addresses: set[str] | None = None,
 ) -> int:
     """Parse and insert one ContactCard. Returns number of email addresses imported."""
     name_map = contact.get("name", {})
@@ -139,6 +157,8 @@ def _import_single_contact(
         if not addr:
             continue
         addr = addr.lower().strip()
+        if seen_addresses is not None:
+            seen_addresses.add(addr)
 
         override = overrides.get(addr)
         relationship = None

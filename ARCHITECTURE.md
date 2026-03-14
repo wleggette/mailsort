@@ -905,8 +905,20 @@ CREATE TABLE folder_descriptions (
 );
 ```
 
-Descriptions are loaded at startup by merging both sources, with manual
-overrides taking precedence:
+Descriptions are generated automatically via `classifier/descriptions.py`:
+
+- **During bootstrap:** each scanned folder gets a description generated from
+  sample emails (LLM-based when `anthropic_api_key` is configured, name-based
+  fallback otherwise)
+- **During scheduled runs:** the orchestrator calls
+  `generate_descriptions_for_new_folders()` to handle any folders added since
+  the last run
+- **Never overwritten:** existing descriptions are never replaced automatically.
+  Change them manually via config overrides if needed.
+- **Config overrides win:** `folder_description_overrides` in config.yaml
+  takes precedence when loading descriptions for the LLM prompt
+
+Descriptions are loaded at runtime by merging DB + config overrides:
 
 ```python
 def load_folder_descriptions(config: Config) -> dict[str, str]:

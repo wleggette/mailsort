@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Folders — Mailsort{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold text-gray-900">Folders</h1>
+  <p class="text-sm text-gray-500 mt-1">{{ folders|length }} folders with descriptions
+    {% if exclude_patterns %} · Excluding: {{ exclude_patterns|join(', ') }}{% endif %}
+  </p>
+</div>
+
+<div class="bg-white rounded-lg border border-gray-200">
+  {% if folders %}
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-200 sortable">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Folder Path</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
+          <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Emails</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-200">
+        {% for f in folders %}
+        <tr class="hover:bg-gray-50 {{ 'opacity-40' if f.excluded }}">
+          <td class="px-4 py-2 text-sm font-mono text-gray-900" style="padding-left: {{ 16 + f.depth * 16 }}px">
+            {{ f.path }}
+            {% if f.excluded %}
+              <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">excluded</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2 text-sm text-gray-600">{{ f.description }}</td>
+          <td class="px-4 py-2">
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {{ 'bg-blue-50 text-blue-700' if f.source == 'manual' else 'bg-gray-100 text-gray-600' }}">
+              {{ f.source }}
+            </span>
+          </td>
+          <td class="px-4 py-2 text-sm text-right text-gray-900">{{ f.email_count }}</td>
+          <td class="px-4 py-2 text-sm text-gray-500">{{ f.updated_at[:16] if f.updated_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="px-6 py-12 text-center">
+    <p class="text-sm text-gray-400">No folder descriptions yet. Run <code class="text-xs bg-gray-100 px-1 py-0.5 rounded">mailsort bootstrap</code> to generate them.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

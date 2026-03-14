@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Mailsort{% endblock %}
+
+{% block content %}
+<div class="mb-8">
+  <h1 class="text-2xl font-semibold text-gray-900">Dashboard</h1>
+  <p class="text-sm text-gray-500 mt-1">System overview and recent activity</p>
+</div>
+
+<!-- Quick Stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">Active Rules</p>
+    <p class="text-2xl font-semibold text-gray-900 mt-1">{{ stats.rules }}</p>
+  </div>
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">Contacts</p>
+    <p class="text-2xl font-semibold text-gray-900 mt-1">{{ stats.contacts }}</p>
+  </div>
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">Folders</p>
+    <p class="text-2xl font-semibold text-gray-900 mt-1">{{ stats.folders }}</p>
+  </div>
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">Emails Processed</p>
+    <p class="text-2xl font-semibold text-gray-900 mt-1">{{ "{:,}".format(stats.processed) }}</p>
+  </div>
+</div>
+
+<!-- Last Run + System Health -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+  <!-- Last Run -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Last Run</h2>
+    {% if last_run %}
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-gray-600">Status</span>
+        {% if last_run['status'] == 'completed' %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">completed</span>
+        {% elif last_run['status'] == 'failed' %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">failed</span>
+        {% elif last_run['status'] == 'running' %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">running</span>
+        {% else %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{{ last_run['status'] }}</span>
+        {% endif %}
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-gray-600">Trigger</span>
+        <span class="text-sm font-mono text-gray-900">{{ last_run['trigger'] }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-gray-600">Started</span>
+        <span class="text-sm text-gray-900">{{ last_run['started_at'] }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-gray-600">Emails Seen</span>
+        <span class="text-sm font-semibold text-gray-900">{{ last_run['emails_seen'] }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-gray-600">Emails Moved</span>
+        <span class="text-sm font-semibold text-gray-900">{{ last_run['emails_moved'] }}</span>
+      </div>
+      {% if last_run['error_summary'] %}
+      <div class="mt-2 p-3 bg-red-50 border border-red-200 rounded-md">
+        <p class="text-xs text-red-700 font-mono">{{ last_run['error_summary'] }}</p>
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="text-sm text-gray-400">No runs yet. Run <code class="text-xs bg-gray-100 px-1 py-0.5 rounded">mailsort run</code> or <code class="text-xs bg-gray-100 px-1 py-0.5 rounded">mailsort bootstrap</code> to get started.</p>
+    {% endif %}
+  </div>
+
+  <!-- System Health -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">System Health</h2>
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-gray-600">Last Contact Refresh</span>
+        <span class="text-sm text-gray-900">{{ last_contact_refresh }}</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-gray-600">Last Folder Scan</span>
+        <span class="text-sm text-gray-900">{{ last_folder_scan }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Runs -->
+<div class="bg-white rounded-lg border border-gray-200">
+  <div class="px-6 py-4 border-b border-gray-200">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider">Recent Runs</h2>
+  </div>
+  {% if recent_runs %}
+  <div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-200 sortable">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Run ID</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Trigger</th>
+          <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Started</th>
+          <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Seen</th>
+          <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Moved</th>
+        </tr>
+      </thead>
+      <tbody class="bg-white divide-y divide-gray-200">
+        {% for run in recent_runs %}
+        <tr class="hover:bg-gray-50">
+          <td class="px-6 py-3 text-sm font-mono text-gray-600">{{ run['run_id'][:8] }}…</td>
+          <td class="px-6 py-3">
+            {% if run['status'] == 'completed' %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">completed</span>
+            {% elif run['status'] == 'failed' %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">failed</span>
+            {% elif run['status'] == 'abandoned' %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">abandoned</span>
+            {% else %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">{{ run['status'] }}</span>
+            {% endif %}
+          </td>
+          <td class="px-6 py-3 text-sm text-gray-600">{{ run['trigger'] }}</td>
+          <td class="px-6 py-3 text-sm text-gray-600">{{ run['started_at'] }}</td>
+          <td class="px-6 py-3 text-sm text-right text-gray-900">{{ run['emails_seen'] }}</td>
+          <td class="px-6 py-3 text-sm text-right text-gray-900">{{ run['emails_moved'] }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="px-6 py-8 text-center">
+    <p class="text-sm text-gray-400">No runs recorded yet.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

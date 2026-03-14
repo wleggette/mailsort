@@ -429,5 +429,26 @@ def start(ctx: click.Context) -> None:
     start_scheduler(cfg)
 
 
+@cli.command()
+@click.option("--port", default=8080, show_default=True, help="Port for the web UI")
+@click.pass_context
+def web(ctx: click.Context, port: int) -> None:
+    """Start the web UI for monitoring and managing mailsort."""
+    import uvicorn
+    from mailsort.web.app import create_app
+
+    cfg = _safe_load_config(ctx.obj["config_path"])
+    setup_logging(cfg)
+    logger = logging.getLogger(__name__)
+
+    # Ensure DB and migrations are ready
+    with Database(cfg.db_path) as db:
+        run_migrations(db)
+
+    app = create_app(cfg)
+    logger.info("Starting web UI on http://localhost:%d", port)
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+
+
 if __name__ == "__main__":
     cli()

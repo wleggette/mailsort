@@ -19,6 +19,7 @@ from typing import Optional
 
 from mailsort.audit.learner import Learner
 from mailsort.audit.writer import AuditWriter
+from mailsort.classifier.descriptions import generate_descriptions_for_new_folders
 from mailsort.classifier.features import (
     extract_features, load_contacts,
     refresh_contacts, should_refresh_contacts, mark_contacts_refreshed,
@@ -120,6 +121,19 @@ def _execute_run(
             logger.debug("Contacts: up to date")
     except Exception:
         logger.warning("Contacts: refresh failed, using cached data")
+
+    # Generate descriptions for any new folders that don't have one yet
+    try:
+        new_descs = generate_descriptions_for_new_folders(
+            db, tree.all_folder_paths(),
+            anthropic_api_key=cfg.anthropic_api_key,
+            llm_model=cfg.classification.llm_model,
+            folder_description_overrides=cfg.folder_description_overrides,
+        )
+        if new_descs:
+            logger.info("Generated %d new folder description(s)", new_descs)
+    except Exception:
+        logger.warning("Folder description generation failed, continuing")
 
     # ------------------------------------------------------------------
     # 1. Query eligible inbox emails

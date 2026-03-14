@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Mailsort{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    /* Minimal custom styles beyond Tailwind */
+    [data-loading] { opacity: 0.5; transition: opacity 0.2s; }
+    .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background-color: #f3f4f6; }
+    th.sortable .sort-icon { opacity: 0; margin-left: 3px; transition: opacity 0.15s, transform 0.15s; display: inline-block; vertical-align: middle; position: relative; top: -1px; }
+    th.sortable:hover .sort-icon { opacity: 0.25; }
+    th.sortable.sort-asc .sort-icon,
+    th.sortable.sort-desc .sort-icon { opacity: 0.5; }
+    th.sortable.sort-asc .sort-icon { transform: rotate(0deg); }
+    th.sortable.sort-desc .sort-icon { transform: rotate(180deg); }
+  </style>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('table.sortable').forEach(table => {
+        const headers = table.querySelectorAll('thead th');
+        headers.forEach((th, colIdx) => {
+          if (th.dataset.nosort !== undefined) return;
+          th.classList.add('sortable');
+          th.insertAdjacentHTML('beforeend', '<svg class="sort-icon" width="8" height="6" viewBox="0 0 8 6"><path d="M4 0L7.5 5.5H0.5L4 0Z" fill="currentColor"/></svg>');
+          let asc = true;
+          th.addEventListener('click', () => {
+            // Clear other headers
+            headers.forEach(h => { h.classList.remove('sort-asc', 'sort-desc'); });
+            th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort((a, b) => {
+              const aText = (a.children[colIdx]?.textContent || '').trim();
+              const bText = (b.children[colIdx]?.textContent || '').trim();
+              // Only treat as numeric if the entire trimmed value is a valid number
+              const aIsNum = aText !== '' && !isNaN(aText) && !isNaN(parseFloat(aText));
+              const bIsNum = bText !== '' && !isNaN(bText) && !isNaN(parseFloat(bText));
+              if (aIsNum && bIsNum) {
+                return asc ? parseFloat(aText) - parseFloat(bText) : parseFloat(bText) - parseFloat(aText);
+              }
+              return asc ? aText.localeCompare(bText) : bText.localeCompare(aText);
+            });
+            rows.forEach(row => tbody.appendChild(row));
+            asc = !asc;
+          });
+        });
+      });
+    });
+  </script>
+</head>
+<body class="h-full">
+  <div class="flex h-full">
+    {% include "components/nav.html" %}
+
+    <main class="flex-1 overflow-y-auto">
+      <div class="max-w-7xl mx-auto px-8 py-8">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+</body>
+</html>

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from mailsort.audit.learner import Learner
 from mailsort.audit.writer import AuditWriter
+from mailsort.classifier.descriptions import generate_folder_description
 from mailsort.classifier.features import extract_features, refresh_contacts
 from mailsort.classifier.rules import RuleEngine
 from mailsort.config import Config
@@ -195,9 +196,14 @@ def _collect_evidence(
 
         db.commit()
 
-        # Generate folder description if one doesn't exist and no manual override
-        if folder_path not in (cfg.folder_description_overrides or {}):
-            _maybe_generate_description(db, folder_path, emails)
+        # Generate folder description if one doesn't exist
+        desc = generate_folder_description(
+            db, folder_path, emails,
+            anthropic_api_key=cfg.anthropic_api_key,
+            llm_model=cfg.classification.llm_model,
+            folder_description_overrides=cfg.folder_description_overrides,
+        )
+        if desc:
             report.descriptions_generated += 1
 
         logger.debug(
@@ -234,33 +240,6 @@ def _create_rules_from_evidence(
         if rule_id:
             report.rules_created += 1
 
-
-def _maybe_generate_description(
-    db: Database,
-    folder_path: str,
-    emails: list,
-) -> None:
-    """Store a simple description based on the folder name if none exists.
-
-    Full LLM-based description generation is deferred to a future phase.
-    For now, use the folder path as a placeholder description.
-    """
-    existing = db.execute(
-        "SELECT 1 FROM folder_descriptions WHERE folder_path = ?",
-        (folder_path,),
-    ).fetchone()
-    if existing:
-        return
-
-    # Use the leaf folder name as a basic description
-    leaf = folder_path.rsplit("/", 1)[-1] if "/" in folder_path else folder_path
-    description = f"Emails filed under {leaf}"
-
-    db.execute(
-        "INSERT INTO folder_descriptions (folder_path, description, source) VALUES (?, ?, 'auto')",
-        (folder_path, description),
-    )
-    db.commit()
 
 
 

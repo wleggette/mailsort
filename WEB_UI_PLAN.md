@@ -260,11 +260,56 @@ different port from the health check.
 
 ---
 
-## Implementation Order
+## Implementation Checklist
 
-1. Skeleton: FastAPI app, base template, nav, Tailwind/htmx setup
-2. Dashboard — quick wins, shows data immediately
-3. Rules — most actionable page (review bootstrap output)
-4. Audit log — highest data volume, needs filtering/pagination
-5. Threshold analysis — interactive charts
-6. Contacts + Folders + Settings — simpler data views
+### Phase 1: Skeleton ✅
+- [x] Add `fastapi`, `uvicorn`, `jinja2` to `pyproject.toml`
+- [x] Create `web/app.py` — FastAPI app factory with DB dependency
+- [x] Create `web/templates/base.html` — layout with Tailwind CDN, htmx CDN, nav
+- [x] Create `web/templates/components/nav.html` — sidebar navigation
+- [x] Add `mailsort web` CLI command (`main.py`)
+- [x] Verify skeleton serves a page at `http://localhost:8080/`
+
+### Phase 2: Dashboard (`/`) ✅
+- [x] `web/routes/dashboard.py` — query runs, stats, system health
+- [x] `web/templates/dashboard.html` — last run card, run history table, quick stats
+- [x] Status badges component (completed/failed/abandoned)
+
+### Phase 3: Rules (`/rules`, `/rules/{id}`) ✅
+- [x] `web/routes/rules.py` — list, detail, toggle, create endpoints
+- [x] `web/templates/rules/list.html` — filterable table with active/inactive/suggested tabs
+- [x] `web/templates/rules/detail.html` — single rule with coherence stats + audit history
+- [x] Evidence Emails section — all emails matching the rule's condition across all
+      folders, with folder column color-coded (green = target, amber = other)
+- [x] Rule create form (inline, toggled via button)
+- [x] Toggle active/inactive via POST + redirect
+
+### Phase 4: Audit Log (`/audit`, `/audit/{id}`) ✅
+- [x] `web/routes/audit.py` — list with filters, detail view, pagination
+- [x] `web/templates/audit/list.html` — filterable/paginated table, sortable columns
+- [x] `web/templates/audit/detail.html` — full email classification detail with
+      linked rule, LLM reasoning, thread context
+- [x] Filter bar: source, moved, folder, sender, days (all bookmarkable via query params)
+- [x] Pagination with bookmarkable page numbers
+- [ ] CSV export (deferred)
+
+### Phase 5: Threshold Analysis (`/analyze`)
+- [ ] `web/routes/analyze.py` — query analysis data
+- [ ] `web/templates/analyze.html` — source breakdown, confidence histogram,
+      skipped-then-sorted table, recommendations
+- [ ] Date range picker (query param)
+
+### Phase 6: Contacts (`/contacts`) ✅
+- [x] `web/routes/contacts.py` — list with search
+- [x] `web/templates/contacts/list.html` — searchable sortable table
+- [x] Relationship badges for config overrides
+
+### Phase 7: Folders (`/folders`) ✅
+- [x] `web/routes/folders.py` — folder list with descriptions and email counts
+- [x] `web/templates/folders.html` — indented table with depth-based padding
+- [x] Excluded folders shown grayed out with "excluded" badge
+
+### Phase 8: Settings (`/settings`) ✅
+- [x] `web/routes/settings.py` — read-only config view
+- [x] `web/templates/settings.html` — organized cards: Fastmail, Scheduler,
+      Thresholds, Auto-Rule, LLM, Filters & Exclusions, Logging
