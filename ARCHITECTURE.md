@@ -1808,9 +1808,13 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
       (`health.py`, `scheduler.health_check_port` config)
 
 ### Phase 6: Observability & Tuning
-- [ ] Structured logging
-- [ ] Export-rules script
-- [ ] Confidence threshold tuning based on audit data
+- [x] Structured logging: JSON or text format via `logging_config.format` config
+      toggle (`main.py` `_JSONFormatter`)
+- [x] Export-rules: `mailsort export-rules [--inactive]` dumps rules to YAML
+      (`main.py`)
+- [x] Confidence threshold analysis: `mailsort analyze [--days N]` shows
+      classification sources, move outcomes, LLM confidence distribution,
+      skipped-then-manually-sorted stats, and recommendations (`main.py`)
 - [ ] Optional: simple web UI for reviewing audit log and rules
 
 ---

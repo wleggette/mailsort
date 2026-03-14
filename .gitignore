@@ -12,12 +12,14 @@ venv/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.swp
 *.swo
 
 # Environment / secrets
 .env
+.envrc
 config.yaml
 
 # Data (runtime artifacts, not source)

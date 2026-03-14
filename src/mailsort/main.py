@@ -20,11 +20,36 @@ from mailsort.orchestrator import run_classification_pass
 from mailsort.scheduler import start_scheduler
 
 
+class _JSONFormatter(logging.Formatter):
+    """Formats log records as single-line JSON objects."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json
+        entry = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[0] is not None:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry, default=str)
+
+
 def setup_logging(cfg: Config) -> None:
     log_cfg = cfg.logging_config
     level = getattr(logging, log_cfg.level.upper(), logging.INFO)
 
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
+    use_json = log_cfg.format.lower() == "json"
+
+    if use_json:
+        formatter = _JSONFormatter()
+    else:
+        formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s")
+
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(formatter)
+    handlers: list[logging.Handler] = [stdout_handler]
 
     log_path = Path(log_cfg.file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -33,11 +58,11 @@ def setup_logging(cfg: Config) -> None:
         maxBytes=log_cfg.max_size_mb * 1024 * 1024,
         backupCount=log_cfg.backup_count,
     )
+    file_handler.setFormatter(formatter)
     handlers.append(file_handler)
 
     logging.basicConfig(
         level=level,
-        format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
         handlers=handlers,
     )
 
@@ -45,6 +70,35 @@ def setup_logging(cfg: Config) -> None:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def _safe_load_config(config_path: str) -> Config:
+    """Load config with user-friendly error messages instead of tracebacks."""
+    try:
+        return load_config(config_path)
+    except FileNotFoundError:
+        click.echo(f"Error: Config file not found: {config_path}", err=True)
+        raise SystemExit(1)
+    except Exception as e:
+        # Pydantic ValidationError, YAML parse errors, etc.
+        msg = str(e)
+        # Extract the useful part from Pydantic's verbose errors
+        if "FASTMAIL_API_TOKEN" in msg:
+            click.echo(
+                "Error: FASTMAIL_API_TOKEN is not set.\n"
+                "  Set it as an environment variable:\n"
+                "    export FASTMAIL_API_TOKEN=fmu1-...\n"
+                "  Or add it to a .env file and run:\n"
+                "    export $(grep -v '^#' .env | xargs)",
+                err=True,
+            )
+        elif "validation error" in msg.lower():
+            # Show just the first error line, not the full Pydantic dump
+            lines = msg.strip().splitlines()
+            click.echo(f"Error: Invalid configuration — {lines[-1].strip()}", err=True)
+        else:
+            click.echo(f"Error: Failed to load config — {e}", err=True)
+        raise SystemExit(1)
+
 
 @click.group()
 @click.option(
@@ -75,7 +129,7 @@ def dry_run(ctx: click.Context) -> None:
 
 
 def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
-    cfg = load_config(ctx.obj["config_path"])
+    cfg = _safe_load_config(ctx.obj["config_path"])
     setup_logging(cfg)
     logger = logging.getLogger(__name__)
     mode = "DRY RUN" if dry_run else "LIVE"
@@ -113,7 +167,7 @@ def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
 @click.pass_context
 def check_config(ctx: click.Context) -> None:
     """Validate config and verify Fastmail connectivity."""
-    cfg = load_config(ctx.obj["config_path"])
+    cfg = _safe_load_config(ctx.obj["config_path"])
     setup_logging(cfg)
 
     click.echo(f"Config loaded from {ctx.obj['config_path']}")
@@ -140,7 +194,7 @@ def check_config(ctx: click.Context) -> None:
 @click.pass_context
 def bootstrap(ctx: click.Context, max_per_folder: int) -> None:
     """Scan existing folders to seed rules and folder descriptions."""
-    cfg = load_config(ctx.obj["config_path"])
+    cfg = _safe_load_config(ctx.obj["config_path"])
     setup_logging(cfg)
     logger = logging.getLogger(__name__)
 
@@ -165,11 +219,182 @@ def bootstrap(ctx: click.Context, max_per_folder: int) -> None:
         click.echo(f"  Errors          : {len(report.errors)}")
 
 
+@cli.command("export-rules")
+@click.option("--inactive", is_flag=True, help="Include inactive/suggested rules")
+@click.pass_context
+def export_rules(ctx: click.Context, inactive: bool) -> None:
+    """Export all rules to YAML for review."""
+    import yaml as _yaml
+
+    cfg = _safe_load_config(ctx.obj["config_path"])
+
+    with Database(cfg.db_path) as db:
+        run_migrations(db)
+        where = "" if inactive else "WHERE active = 1"
+        rows = db.execute(
+            f"SELECT rule_type, condition_value, target_folder_path, confidence, "
+            f"source, hit_count, last_hit_at, active, created_at "
+            f"FROM rules {where} ORDER BY rule_type, condition_value"
+        ).fetchall()
+
+        rules = []
+        for r in rows:
+            entry: dict = {
+                "type": r["rule_type"],
+                "value": r["condition_value"],
+                "folder": r["target_folder_path"],
+                "confidence": r["confidence"],
+                "source": r["source"],
+                "hits": r["hit_count"],
+            }
+            if r["last_hit_at"]:
+                entry["last_hit"] = r["last_hit_at"]
+            if not r["active"]:
+                entry["active"] = False
+            rules.append(entry)
+
+    click.echo(_yaml.dump({"rules": rules}, default_flow_style=False, sort_keys=False))
+    click.echo(f"# {len(rules)} rule(s) exported", err=True)
+
+
+@cli.command()
+@click.option("--days", default=30, show_default=True, help="Analysis window in days")
+@click.pass_context
+def analyze(ctx: click.Context, days: int) -> None:
+    """Analyze confidence thresholds based on audit data."""
+    cfg = _safe_load_config(ctx.obj["config_path"])
+
+    with Database(cfg.db_path) as db:
+        run_migrations(db)
+        _print_analysis(db, cfg, days)
+
+
+def _print_analysis(db: Database, cfg: Config, days: int) -> None:
+    """Query audit_log and print threshold analysis report."""
+    window = f"-{days} days"
+
+    # Overall counts
+    total = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE created_at >= datetime('now', ?)", (window,)
+    ).fetchone()[0]
+    if total == 0:
+        click.echo("No audit data found. Run mailsort first to generate data.")
+        return
+
+    moved = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE moved = 1 AND created_at >= datetime('now', ?)", (window,)
+    ).fetchone()[0]
+    skipped = total - moved
+
+    # By source
+    source_rows = db.execute(
+        "SELECT classification_source, COUNT(*) as n, SUM(moved) as m "
+        "FROM audit_log WHERE created_at >= datetime('now', ?) "
+        "GROUP BY classification_source ORDER BY n DESC", (window,)
+    ).fetchall()
+
+    # User corrections (manual sorts that override a prior mailsort move)
+    corrections = db.execute(
+        "SELECT COUNT(*) FROM audit_log "
+        "WHERE classification_source = 'manual' AND created_at >= datetime('now', ?)", (window,)
+    ).fetchone()[0]
+
+    error_rate = corrections / moved * 100 if moved > 0 else 0.0
+
+    click.echo(f"\n{'═' * 62}")
+    click.echo(f"  Mailsort Threshold Analysis — last {days} days · {total} emails")
+    click.echo(f"{'═' * 62}")
+
+    click.echo(f"\n── Classification Sources {'─' * 37}")
+    for r in source_rows:
+        pct = r["n"] / total * 100
+        bar = "█" * int(pct / 4) + "░" * (25 - int(pct / 4))
+        click.echo(f"  {r['classification_source']:16s} {r['n']:5d} ({pct:4.1f}%)  {bar}")
+
+    click.echo(f"\n── Move Outcomes {'─' * 46}")
+    click.echo(f"  Moved:            {moved:5d} ({moved / total * 100:.0f}%)")
+    click.echo(f"  Skipped:          {skipped:5d} ({skipped / total * 100:.0f}%)")
+    click.echo(f"  User corrections: {corrections:5d} ({error_rate:.1f}% error rate)")
+
+    # LLM confidence distribution
+    llm_rows = db.execute(
+        "SELECT "
+        "  CASE "
+        "    WHEN confidence >= 0.90 THEN '0.90–1.00' "
+        "    WHEN confidence >= 0.80 THEN '0.80–0.89' "
+        "    WHEN confidence >= 0.70 THEN '0.70–0.79' "
+        "    WHEN confidence >= 0.60 THEN '0.60–0.69' "
+        "    ELSE '< 0.60' "
+        "  END AS bucket, "
+        "  SUM(CASE WHEN moved = 1 THEN 1 ELSE 0 END) AS moved, "
+        "  SUM(CASE WHEN moved = 0 THEN 1 ELSE 0 END) AS skipped "
+        "FROM audit_log "
+        "WHERE classification_source = 'llm' AND created_at >= datetime('now', ?) "
+        "GROUP BY bucket ORDER BY bucket DESC", (window,)
+    ).fetchall()
+
+    if llm_rows:
+        click.echo(f"\n── LLM Confidence Distribution {'─' * 31}")
+        click.echo(f"  {'Confidence':<14s} {'Moved':>6s}  {'Skipped':>7s}")
+        for r in llm_rows:
+            marker = ""
+            if r["bucket"] == "0.80–0.89":
+                marker = f"  ← current threshold ({cfg.classification.thresholds.llm_move})"
+            click.echo(f"  {r['bucket']:<14s} {r['moved']:>6d}  {r['skipped']:>7d}{marker}")
+
+    # Skipped LLM emails that the user later sorted to the same folder
+    skipped_then_sorted = db.execute(
+        "SELECT a1.email_id, a1.target_folder AS llm_folder, a1.confidence, "
+        "       a2.target_folder AS manual_folder "
+        "FROM audit_log a1 "
+        "JOIN audit_log a2 ON a1.email_id = a2.email_id "
+        "WHERE a1.classification_source = 'llm' AND a1.moved = 0 "
+        "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
+        "  AND a1.created_at >= datetime('now', ?)", (window,)
+    ).fetchall()
+
+    if skipped_then_sorted:
+        same_folder = [r for r in skipped_then_sorted if r["llm_folder"] == r["manual_folder"]]
+        click.echo(f"\n── Skipped Emails You Later Sorted {'─' * 27}")
+        click.echo(
+            f"  {len(same_folder)} of {len(skipped_then_sorted)} skipped LLM emails "
+            f"were manually sorted to the SAME folder the LLM suggested."
+        )
+        if same_folder:
+            avg_conf = sum(r["confidence"] for r in same_folder) / len(same_folder)
+            click.echo(f"  Average LLM confidence on those: {avg_conf:.2f}")
+
+    # Recommendations
+    click.echo(f"\n── Recommendations {'─' * 43}")
+    if skipped_then_sorted and len([r for r in skipped_then_sorted if r["llm_folder"] == r["manual_folder"]]) > 3:
+        same = [r for r in skipped_then_sorted if r["llm_folder"] == r["manual_folder"]]
+        avg = sum(r["confidence"] for r in same) / len(same)
+        suggested = round(avg - 0.05, 2)
+        click.echo(
+            f"  ⚡ llm_move: {cfg.classification.thresholds.llm_move} → {suggested} "
+            f"would capture ~{len(same)} more emails/month"
+        )
+    else:
+        click.echo(f"  ✓ llm_move: {cfg.classification.thresholds.llm_move} — insufficient data to suggest changes")
+
+    rule_corrections = db.execute(
+        "SELECT COUNT(*) FROM audit_log a1 "
+        "JOIN audit_log a2 ON a1.email_id = a2.email_id "
+        "WHERE a1.classification_source = 'rule' AND a1.moved = 1 "
+        "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
+        "  AND a1.target_folder != a2.target_folder "
+        "  AND a1.created_at >= datetime('now', ?)", (window,)
+    ).fetchone()[0]
+    click.echo(f"  {'✓' if rule_corrections == 0 else '⚠'} rule_move: {cfg.classification.thresholds.rule_move} — {rule_corrections} correction(s)")
+
+    click.echo()
+
+
 @cli.command()
 @click.pass_context
 def start(ctx: click.Context) -> None:
     """Start the scheduler (runs classification every N minutes)."""
-    cfg = load_config(ctx.obj["config_path"])
+    cfg = _safe_load_config(ctx.obj["config_path"])
     setup_logging(cfg)
     logger = logging.getLogger(__name__)
 
