@@ -109,7 +109,7 @@ class Learner:
         found = 0
 
         try:
-            emails = jmap.get_emails(skipped_ids[:100], ["id", "mailboxIds"])
+            emails = jmap.get_emails(skipped_ids[:100], ["id", "threadId", "mailboxIds"])
         except Exception:
             logger.exception("Failed to fetch skipped emails for manual sort detection")
             return 0
@@ -159,7 +159,7 @@ class Learner:
         found = 0
 
         try:
-            emails = jmap.get_emails(email_ids[:100], ["id", "mailboxIds"])
+            emails = jmap.get_emails(email_ids[:100], ["id", "threadId", "mailboxIds"])
         except Exception:
             logger.exception("Failed to fetch moved emails for correction detection")
             return 0

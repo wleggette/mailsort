@@ -374,8 +374,8 @@ class JMAPClient:
             }, "s1"],
         ])
         result = data["methodResponses"][0][1]
-        updated = set(result.get("updated", {}).keys())
-        not_updated = set(result.get("notUpdated", {}).keys())
+        updated = set((result.get("updated") or {}).keys())
+        not_updated = set((result.get("notUpdated") or {}).keys())
 
         outcomes: dict[str, bool] = {}
         for email_id, _, _ in moves:
