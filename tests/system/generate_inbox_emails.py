@@ -63,9 +63,9 @@ def generate_inbox_emails() -> list[dict]:
             "subject": f"[TEST] BofA too new {ts}",
             "body": "A new transaction was posted to your account.",
             "keywords": {"$seen": True},
-            "received_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),  # just now
+            "received_at": (now + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),  # 5min in future — always too new
             "expected_outcome": "too_new",
-            "description": "E4: Rule match, too new — receivedAt is now, under min_age_minutes",
+            "description": "E4: Rule match, too new — receivedAt is 5min in future, always under min_age_minutes",
         },
 
         # E5: Unread + flagged + new — unread takes priority
@@ -128,7 +128,7 @@ def generate_inbox_emails() -> list[dict]:
             "description": "C5: Unknown sender, no evidence — LLM or no_classification",
         },
 
-        # R5: megastore.com address below threshold — no rule
+        # R5a: megastore.com address below threshold — no rule
         {
             "from_email": "returns@megastore.com",
             "from_name": "MegaStore Returns",
@@ -137,7 +137,72 @@ def generate_inbox_emails() -> list[dict]:
             "keywords": {"$seen": True},
             "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "expected_outcome": "llm_no_domain_rule",
-            "description": "R5: megastore.com address with <3 emails — no rule, LLM classifies",
+            "description": "R5a: megastore.com address with <3 emails — no rule, LLM classifies",
+        },
+
+        # R5b: megastore.com per-address rule → Stores
+        {
+            "from_email": "orders@megastore.com",
+            "from_name": "MegaStore Orders",
+            "subject": f"[TEST] MegaStore order confirm {ts}",
+            "body": "Your MegaStore order #MS-2001 has been confirmed and is being prepared for shipment.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "moved",
+            "expected_folder": "Affairs/Stores",
+            "description": "R5b: exact_sender rule for orders@megastore.com → Stores (Amazon problem positive)",
+        },
+
+        # R5c: megastore.com per-address rule → Banks (different folder!)
+        {
+            "from_email": "alerts@megastore.com",
+            "from_name": "MegaStore Alerts",
+            "subject": f"[TEST] MegaStore payment alert {ts}",
+            "body": "Your credit card on file will be charged $49.99 for your MegaStore Premium renewal.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "moved",
+            "expected_folder": "Affairs/Banks",
+            "description": "R5c: exact_sender rule for alerts@megastore.com → Banks (same domain, different folder)",
+        },
+
+        # C1: Known contact with exact_sender rule — rule wins over LLM threshold
+        {
+            "from_email": "testfriend@gmail.com",
+            "from_name": "Test Friend",
+            "subject": f"[TEST] Friend playdate request {ts}",
+            "body": "Hey! Can the kids come over for a playdate this Saturday afternoon?",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "moved",
+            "expected_folder": "People/Children",
+            "description": "C1: Known contact with exact_sender rule — rule takes precedence over LLM",
+        },
+
+        # S4: Thread match — reply to rare@oneoff.com (no rule, only thread context classifies)
+        {
+            "from_email": "rare@oneoff.com",
+            "from_name": "Rare Sender",
+            "subject": f"[TEST] Re: One-time verification code",
+            "body": "Follow-up: please disregard previous code, here is your new one: 193847.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "in_reply_to": "<rare-verify-001@mailsort-test>",
+            "expected_outcome": "moved",
+            "expected_folder": "Affairs/Banks",
+            "description": "S4: Thread match — rare@oneoff.com has no rule, only thread context can classify → Banks",
+        },
+
+        # S6: LLM below threshold — very ambiguous content
+        {
+            "from_email": "info@ambiguous-service.com",
+            "from_name": "Some Service",
+            "subject": f"[TEST] Update on your account {ts}",
+            "body": "Hi, just a quick note. Thanks.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "llm_below_threshold",
+            "description": "S6: No rule, minimal content — LLM likely below confidence threshold",
         },
 
         # S2: Domain rule match (bigbank.com) — new address at ruled domain

@@ -393,7 +393,7 @@ def main():
     parser.add_argument("--config", default="config.test.yaml", help="Path to test config")
     parser.add_argument("--to-email", required=True, help="Test account email address")
     parser.add_argument("--setup-only", action="store_true", help="Only setup (load fixtures + bootstrap), then stop")
-    parser.add_argument("--cleanup", action="store_true", help="Only cleanup test data")
+    parser.add_argument("--cleanup", "--cleanup-only", action="store_true", help="Only cleanup test data")
     parser.add_argument("--skip-cleanup", action="store_true", help="Skip cleanup phase in full test run")
     args = parser.parse_args()
 

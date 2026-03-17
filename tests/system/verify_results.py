@@ -160,16 +160,89 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
     # Check specific test emails by subject prefix pattern
     for r in rows:
         subject = r["subject"] or ""
+        src = r["classification_source"]
+        skip = r["skip_reason"]
+        folder = r["target_folder"] or ""
+
+        # --- Eligibility gates (E1–E5) ---
         if "eligible" in subject.lower() and "chase" in subject.lower():
-            v.check(r["classification_source"] == "rule", f"Chase eligible classified by rule")
-            v.check(r["skip_reason"] == "dry_run" or r["skip_reason"] is None,
-                     f"Chase eligible: skip_reason={r['skip_reason']}")
+            v.check(src == "rule", f"E1 Chase eligible: source=rule (got {src})")
+            v.check(skip is None or skip == "dry_run",
+                     f"E1 Chase eligible: skip_reason={skip}")
         elif "unread" in subject.lower() and "amazon" in subject.lower():
-            v.check(r["skip_reason"] == "unread", f"Amazon unread: skip_reason={r['skip_reason']}")
+            v.check(skip == "unread", f"E2 Amazon unread: skip_reason={skip}")
         elif "flagged" in subject.lower() and "chase" in subject.lower():
-            v.check(r["skip_reason"] == "flagged", f"Chase flagged: skip_reason={r['skip_reason']}")
-        elif "too new" in subject.lower() or "bofa too new" in subject.lower():
-            v.check(r["skip_reason"] == "too_new", f"BofA too new: skip_reason={r['skip_reason']}")
+            v.check(skip == "flagged", f"E3 Chase flagged: skip_reason={skip}")
+        elif "too new" in subject.lower():
+            v.check(skip == "too_new", f"E4 BofA too new: skip_reason={skip}")
+        elif "unread+flagged" in subject.lower() or ("target" in subject.lower() and "flagged" in subject.lower()):
+            v.check(skip == "unread", f"E5 Target unread+flagged: skip_reason={skip} (unread checked first)")
+
+        # --- Rule classification sources (S1–S4) ---
+        elif "bigbank support" in subject.lower():
+            v.check(src == "rule", f"S2 BigBank domain rule: source=rule (got {src})")
+            v.check("banks" in folder.lower(), f"S2 BigBank → Banks (got {folder})")
+            if r["rule_id"]:
+                matched_rule = db.execute(
+                    "SELECT rule_type FROM rules WHERE id = ?", (r["rule_id"],)
+                ).fetchone()
+                if matched_rule:
+                    v.check(matched_rule["rule_type"] == "sender_domain",
+                             f"S2 matched via sender_domain rule (got {matched_rule['rule_type']})")
+        elif "school weekly" in subject.lower():
+            v.check(src == "rule", f"S3 School list_id rule: source=rule (got {src})")
+            v.check("children" in folder.lower(), f"S3 School → Children (got {folder})")
+            # Verify it was specifically the list_id rule, not an exact_sender rule
+            if r["rule_id"]:
+                matched_rule = db.execute(
+                    "SELECT rule_type FROM rules WHERE id = ?", (r["rule_id"],)
+                ).fetchone()
+                if matched_rule:
+                    v.check(matched_rule["rule_type"] == "list_id",
+                             f"S3 matched via list_id rule (got {matched_rule['rule_type']})")
+                else:
+                    v.check(False, f"S3 rule_id {r['rule_id']} not found in rules table")
+        elif "re: one-time verification" in subject.lower():
+            v.check(src == "thread", f"S4 Thread match: source={src} (expect thread — rare@oneoff.com has no rule)")
+            v.check("banks" in folder.lower(), f"S4 Thread → Banks (got {folder})")
+
+        # --- Amazon problem / per-address rules (R5) ---
+        elif "megastore order" in subject.lower():
+            v.check(src == "rule", f"R5b orders@megastore.com: source=rule (got {src})")
+            v.check("stores" in folder.lower(), f"R5b MegaStore orders → Stores (got {folder})")
+            if r["rule_id"]:
+                matched_rule = db.execute(
+                    "SELECT rule_type FROM rules WHERE id = ?", (r["rule_id"],)
+                ).fetchone()
+                if matched_rule:
+                    v.check(matched_rule["rule_type"] == "exact_sender",
+                             f"R5b matched via exact_sender rule (got {matched_rule['rule_type']})")
+        elif "megastore payment" in subject.lower():
+            v.check(src == "rule", f"R5c alerts@megastore.com: source=rule (got {src})")
+            v.check("banks" in folder.lower(), f"R5c MegaStore alerts → Banks (got {folder})")
+            if r["rule_id"]:
+                matched_rule = db.execute(
+                    "SELECT rule_type FROM rules WHERE id = ?", (r["rule_id"],)
+                ).fetchone()
+                if matched_rule:
+                    v.check(matched_rule["rule_type"] == "exact_sender",
+                             f"R5c matched via exact_sender rule (got {matched_rule['rule_type']})")
+        elif "megastore return" in subject.lower():
+            v.check(src == "llm", f"R5a returns@megastore.com: source=llm (got {src}, no rule)")
+
+        # --- Known contact with rule (C1) ---
+        elif "friend playdate" in subject.lower():
+            v.check(src == "rule", f"C1 testfriend rule: source=rule (got {src})")
+            v.check("children" in folder.lower(), f"C1 testfriend → Children (got {folder})")
+
+        # --- LLM scenarios ---
+        elif "contact ambiguous" in subject.lower():
+            v.check(src == "llm", f"S8 Known contact ambiguous: source=llm (got {src})")
+        elif "alice ambiguous" in subject.lower():
+            v.check(src == "llm", f"C4 alice@family.com split: source=llm (got {src})")
+        elif "ambiguous-service" in (r["from_address"] or ""):
+            v.check(src == "llm" or src is None,
+                     f"S6 Ambiguous below threshold: source={src}")
 
     v.print_report()
     return v

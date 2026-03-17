@@ -267,6 +267,8 @@ def build_rfc5322(
     body: str,
     received_at: str | None = None,
     list_id: str | None = None,
+    message_id: str | None = None,
+    in_reply_to: str | None = None,
 ) -> bytes:
     """Build a minimal RFC 5322 message."""
     msg = MIMEText(body, "plain", "utf-8")
@@ -280,7 +282,14 @@ def build_rfc5322(
     else:
         msg["Date"] = email.utils.format_datetime(datetime.now(timezone.utc))
 
-    msg["Message-ID"] = f"<test-{hash(subject) & 0xFFFFFFFF:08x}@mailsort-test>"
+    if message_id:
+        msg["Message-ID"] = message_id
+    else:
+        msg["Message-ID"] = f"<test-{hash(subject) & 0xFFFFFFFF:08x}@mailsort-test>"
+
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+        msg["References"] = in_reply_to
 
     if list_id:
         msg["List-Id"] = list_id
@@ -354,6 +363,7 @@ def load_folder_fixtures(
             body=em["body"],
             received_at=received_at,
             list_id=em.get("list_id"),
+            message_id=em.get("message_id"),
         )
 
         try:
@@ -412,6 +422,8 @@ def load_inbox_emails(
             body=em.get("body", f"Test email from {em['from_email']}"),
             received_at=em.get("received_at"),
             list_id=em.get("list_id"),
+            message_id=em.get("message_id"),
+            in_reply_to=em.get("in_reply_to"),
         )
 
         try:

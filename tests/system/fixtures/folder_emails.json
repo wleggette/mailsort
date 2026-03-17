@@ -78,7 +78,7 @@
     {"group": "H", "from_name": "Alice Family", "from_email": "alice@family.com", "subject": "Joint account statement question", "body": "Can you check if the mortgage payment cleared on the joint account?", "folder": "Affairs/Banks", "list_id": null},
     {"group": "H", "from_name": "Alice Family", "from_email": "alice@family.com", "subject": "Tax document for joint account", "body": "I got the tax document for our joint account. Can you file it?", "folder": "Affairs/Banks", "list_id": null},
 
-    {"group": "I", "from_name": "Rare Sender", "from_email": "rare@oneoff.com", "subject": "One-time verification code", "body": "Your verification code is 847293. This code expires in 10 minutes.", "folder": "Affairs/Banks", "list_id": null},
+    {"group": "I", "from_name": "Rare Sender", "from_email": "rare@oneoff.com", "subject": "One-time verification code", "body": "Your verification code is 847293. This code expires in 10 minutes.", "folder": "Affairs/Banks", "list_id": null, "message_id": "<rare-verify-001@mailsort-test>"},
     {"group": "I", "from_name": "Rare Sender", "from_email": "rare@oneoff.com", "subject": "Account confirmation", "body": "Your account has been created. Please verify your email address.", "folder": "Affairs/Banks", "list_id": null}
   ]
 }

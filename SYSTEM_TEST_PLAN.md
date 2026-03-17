@@ -239,18 +239,23 @@ scenarios at runtime:
 
 | Scenario | From | Keywords | receivedAt | Expected |
 |----------|------|----------|------------|----------|
-| E1: Rule match, eligible | `noreply@chase.com` | `$seen` | 5h ago | moved → Banks |
+| E1: Rule match, eligible | `noreply@chase.com` | `$seen` | 5h ago | moved → Banks (rule) |
 | E2: Rule match, unread | `orders@amazon.com` | (none) | 5h ago | unread |
 | E3: Rule match, flagged | `noreply@chase.com` | `$seen`, `$flagged` | 5h ago | flagged |
-| E4: Rule match, too new | `alerts@bankofamerica.com` | `$seen` | 30min ago | too_new |
-| E5: Unread + flagged + new | `noreply@target.com` | `$flagged` | 30min ago | unread |
-| S4: Thread match | (same thread as sorted email) | `$seen` | 5h ago | moved (thread) |
+| E4: Rule match, too new | `alerts@bankofamerica.com` | `$seen` | now | too_new |
+| E5: Unread + flagged + new | `noreply@target.com` | `$flagged` | now | unread (checked first) |
+| S2: Domain rule match | `support@bigbank.com` | `$seen` | 5h ago | moved → Banks (rule, new address at ruled domain) |
+| S3: List-Id rule match | `newsletter@lincolnelementary.org` | `$seen` | 5h ago | moved → Children (list_id rule) |
+| S4: Thread match | `rare@oneoff.com` (In-Reply-To verification code) | `$seen` | 5h ago | moved → Banks (thread context only — no rule for this sender) |
 | S5: LLM above threshold | `newsletter@newbank.com` | `$seen` | 5h ago | LLM classifies |
-| S6: LLM below threshold | (ambiguous content) | `$seen` | 5h ago | below_threshold |
-| S8: Known contact, ambiguous | `testcontact@example.com` | `$seen` | 5h ago | below_threshold_known_contact or moved |
+| S6: LLM below threshold | `info@ambiguous-service.com` | `$seen` | 5h ago | below_threshold (minimal content) |
+| S8: Known contact, ambiguous | `testcontact@example.com` | `$seen` | 5h ago | LLM with known-contact threshold |
+| C1: Known contact with rule | `testfriend@gmail.com` | `$seen` | 5h ago | moved → Children (rule wins over LLM) |
 | C4: Unknown exact, split | `alice@family.com` | `$seen` | 5h ago | LLM (no rule, 50% coherence) |
-| C5: No match at all | `random@unknown.com` | `$seen` | 5h ago | no_classification |
-| R5: Megastore new address | `returns@megastore.com` | `$seen` | 5h ago | LLM (no domain rule, address below threshold) |
+| C5: No match at all | `random@unknown.com` | `$seen` | 5h ago | LLM or no_classification |
+| R5a: Megastore below threshold | `returns@megastore.com` | `$seen` | 5h ago | LLM (no rule, <3 emails) |
+| R5b: Megastore per-address → Stores | `orders@megastore.com` | `$seen` | 5h ago | moved → Stores (exact_sender rule) |
+| R5c: Megastore per-address → Banks | `alerts@megastore.com` | `$seen` | 5h ago | moved → Banks (exact_sender rule, same domain different folder) |
 
 The generator uses `datetime.now(timezone.utc)` to produce `receivedAt`
 timestamps relative to the current time, ensuring `too_new` scenarios work

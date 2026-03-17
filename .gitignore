@@ -24,6 +24,9 @@ config.yaml
 
 # Data (runtime artifacts, not source)
 data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.db-journal
 data/*.log
 
 # Testing

@@ -103,7 +103,25 @@ def refresh_contacts(
         except Exception:
             logger.debug("Failed to import contact uid=%s", contact.get("uid", "?"))
 
-    # Remove contacts that no longer exist in Fastmail
+    # Insert override-only contacts not already imported from Fastmail
+    for addr, override in overrides.items():
+        addr_lower = addr.lower().strip()
+        if addr_lower in seen_addresses:
+            continue
+        seen_addresses.add(addr_lower)
+        relationship = override.relationship if hasattr(override, "relationship") else None
+        try:
+            db.execute(
+                "INSERT OR REPLACE INTO contacts "
+                "(email_address, display_name, relationship, fastmail_uid, refreshed_at) "
+                "VALUES (?, ?, ?, ?, datetime('now'))",
+                (addr_lower, addr_lower.split("@")[0], relationship, None),
+            )
+            count += 1
+        except Exception:
+            logger.debug("Failed to insert override contact %s", addr_lower)
+
+    # Remove contacts that no longer exist in Fastmail or overrides
     removed = 0
     if seen_addresses:
         try:
