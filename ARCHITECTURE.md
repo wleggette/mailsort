@@ -888,7 +888,9 @@ Populated during bootstrap and refreshed daily by the orchestrator via
 
 - Fetches all contacts via JMAP `ContactCard/get`
 - Parses name maps (full → given+surname fallback) and email maps
-- Merges `known_contact_overrides` from config (adds relationship hints)
+- Merges `known_contact_overrides` from config (adds relationship hints for
+  existing Fastmail contacts, and inserts override-only addresses that aren't
+  in the address book so the `llm_move_known_contact` threshold applies to them)
 - Uses per-contact error isolation (one bad record doesn't block the rest)
 - Tracks last refresh time in `learner_state` table (at most once per 24h)
 - Gracefully degrades if `urn:ietf:params:jmap:contacts` scope is unavailable
