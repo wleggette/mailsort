@@ -47,9 +47,7 @@ def setup_logging(cfg: Config) -> None:
     else:
         formatter = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s")
 
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setFormatter(formatter)
-    handlers: list[logging.Handler] = [stdout_handler]
+    handlers: list[logging.Handler] = []
 
     log_path = Path(log_cfg.file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +62,7 @@ def setup_logging(cfg: Config) -> None:
     logging.basicConfig(
         level=level,
         handlers=handlers,
+        force=True,
     )
 
     # Suppress noisy HTTP client logging — only show on WARNING+ or DEBUG level
@@ -208,7 +207,7 @@ def check_config(ctx: click.Context) -> None:
     click.echo(f"Config loaded from {ctx.obj['config_path']}")
     click.echo(f"  Fastmail session URL : {cfg.fastmail.session_url}")
     click.echo(f"  Scheduler interval   : {cfg.scheduler.interval_minutes}m")
-    click.echo(f"  Min email age        : {cfg.scheduler.min_age_hours}h")
+    click.echo(f"  Min email age        : {cfg.scheduler.min_age_minutes}m")
     click.echo(f"  LLM model            : {cfg.classification.llm_model}")
 
     with JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url) as jmap:
