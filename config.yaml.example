@@ -45,9 +45,13 @@ manual_rules: []
 # Folders to exclude from classification, bootstrap, and learning.
 # Uses glob patterns matched against folder paths.
 # Spam handling should be left to Fastmail — mailsort is for non-spam routing.
+# Also useful for parent/holding folders that only contain subfolders:
+#   excluding "INBOX/Affairs" still allows "INBOX/Affairs/Banks" etc.
 exclude_folder_patterns:
   - "Junk Training/*"
   - "Spam Archive/*"
+  # - "INBOX/Affairs"       # parent folder — sort into subfolders instead
+  # - "INBOX/People"        # parent folder — sort into subfolders instead
 
 # Skip list — never auto-move these senders
 skip_senders: []

@@ -29,7 +29,9 @@ known_contact_overrides:
   "testcontact@example.com":
     relationship: "friend"
 
-exclude_folder_patterns: []
+exclude_folder_patterns:
+  - "INBOX/Affairs"
+  - "INBOX/People"
 skip_senders: []
 
 # Runtime — test database separate from production

@@ -200,7 +200,7 @@ def _execute_run(
     # 3. Build pipeline
     # ------------------------------------------------------------------
     contacts = load_contacts(db)
-    folder_descriptions = _load_folder_descriptions(cfg, db)
+    folder_descriptions = _load_folder_descriptions(cfg, db, tree.all_folder_paths())
 
     llm_classifier: Optional[LLMClassifier] = None
     if cfg.anthropic_api_key:
@@ -348,15 +348,42 @@ def _execute_run(
     return len(eligible), emails_moved
 
 
-def _load_folder_descriptions(cfg: Config, db: Database) -> str:
-    """Load folder descriptions from DB + config overrides, formatted for LLM prompt."""
+def _load_folder_descriptions(cfg: Config, db: Database, valid_paths: set[str]) -> str:
+    """Load folder descriptions from DB + config overrides, formatted for LLM prompt.
+
+    Only descriptions for paths in *valid_paths* (from the mailbox tree) are
+    included.  Config overrides are normalised — if a key doesn't match a valid
+    path directly, we try prepending ``INBOX/`` before discarding it.
+    """
     descriptions: dict[str, str] = {}
+
+    # DB descriptions (already INBOX/-prefixed)
     rows = db.execute("SELECT folder_path, description FROM folder_descriptions").fetchall()
     for row in rows:
-        descriptions[row["folder_path"]] = row["description"]
-    descriptions.update(cfg.folder_description_overrides or {})
+        path = row["folder_path"]
+        if path in valid_paths:
+            descriptions[path] = row["description"]
+
+    # Config overrides — normalise path format
+    for path, desc in (cfg.folder_description_overrides or {}).items():
+        normalised = _normalise_folder_path(path, valid_paths)
+        if normalised:
+            descriptions[normalised] = desc
 
     if not descriptions:
         return "(no folder descriptions available)"
 
     return "\n".join(f"- {path}: {desc}" for path, desc in sorted(descriptions.items()))
+
+
+def _normalise_folder_path(path: str, valid_paths: set[str]) -> str | None:
+    """Return the canonical form of *path* if it matches a valid path, else None.
+
+    Tries the path as-is first, then with an ``INBOX/`` prefix.
+    """
+    if path in valid_paths:
+        return path
+    prefixed = f"INBOX/{path}"
+    if prefixed in valid_paths:
+        return prefixed
+    return None
