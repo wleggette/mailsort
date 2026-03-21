@@ -488,14 +488,20 @@ class Learner:
         from_domain: str | None,
         list_id: str | None,
         target_folder: str,
-    ) -> Optional[int]:
-        """Create the most appropriate rule if there is sufficient evidence.
+    ) -> list[int]:
+        """Create every rule type whose evidence thresholds are met.
 
-        Priority: list_id → sender_domain (with coherence) → exact_sender.
-        Returns the rule ID if one was created, else None.
+        Evaluated independently (not short-circuited):
+          1. list_id       — stable identifier for newsletters/mailing lists
+          2. sender_domain — when domain history is coherent
+          3. exact_sender  — narrow scope for individual senders
+
+        Classification-time priority determines which rule fires.
+        Returns a list of created rule IDs (may be empty).
         """
         thresholds = self._config.auto_rule_thresholds
         coherence_min = self._config.auto_rule_domain_coherence
+        created: list[int] = []
 
         # 1. List-Id rule
         if list_id:
@@ -522,7 +528,7 @@ class Learner:
                         "Auto-created list_id rule: %s → %s (coherence=%.0f%%, n=%d)",
                         list_id, target_folder, coherence * 100, to_target,
                     )
-                    return rule_id
+                    created.append(rule_id)
 
         # 2. Sender domain rule (with coherence check)
         if from_domain:
@@ -561,9 +567,9 @@ class Learner:
                         "Auto-created domain rule: %s → %s (coherence=%.0f%%, n=%d)",
                         from_domain, target_folder, coherence * 100, domain_to_target,
                     )
-                    return rule_id
+                    created.append(rule_id)
 
-        # 3. Exact sender fallback
+        # 3. Exact sender (always evaluated)
         if from_address:
             to_target = self._db.execute(
                 "SELECT COUNT(*) FROM audit_log WHERE from_address = ? AND target_folder = ? AND moved = 1",
@@ -589,9 +595,9 @@ class Learner:
                         "Auto-created sender rule: %s → %s (coherence=%.0f%%, n=%d)",
                         from_address, target_folder, coherence * 100, to_target,
                     )
-                    return rule_id
+                    created.append(rule_id)
 
-        return None
+        return created
 
     # ------------------------------------------------------------------
     # Rule confidence adjustment

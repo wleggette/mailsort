@@ -62,15 +62,15 @@ def test_auto_rule_exact_sender(db: Database):
         _seed_audit_row(db, email_id=f"e-{i}", from_address="noreply@chase.com",
                         from_domain="chase.com", target_folder="INBOX/Affairs/Banks")
 
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="noreply@chase.com",
         from_domain="chase.com",
         list_id=None,
         target_folder="INBOX/Affairs/Banks",
     )
-    assert rule_id is not None
+    assert len(created) == 1
 
-    row = db.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
+    row = db.execute("SELECT * FROM rules WHERE id = ?", (created[0],)).fetchone()
     assert row["rule_type"] == "exact_sender"
     assert row["condition_value"] == "noreply@chase.com"
     assert row["source"] == "auto"
@@ -84,13 +84,13 @@ def test_auto_rule_not_created_below_threshold(db: Database):
         _seed_audit_row(db, email_id=f"e-{i}", from_address="noreply@chase.com",
                         from_domain="chase.com", target_folder="INBOX/Affairs/Banks")
 
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="noreply@chase.com",
         from_domain="chase.com",
         list_id=None,
         target_folder="INBOX/Affairs/Banks",
     )
-    assert rule_id is None
+    assert len(created) == 0
 
 
 # ------------------------------------------------------------------
@@ -106,15 +106,15 @@ def test_auto_rule_list_id(db: Database):
                         from_domain="github.com", target_folder="INBOX/Tech/GitHub",
                         list_id="github-notifications.github.com")
 
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="bot0@github.com",
         from_domain="github.com",
         list_id="github-notifications.github.com",
         target_folder="INBOX/Tech/GitHub",
     )
-    assert rule_id is not None
+    assert len(created) >= 1
 
-    row = db.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
+    row = db.execute("SELECT * FROM rules WHERE id = ?", (created[0],)).fetchone()
     assert row["rule_type"] == "list_id"
 
 
@@ -131,16 +131,15 @@ def test_auto_rule_domain_with_coherence(db: Database):
         _seed_audit_row(db, email_id=f"e-{i}", from_address=sender,
                         from_domain="chase.com", target_folder="INBOX/Affairs/Banks")
 
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="user0@chase.com",
         from_domain="chase.com",
         list_id=None,
         target_folder="INBOX/Affairs/Banks",
     )
-    assert rule_id is not None
-
-    row = db.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
-    assert row["rule_type"] == "sender_domain"
+    # Both sender_domain and exact_sender rules should be created
+    rule_types = {db.execute("SELECT rule_type FROM rules WHERE id = ?", (rid,)).fetchone()["rule_type"] for rid in created}
+    assert "sender_domain" in rule_types
 
 
 def test_auto_rule_domain_rejected_low_coherence(db: Database):
@@ -155,14 +154,14 @@ def test_auto_rule_domain_rejected_low_coherence(db: Database):
         _seed_audit_row(db, email_id=f"other-{i}", from_address=f"s{i+3}@amazon.com",
                         from_domain="amazon.com", target_folder="INBOX/Affairs/Banks")
 
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="s0@amazon.com",
         from_domain="amazon.com",
         list_id=None,
         target_folder="INBOX/Shopping/Orders",
     )
     # Domain rule should be rejected, and exact_sender shouldn't meet threshold (only 1 move each)
-    assert rule_id is None
+    assert len(created) == 0
 
 
 def test_auto_rule_exact_sender_rejected_low_coherence(db: Database):
@@ -178,13 +177,13 @@ def test_auto_rule_exact_sender_rejected_low_coherence(db: Database):
                         from_domain="okta.com", target_folder="INBOX/Affairs/Banks")
 
     # Count threshold met (3 >= 3) but coherence too low (37% < 80%)
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="noreply@okta.com",
         from_domain="okta.com",
         list_id=None,
         target_folder="INBOX/Affairs/Alerts",
     )
-    assert rule_id is None
+    assert len(created) == 0
 
 
 def test_auto_rule_list_id_rejected_low_coherence(db: Database):
@@ -202,13 +201,13 @@ def test_auto_rule_list_id_rejected_low_coherence(db: Database):
                         from_domain="news.com", target_folder="INBOX/Affairs/Banks",
                         list_id="<weekly-digest.news.com>")
 
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="bot0@news.com",
         from_domain="news.com",
         list_id="<weekly-digest.news.com>",
         target_folder="INBOX/Social/Newsletters",
     )
-    assert rule_id is None
+    assert len(created) == 0
 
 
 def test_auto_rule_exact_sender_high_coherence_created(db: Database):
@@ -222,16 +221,16 @@ def test_auto_rule_exact_sender_high_coherence_created(db: Database):
     _seed_audit_row(db, email_id="chase-alert-0", from_address="noreply@chase.com",
                     from_domain="chase.com", target_folder="INBOX/Affairs/Alerts")
 
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="noreply@chase.com",
         from_domain="chase.com",
         list_id=None,
         target_folder="INBOX/Affairs/Banks",
     )
-    assert rule_id is not None
+    assert len(created) >= 1
 
-    row = db.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
-    assert row["rule_type"] == "exact_sender"
+    rule_types = {db.execute("SELECT rule_type FROM rules WHERE id = ?", (rid,)).fetchone()["rule_type"] for rid in created}
+    assert "exact_sender" in rule_types
 
 
 def test_auto_rule_personal_sender_across_many_folders_rejected(db: Database):
@@ -252,13 +251,77 @@ def test_auto_rule_personal_sender_across_many_folders_rejected(db: Database):
                             from_domain="gmail.com", target_folder=folder)
 
     # Try to create a rule for any one folder — should fail (coherence = 3/15 = 20%)
-    rule_id = learner.maybe_create_rule(
+    created = learner.maybe_create_rule(
         from_address="husband@gmail.com",
         from_domain="gmail.com",
         list_id=None,
         target_folder="INBOX/People/Family",
     )
-    assert rule_id is None
+    assert len(created) == 0
+
+
+def test_all_eligible_list_id_and_exact_sender(db: Database):
+    """When a sender qualifies for both list_id and exact_sender, both rules are created."""
+    learner = _make_learner(db)
+
+    # 3 emails with list_id (meets list_id threshold of 2 AND exact_sender threshold of 3)
+    for i in range(3):
+        _seed_audit_row(db, email_id=f"list-{i}", from_address="activities@ymca.org",
+                        from_domain="ymca.org", target_folder="INBOX/Affairs/Banks",
+                        list_id="<updates.ymca.org>")
+
+    created = learner.maybe_create_rule(
+        from_address="activities@ymca.org",
+        from_domain="ymca.org",
+        list_id="<updates.ymca.org>",
+        target_folder="INBOX/Affairs/Banks",
+    )
+    assert len(created) == 2
+
+    rule_types = {db.execute("SELECT rule_type FROM rules WHERE id = ?", (rid,)).fetchone()["rule_type"]
+                  for rid in created}
+    assert rule_types == {"list_id", "exact_sender"}
+
+
+def test_all_eligible_domain_and_exact_sender(db: Database):
+    """When domain qualifies and individual sender qualifies, both rules are created."""
+    learner = _make_learner(db)
+
+    # 5 emails from 3 distinct senders, all to Banks (domain qualifies)
+    # user0 has 2 emails, user1 has 2 emails, user2 has 1 email
+    for i in range(5):
+        sender = f"user{i % 3}@bigbank.com"
+        _seed_audit_row(db, email_id=f"bank-{i}", from_address=sender,
+                        from_domain="bigbank.com", target_folder="INBOX/Affairs/Banks")
+
+    # Call with user0 who has 2 emails (below exact_sender threshold of 3)
+    created = learner.maybe_create_rule(
+        from_address="user0@bigbank.com",
+        from_domain="bigbank.com",
+        list_id=None,
+        target_folder="INBOX/Affairs/Banks",
+    )
+    # Domain rule created, but user0 only has 2 emails (below exact_sender threshold)
+    rule_types = {db.execute("SELECT rule_type FROM rules WHERE id = ?", (rid,)).fetchone()["rule_type"]
+                  for rid in created}
+    assert "sender_domain" in rule_types
+    assert "exact_sender" not in rule_types
+
+    # Now seed more evidence so user0 meets exact_sender threshold too
+    for i in range(3):
+        _seed_audit_row(db, email_id=f"bank-extra-{i}", from_address="user0@bigbank.com",
+                        from_domain="bigbank.com", target_folder="INBOX/Affairs/Banks")
+
+    created2 = learner.maybe_create_rule(
+        from_address="user0@bigbank.com",
+        from_domain="bigbank.com",
+        list_id=None,
+        target_folder="INBOX/Affairs/Banks",
+    )
+    # Domain rule already exists, but exact_sender should now be created
+    assert len(created2) == 1
+    row = db.execute("SELECT rule_type FROM rules WHERE id = ?", (created2[0],)).fetchone()
+    assert row["rule_type"] == "exact_sender"
 
 
 def test_auto_rule_not_duplicated(db: Database):
@@ -268,16 +331,16 @@ def test_auto_rule_not_duplicated(db: Database):
         _seed_audit_row(db, email_id=f"e-{i}", from_address="noreply@chase.com",
                         from_domain="chase.com", target_folder="INBOX/Affairs/Banks")
 
-    rule_id_1 = learner.maybe_create_rule(
+    created_1 = learner.maybe_create_rule(
         from_address="noreply@chase.com", from_domain="chase.com",
         list_id=None, target_folder="INBOX/Affairs/Banks",
     )
-    rule_id_2 = learner.maybe_create_rule(
+    created_2 = learner.maybe_create_rule(
         from_address="noreply@chase.com", from_domain="chase.com",
         list_id=None, target_folder="INBOX/Affairs/Banks",
     )
-    assert rule_id_1 is not None
-    assert rule_id_2 is None  # already exists
+    assert len(created_1) >= 1
+    assert len(created_2) == 0  # already exists
 
 
 # ------------------------------------------------------------------

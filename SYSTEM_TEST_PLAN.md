@@ -3,6 +3,7 @@
 ## Table of Contents
 
 - [Goal](#goal)
+- [Architecture → Test Plan Mapping](#architecture--test-plan-mapping)
 - [1. Test Account Setup](#1-test-account-setup)
 - [2. Test Infrastructure](#2-test-infrastructure)
 - [3. Phase 1: Bootstrap](#3-phase-1-bootstrap)
@@ -40,6 +41,36 @@ Validate the complete mailsort pipeline against a real Fastmail account with
 controlled test data. This covers bootstrap → dry-run → live move → learning →
 feedback loop — everything the integration tests verify with mocks, but now
 against real JMAP.
+
+---
+
+## Architecture → Test Plan Mapping
+
+Each row maps an architecture module (§2 diagram) to the system test scenarios
+that exercise it and the unit test file that provides deeper coverage.
+
+| Architecture Module | Code Location | System Test Scenarios | Unit Tests |
+|---|---|---|---|
+| **Scheduler** | `scheduler.py` | Not system-tested (timer only) | `test_scheduler.py` |
+| **JMAP Client** | `jmap/client.py` | All phases (real API) | `test_jmap_*.py` |
+| **Mailbox Tree** | `jmap/mailbox_tree.py` | §3.1 (F1-F7) | `test_mailbox_tree.py` |
+| **Feature Extractor** | `classifier/features.py` | §3.2 (EF1-EF9) | `test_integration.py` |
+| **Skip Senders Filter** | `orchestrator.py` | — (config variation) | `test_orchestrator.py` |
+| **Thread Context** | `classifier/pipeline.py` | §4.2 (S4) | `test_pipeline.py` |
+| **Rule Engine** | `classifier/rules.py` | §3.4 (LR/DR/ER/P), §4.2 (S1-S3), §4.4 (priority) | `test_rules.py` |
+| **LLM Classifier** | `classifier/llm.py` | §4.2 (S5-S8), §4.3 (no-LLM) | `test_llm.py` |
+| **LLM Privacy Gates** | `classifier/llm.py` | — (config variation) | `test_llm.py` |
+| **Confidence Gate** | `mover/mover.py` | §4.2 (S6, S8) | `test_mover.py` |
+| **Eligibility Gates** | `orchestrator.py` | §4.1 (E1-E5) | `test_orchestrator.py` |
+| **Age Gate** | `orchestrator.py` | §5.1 (age gate across runs) | `test_orchestrator.py` |
+| **Email/set Mover** | `jmap/client.py` | §5 (live move) | `test_jmap_move.py` |
+| **Audit Log Writer** | `audit/writer.py` | §3.6, §4.3, §4.4, §5.2, §6.2, §7.2 (checklists) | `test_audit_writer.py` |
+| **Contact Import/Refresh** | `classifier/features.py` | §3.5 (CI1-CI4) | `test_contacts.py` |
+| **Folder Descriptions** | `classifier/descriptions.py` | §3.3 (D1-D7) | `test_descriptions.py` |
+| **Learner (manual sorts)** | `audit/learner.py` | §6 (correction simulation) | `test_learner.py` |
+| **Auto-Rule Generator** | `audit/learner.py` | §3.4 (bootstrap rules), §7 (feedback) | `test_learner.py` |
+| **Rule Confidence Decay** | `audit/learner.py` | §7.1 (FP1-FP2) | `test_learner.py` |
+| **Bootstrap Pipeline** | `bootstrap.py` | §3 (entire Phase 1) | `test_bootstrap.py` |
 
 ---
 

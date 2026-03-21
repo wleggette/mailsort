@@ -230,21 +230,14 @@ def _create_rules_from_evidence(
     if live_folders is not None:
         rows = [r for r in rows if r["target_folder"] in live_folders]
 
-    seen_rules: set[tuple[str, str]] = set()
     for row in rows:
-        key = (row["from_address"] or "", row["target_folder"])
-        if key in seen_rules:
-            continue
-        seen_rules.add(key)
-
-        rule_id = learner.maybe_create_rule(
+        created = learner.maybe_create_rule(
             from_address=row["from_address"],
             from_domain=row["from_domain"],
             list_id=row["list_id"],
             target_folder=row["target_folder"],
         )
-        if rule_id:
-            report.rules_created += 1
+        report.rules_created += len(created)
 
 
 

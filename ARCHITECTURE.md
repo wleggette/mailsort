@@ -77,60 +77,103 @@ INBOX/
 ## 2. System Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                   Fastmail (JMAP)                     │
-│  Mailbox/get · Email/query · Email/get · Email/set   │
-└──────────────────────┬───────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      Fastmail (JMAP)                          │
+│  Mailbox/get · Email/query · Email/get · Email/set           │
+│  ContactCard/get · Thread/get                                │
+└──────────────────────┬───────────────────────────────────────┘
                        │ HTTPS (Bearer token)
                        ▼
-┌──────────────────────────────────────────────────────┐
-│              Scheduler (APScheduler)                  │
-│         Runs classification job every N minutes       │
-└──────────────────────┬───────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                 Scheduler (APScheduler)                        │
+│            Runs classification job every N minutes             │
+└──────────────────────┬───────────────────────────────────────┘
                        ▼
-┌──────────────────────────────────────────────────────┐
-│                  JMAP Client                          │
-│  1. Fetch inbox mailbox ID                           │
-│  2. Query read, unflagged emails older than N hours   │
-│  3. Fetch metadata: from, subject, list-id, body     │
-└──────────────────────┬───────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│              Per-Run Pre-work (Orchestrator)                   │
+│  1. Learner: detect manual sorts (4 categories)               │
+│  2. Contact refresh (daily)                                   │
+│  3. Folder description generation (new folders)               │
+│  4. Rule reconciliation (deactivate stale targets)            │
+└──────────────────────┬───────────────────────────────────────┘
                        ▼
-┌──────────────────────────────────────────────────────┐
-│              Feature Extractor                        │
-│  Sender address, domain, List-Id, List-Unsubscribe,  │
-│  subject patterns, body preview (~200 words)          │
-└──────────┬───────────────────────────┬───────────────┘
-           ▼                           ▼
-┌─────────────────────┐  ┌─────────────────────────────┐
-│    Rule Engine       │  │     LLM Classifier          │
-│  SQLite lookup:      │  │  Claude Haiku via API       │
-│  sender → folder     │  │  Only called if rules       │
-│  domain → folder     │  │  return no match or low     │
-│  list-id → folder    │  │  confidence                 │
-│  subject regex →     │  │                             │
-│    folder            │  │  Returns: folder + conf     │
-└─────────┬───────────┘  └──────────────┬──────────────┘
-          │                             │
-          ▼                             ▼
-┌──────────────────────────────────────────────────────┐
-│               Confidence Gate                         │
-│  If confidence >= threshold → proceed to move         │
-│  If confidence < threshold → skip, leave in inbox     │
-└──────────────────────┬───────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     JMAP Client                               │
+│  1. Query ALL inbox email IDs (snapshot for departure diff)   │
+│  2. Fetch metadata: from, subject, list-id, keywords          │
+└──────────────────────┬───────────────────────────────────────┘
                        ▼
-┌──────────────────────────────────────────────────────┐
-│              Email/set Mover                          │
-│  Update mailboxIds: remove inbox, add target folder   │
-└──────────────────────┬───────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│               Skip Senders Filter                             │
+│  Remove emails from skip_senders list before classification   │
+└──────────────────────┬───────────────────────────────────────┘
                        ▼
-┌──────────────────────────────────────────────────────┐
-│           Audit Log (SQLite)                          │
-│  email_id, sender, subject, target_folder,            │
-│  confidence, source (rule|llm), timestamp             │
-│                                                       │
-│  Feedback loop: manual sorts captured on next scan    │
-│  → auto-generate rules from repeated patterns         │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                 Feature Extractor                              │
+│  Sender address, domain, List-Id, List-Unsubscribe,           │
+│  subject patterns, body preview, keywords, threadId           │
+└──────────────────────┬───────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Classification Pipeline                          │
+│  Tried in order — first match wins:                           │
+│                                                               │
+│  1. Thread Context ──→ audit_log lookup + JMAP fallback       │
+│  2. Rule Engine ─────→ list_id > exact_sender > sender_domain │
+│  3. LLM Classifier ─→ Claude Haiku (privacy-gated)           │
+│     ├─ llm_skip_senders / llm_skip_domains                   │
+│     └─ Contact enrichment (known contact → prompt hint)       │
+└──────────────────────┬───────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│               Confidence Gate                                 │
+│  Rule:  confidence >= rule_move (0.85)                        │
+│  LLM:   confidence >= llm_move (0.80)                         │
+│  LLM + known contact: confidence >= llm_move_known_contact    │
+│  Thread: bypasses threshold                                   │
+└──────────────────────┬───────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Eligibility Gates                                 │
+│  ✕ unread ($seen absent)      → skip_reason="unread"          │
+│  ✕ flagged ($flagged present) → skip_reason="flagged"         │
+│  ✕ too new (< min_age_minutes)→ skip_reason="too_new"         │
+│  ✕ unknown folder             → skip_reason="unknown_folder"  │
+└──────────────────────┬───────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Email/set Mover                                  │
+│  Update mailboxIds: remove inbox, add target folder           │
+│  Tag with $mailsort-moved keyword                             │
+│  Batch moves in single JMAP call                              │
+│  (skipped entirely in dry-run mode)                           │
+└──────────────────────┬───────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Audit Log (SQLite)                               │
+│  Every email logged: classification + outcome + skip_reason   │
+│  Run record: run_id, status, emails_seen, emails_moved        │
+└──────────────────────┬───────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│              Auto-Rule Generator (Learner)                    │
+│  On manual sort detection: evaluate all eligible rule types   │
+│  list_id + sender_domain + exact_sender independently         │
+│  Confidence penalty on corrections (−0.15 per correction)     │
+│  Confidence decay on stale rules (−0.10 after 90 days)        │
+└──────────────────────────────────────────────────────────────┘
+
+── One-time / Periodic ──────────────────────────────────────────
+
+┌──────────────────────────────────────────────────────────────┐
+│              Bootstrap Pipeline                               │
+│  1. No-LLM pre-flight (verify fallback descriptions)          │
+│  2. Scan folders → collect evidence into audit_log             │
+│  3. Generate folder descriptions (LLM or fallback)            │
+│  4. Create all eligible rules from evidence                   │
+│  5. Import contacts (Fastmail + config overrides)             │
+│  6. Idempotency check (re-run produces no changes)            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
