@@ -182,6 +182,31 @@ All calls are POST to `apiUrl` with JSON body:
 Returns all mailboxes. Build a tree from `parentId` relationships.
 The inbox has `role: "inbox"`. Cache the mailbox ID → path mapping.
 
+**`MailboxTree.build()`** constructs canonical folder paths by walking `parentId`
+chains up to the inbox root (e.g. `INBOX/Affairs/Banks`). System folders with
+roles like `trash`, `junk`, `drafts`, `sent` are excluded automatically.
+
+**`exclude_folder_patterns`** (config) removes additional folders from the tree
+using `fnmatch` glob matching against the full path. This is checked per-mailbox
+*after* path construction, so excluding a parent folder does not affect its
+children — e.g. excluding `INBOX/Affairs` still allows `INBOX/Affairs/Banks`:
+
+```python
+# Inside MailboxTree.build():
+for mailbox in mailboxes:
+    path = _build_path(mailbox, by_id)       # walks parentId chain
+    if any(fnmatch.fnmatch(path, pat) for pat in exclude_patterns):
+        continue                              # excluded — not in tree
+    tree._id_to_path[mailbox.id] = path
+    tree._path_to_id[path] = mailbox.id
+```
+
+Excluded folders are invisible to the rest of the system:
+- Not in `tree.all_folder_paths()` → LLM never sees them as valid targets
+- Not in folder descriptions → LLM prompt doesn't mention them
+- Rules targeting them can't resolve a folder ID → `skip_reason="unknown_folder"`
+- Bootstrap skips them when scanning for evidence
+
 #### Email/query — Find eligible inbox messages
 
 ```json
@@ -340,13 +365,14 @@ For each eligible email, the pipeline runs in order:
 
 ```
 1. Assign a unique run_id for this scan
-2. Extract features from eligible emails (including threadId)
+2. Extract features from all inbox emails (including threadId)
 3. Resolve classification: thread context → rule engine → LLM
-4. Build a MoveDecision for each email
-5. Persist decisions to audit_log with decision_status = planned or skipped
-6. Execute a batched Email/set for all planned decisions (mark attempted)
-7. Reconcile per-email move results from JMAP into audit_log (moved or move_failed)
-8. Update run summary metrics and mark the run completed
+4. Build a MoveDecision for each email (confidence gate)
+5. Apply post-classification eligibility gates (unread, flagged, too_new)
+6. Persist decisions to audit_log (moved boolean + skip_reason)
+7. Execute a batched Email/set for all eligible moves
+8. Reconcile per-email move results from JMAP into audit_log
+9. Update run summary metrics and mark the run completed
 ```
 
 Classification resolution (step 3) tries sources in order:
@@ -356,12 +382,11 @@ Classification resolution (step 3) tries sources in order:
     - If another email in this thread was previously sorted → inherit that folder
     - Otherwise → continue
 3b. Check the rule engine
-    - If a rule matches with confidence >= threshold → use it
-    - If a rule matches with confidence < threshold → fall through to LLM
+    - If a rule matches → return it (confidence gate applied later in step 4)
     - If no rule matches → fall through to LLM
 3c. Call the LLM classifier (if privacy gate allows)
-    - If LLM returns confidence >= threshold → use it
-    - If LLM returns confidence < threshold → SKIP (leave in inbox)
+    - If LLM returns a valid folder → return it (confidence gate applied later)
+    - If LLM fails or is gated → skip_reason set (llm_unavailable, llm_skip_*)
 ```
 
 Thread context (step 2) handles replies and forwarded messages where the sender
@@ -369,15 +394,24 @@ changes but the conversation topic doesn't — e.g., your husband replying to a
 vendor email, or a family member reply-chain. It runs before rules because a
 known thread context is more reliable than any pattern match.
 
-### Eligibility Criteria (applied before classification)
+### Eligibility & Gating
 
-An email is eligible for classification if ALL of the following are true:
-- It is in the inbox (has inbox mailbox ID in `mailboxIds`)
-- It has the `$seen` keyword (has been read)
-- It does NOT have the `$flagged` keyword
-- Its `receivedAt` is older than `min_age_minutes` (default: 240 minutes / 4 hours)
-- It has not already been processed in this run (deduplicate by email ID)
-- It is not in the `skip_senders` list (manual exclude list in config)
+**Pre-classification filters** (emails excluded before classification):
+- `skip_senders` — never classify these senders (filtered out entirely)
+- Deduplication — skip emails already processed in this run
+
+**All remaining inbox emails are classified** (thread → rules → LLM), then
+post-classification gates determine whether the move actually happens:
+
+- **Confidence gate** — classification confidence must meet threshold (§7)
+- **Unread** (`$seen` keyword absent) → `skip_reason="unread"`
+- **Flagged** (`$flagged` keyword present) → `skip_reason="flagged"`
+- **Too new** (`receivedAt` within `min_age_minutes`) → `skip_reason="too_new"`
+- **Unknown folder** (target folder not in mailbox tree) → `skip_reason="unknown_folder"`
+
+This means the audit log shows what mailsort *would* do with every email,
+giving full visibility into classification quality even for emails that aren't
+eligible to move yet.
 
 ### Thread Context Resolution
 
@@ -397,7 +431,7 @@ def resolve_thread_context(email_features: EmailFeatures) -> Optional[Classifica
     row = db.execute("""
         SELECT target_folder, COUNT(*) as n
         FROM audit_log
-        WHERE thread_id = ? AND decision_status IN ('moved', 'manual') AND email_id != ?
+        WHERE thread_id = ? AND moved = 1 AND email_id != ?
         GROUP BY target_folder
         ORDER BY n DESC, created_at DESC
         LIMIT 1
@@ -590,7 +624,7 @@ classify it into exactly one of the following folders. Respond with JSON only.
 
 ## Email to Classify
 
-From: {from_address}
+From: {from_line}
 Subject: {subject}
 List-Id: {list_id}
 Date: {received_at}
@@ -812,51 +846,48 @@ def batch_move(jmap_client, moves: list[MoveDecision]) -> dict[str, str]:
 
 ```sql
 CREATE TABLE runs (
-    run_id TEXT PRIMARY KEY,
-    started_at TEXT NOT NULL,
-    finished_at TEXT,
-    status TEXT NOT NULL CHECK(status IN ('running','completed','failed','abandoned')),
-    trigger TEXT NOT NULL DEFAULT 'scheduler',
-    eligible_count INTEGER,
-    skipped_count INTEGER,
-    attempted_count INTEGER,
-    moved_count INTEGER,
-    failed_count INTEGER,
+    run_id        TEXT PRIMARY KEY,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    status        TEXT NOT NULL CHECK(status IN ('running','completed','failed','abandoned')),
+    trigger       TEXT NOT NULL DEFAULT 'scheduler',
+    emails_seen   INTEGER NOT NULL DEFAULT 0,
+    emails_moved  INTEGER NOT NULL DEFAULT 0,
     error_summary TEXT
 );
 
 CREATE TABLE audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id TEXT NOT NULL,
-    email_id TEXT NOT NULL,
-    thread_id TEXT,                      -- JMAP threadId for thread context lookups
-    from_address TEXT,
-    from_domain TEXT,
-    subject TEXT,
-    list_id TEXT,
-    source_folder TEXT DEFAULT 'INBOX',
-    target_folder TEXT NOT NULL,
-    confidence REAL NOT NULL,
-    classification_source TEXT NOT NULL,  -- rule | llm | thread | manual
-    rule_id INTEGER,                     -- FK to rules.id if rule-based
-    llm_reasoning TEXT,                  -- LLM explanation if LLM-based
-    decision_status TEXT NOT NULL CHECK(decision_status IN (
-        'planned', 'skipped', 'attempted', 'moved', 'move_failed', 'abandoned', 'manual'
-    )),
-    skip_reason TEXT,                    -- below_threshold | below_threshold_known_contact | skip_list | flagged
-    move_error TEXT,                     -- JMAP error detail if move_failed
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                  TEXT,
+    email_id                TEXT NOT NULL,
+    thread_id               TEXT,
+    from_address            TEXT,
+    from_domain             TEXT,
+    subject                 TEXT,
+    list_id                 TEXT,
+    source_folder           TEXT NOT NULL DEFAULT 'INBOX',
+    target_folder           TEXT NOT NULL,
+    confidence              REAL NOT NULL,
+    classification_source   TEXT NOT NULL
+                                CHECK(classification_source IN ('thread','rule','llm','manual')),
+    rule_id                 INTEGER,
+    llm_reasoning           TEXT,
+    moved                   BOOLEAN NOT NULL,
+    skip_reason             TEXT,           -- below_threshold | below_threshold_known_contact
+                                           -- | too_new | unread | flagged | unknown_folder
+                                           -- | llm_unavailable | llm_api_error
+                                           -- | llm_skip_sender | llm_skip_domain
+                                           -- | llm_skip_known_contact | classification_error
+    created_at              TEXT NOT NULL DEFAULT (datetime('now')),
 
-    FOREIGN KEY (rule_id) REFERENCES rules(id),
-    FOREIGN KEY (run_id) REFERENCES runs(run_id)
+    FOREIGN KEY (rule_id) REFERENCES rules(id)
 );
 
-CREATE UNIQUE INDEX idx_audit_run_email ON audit_log(run_id, email_id);
-CREATE INDEX idx_audit_email_created ON audit_log(email_id, created_at DESC);
-CREATE INDEX idx_audit_thread ON audit_log(thread_id);  -- thread context lookups
-CREATE INDEX idx_audit_domain ON audit_log(from_domain);
+CREATE INDEX idx_audit_email   ON audit_log(email_id);
+CREATE INDEX idx_audit_thread  ON audit_log(thread_id);
+CREATE INDEX idx_audit_domain  ON audit_log(from_domain);
 CREATE INDEX idx_audit_created ON audit_log(created_at);
+CREATE INDEX idx_audit_run     ON audit_log(run_id);
 ```
 
 Each scan is assigned a unique `run_id` at startup. All audit rows created during
@@ -920,18 +951,29 @@ Descriptions are generated automatically via `classifier/descriptions.py`:
 - **Config overrides win:** `folder_description_overrides` in config.yaml
   takes precedence when loading descriptions for the LLM prompt
 
-Descriptions are loaded at runtime by merging DB + config overrides:
+Descriptions are loaded at runtime by merging DB + config overrides, filtered
+to only include folders that exist in the mailbox tree.  Config override paths
+are normalised (an `INBOX/` prefix is tried if the path doesn't match directly).
+Overrides for non-existent or excluded folders are silently dropped so the LLM
+never sees folders it can't classify into.
 
 ```python
-def load_folder_descriptions(config: Config) -> dict[str, str]:
-    """Merge auto-generated and manual-override descriptions."""
-    descriptions = {
-        row["folder_path"]: row["description"]
-        for row in db.execute("SELECT folder_path, description FROM folder_descriptions")
-    }
-    # Manual overrides from config.yaml win
-    descriptions.update(config.folder_description_overrides or {})
-    return descriptions
+def _load_folder_descriptions(cfg: Config, db: Database, valid_paths: set[str]) -> str:
+    """Load folder descriptions, filtered to valid tree paths."""
+    descriptions: dict[str, str] = {}
+
+    # DB descriptions (already INBOX/-prefixed)
+    for row in db.execute("SELECT folder_path, description FROM folder_descriptions"):
+        if row["folder_path"] in valid_paths:
+            descriptions[row["folder_path"]] = row["description"]
+
+    # Config overrides — normalise path format (try INBOX/ prefix)
+    for path, desc in (cfg.folder_description_overrides or {}).items():
+        normalised = _normalise_folder_path(path, valid_paths)
+        if normalised:
+            descriptions[normalised] = desc
+
+    return "\n".join(f"- {p}: {d}" for p, d in sorted(descriptions.items()))
 ```
 
 ### Learning from Manual Sorts
@@ -987,7 +1029,7 @@ def detect_manual_sorts(jmap_client, previously_skipped: list[str], run_id: str)
     # --- Category 2: mailsort-moved emails the user relocated ---
     recent_moves = db.execute("""
         SELECT email_id, target_folder FROM audit_log
-        WHERE decision_status = 'moved'
+        WHERE moved = 1 AND classification_source != 'manual'
           AND created_at >= datetime('now', '-7 days')
     """).fetchall()
 
@@ -1018,7 +1060,7 @@ def _record_manual_sort(run_id: str, email_id: str, folder_path: str):
         target_folder=folder_path,
         confidence=1.0,
         classification_source="manual",
-        decision_status="manual",
+        moved=True,
     )
     maybe_create_rule(email_id, folder_path)
 ```
@@ -1052,7 +1094,7 @@ def maybe_create_rule(email_features, target_folder: str):
     if email_features.list_id:
         count = db.execute("""
             SELECT COUNT(*) FROM audit_log
-            WHERE list_id = ? AND target_folder = ? AND decision_status IN ('moved', 'manual')
+            WHERE list_id = ? AND target_folder = ? AND moved = 1
         """, (email_features.list_id, target_folder)).fetchone()[0]
 
         if count >= thresholds["list_id"]:
@@ -1074,17 +1116,17 @@ def maybe_create_rule(email_features, target_folder: str):
     #    never get a domain rule — it would misroute whichever folders are in the minority.
     domain_total = db.execute("""
         SELECT COUNT(*) FROM audit_log
-        WHERE from_domain = ? AND decision_status IN ('moved', 'manual')
+        WHERE from_domain = ? AND moved = 1
     """, (email_features.from_domain,)).fetchone()[0]
 
     domain_to_target = db.execute("""
         SELECT COUNT(*) FROM audit_log
-        WHERE from_domain = ? AND target_folder = ? AND decision_status IN ('moved', 'manual')
+        WHERE from_domain = ? AND target_folder = ? AND moved = 1
     """, (email_features.from_domain, target_folder)).fetchone()[0]
 
     domain_distinct_senders = db.execute("""
         SELECT COUNT(DISTINCT from_address) FROM audit_log
-        WHERE from_domain = ? AND target_folder = ? AND decision_status IN ('moved', 'manual')
+        WHERE from_domain = ? AND target_folder = ? AND moved = 1
     """, (email_features.from_domain, target_folder)).fetchone()[0]
 
     domain_coherence = domain_to_target / domain_total if domain_total > 0 else 0.0
@@ -1111,7 +1153,7 @@ def maybe_create_rule(email_features, target_folder: str):
     # 3. Exact sender fallback — narrow scope, moderate threshold
     count = db.execute("""
         SELECT COUNT(*) FROM audit_log
-        WHERE from_address = ? AND target_folder = ? AND decision_status IN ('moved', 'manual')
+        WHERE from_address = ? AND target_folder = ? AND moved = 1
     """, (email_features.from_address, target_folder)).fetchone()[0]
 
     if count >= thresholds["exact_sender"]:
@@ -1399,7 +1441,7 @@ classification:
   llm_model: "claude-haiku-4-5-20251001"
   llm_max_preview_chars: 500
   llm_use_preview: true             # Send email preview text to the LLM
-  llm_allow_known_contacts: false   # If false, skip LLM for known contacts
+  llm_allow_known_contacts: true    # If false, skip LLM for known contacts
   llm_redact_patterns:              # Regex patterns to redact before sending to LLM
     - "\\b\\d{3}-\\d{2}-\\d{4}\\b"             # SSN
     - "\\b(?:\\d[ -]*){13,16}\\b"              # Credit card numbers
@@ -1422,6 +1464,14 @@ manual_rules:
     folder: "INBOX/Affairs/Legal"
     confidence: 1.0
 
+# Folders to exclude from classification, bootstrap, and learning.
+# Uses glob patterns matched against folder paths.
+# Also useful for parent/holding folders that only contain subfolders:
+#   excluding "INBOX/Affairs" still allows "INBOX/Affairs/Banks" etc.
+exclude_folder_patterns:
+  # - "INBOX/Affairs"       # parent folder — sort into subfolders instead
+  # - "INBOX/People"        # parent folder — sort into subfolders instead
+
 # Skip list — never auto-move these senders
 skip_senders:
   - "spouse@example.com"
@@ -1435,7 +1485,7 @@ known_contact_overrides:
   #   relationship: "spouse"   # Extra hint for the LLM beyond just the name
 
 # Logging
-logging:
+logging_config:
   level: INFO
   file: "/app/data/mailsort.log"
   max_size_mb: 10
@@ -1450,62 +1500,67 @@ logging:
 ~/Workspace/mailsort/
 ├── ARCHITECTURE.md              ← This document
 ├── README.md
-├── pyproject.toml               ← Python project config (uv/poetry)
+├── pyproject.toml               ← Python project config (uv)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── config.yaml                  ← User configuration
+├── config.yaml.example          ← Documented example config
 │
 ├── src/
 │   └── mailsort/
 │       ├── __init__.py
-│       ├── main.py              ← Entry point, scheduler setup
-│       ├── config.py            ← Config loading & validation
+│       ├── main.py              ← Entry point, CLI commands
+│       ├── config.py            ← Config loading & validation (Pydantic)
+│       ├── orchestrator.py      ← Run orchestrator: classification pass + move
+│       ├── bootstrap.py         ← Bootstrap: scan folders, seed evidence, create rules
+│       ├── scheduler.py         ← APScheduler setup for periodic runs
+│       ├── health.py            ← Health check endpoint
 │       │
 │       ├── jmap/
-│       │   ├── __init__.py
 │       │   ├── client.py        ← JMAP HTTP client (session, auth, method calls)
 │       │   ├── models.py        ← Pydantic models for JMAP objects (Email, Mailbox)
-│       │   ├── mailbox_tree.py  ← Mailbox tree builder & path resolver
-│       │   └── contacts.py      ← ContactCard/get fetcher & contacts cache refresh
+│       │   └── mailbox_tree.py  ← Mailbox tree builder & path resolver
 │       │
 │       ├── classifier/
-│       │   ├── __init__.py
-│       │   ├── pipeline.py      ← Main classification orchestrator
-│       │   ├── features.py      ← Feature extraction from email objects
+│       │   ├── pipeline.py      ← Tiered classification: thread → rules → LLM
+│       │   ├── features.py      ← Feature extraction + contacts cache refresh
 │       │   ├── rules.py         ← Rule engine (SQLite-backed)
-│       │   └── llm.py           ← LLM classifier (Anthropic API)
+│       │   ├── llm.py           ← LLM classifier (Anthropic API)
+│       │   └── descriptions.py  ← Auto-generate folder descriptions via LLM
 │       │
 │       ├── mover/
-│       │   ├── __init__.py
-│       │   └── mover.py         ← Confidence gate + batch Email/set moves
+│       │   └── mover.py         ← Confidence gate + move decision builder
 │       │
 │       ├── audit/
-│       │   ├── __init__.py
-│       │   ├── logger.py        ← Audit log writer
-│       │   ├── learner.py       ← Manual sort detection + auto-rule generation
-│       │   └── models.py        ← SQLAlchemy/Pydantic models for audit tables
+│       │   ├── writer.py        ← Audit log writer (runs + audit_log tables)
+│       │   └── learner.py       ← Manual sort detection + auto-rule generation
 │       │
 │       └── db/
-│           ├── __init__.py
 │           ├── database.py      ← SQLite connection management
 │           └── migrations.py    ← Schema creation & migrations
 │
 ├── tests/
-│   ├── conftest.py
-│   ├── test_jmap_client.py
-│   ├── test_classifier.py
-│   ├── test_rules.py
-│   ├── test_llm.py
-│   ├── test_mover.py
-│   ├── test_learner.py
-│   └── fixtures/
-│       ├── sample_emails.json   ← Test email data
-│       └── sample_mailboxes.json
-│
-├── scripts/
-│   ├── bootstrap.py             ← One-time bootstrap script
-│   ├── dry_run.py               ← Run classification without moving anything
-│   └── export_rules.py          ← Export current rules to YAML for review
+│   ├── conftest.py              ← Shared fixtures (in-memory DB, sample data)
+│   ├── test_orchestrator.py     ← Orchestrator integration tests
+│   ├── test_pipeline.py         ← Classification pipeline tests
+│   ├── test_rules.py            ← Rule engine tests
+│   ├── test_llm.py              ← LLM classifier tests (mocked API)
+│   ├── test_mover.py            ← Confidence gate tests
+│   ├── test_learner.py          ← Learner / auto-rule tests
+│   ├── test_bootstrap.py        ← Bootstrap tests
+│   ├── test_folder_descriptions.py ← Description filtering tests
+│   ├── test_*.py                ← + additional unit tests
+│   ├── fixtures/
+│   │   ├── sample_emails.json
+│   │   └── sample_mailboxes.json
+│   └── system/                  ← End-to-end tests against real Fastmail
+│       ├── config.test.yaml
+│       ├── run_system_test.py
+│       ├── load_fixtures.py
+│       ├── generate_inbox_emails.py
+│       ├── verify_results.py
+│       └── fixtures/
+│           └── folder_emails.json
 │
 └── data/                        ← Docker volume mount point
     ├── mailsort.db              ← SQLite database (rules + audit log)
@@ -1553,8 +1608,9 @@ class MoveDecision(BaseModel):
     features: EmailFeatures
     classification: Classification
     should_move: bool
-    decision_status: str               # "planned" | "skipped"
-    skip_reason: Optional[str] = None  # "below_threshold" | "below_threshold_known_contact" | "flagged" | "skip_list" | "llm_skip_*"
+    skip_reason: Optional[str] = None  # below_threshold | below_threshold_known_contact
+                                       # | too_new | unread | flagged | unknown_folder
+                                       # | llm_unavailable | llm_skip_* | classification_error
 ```
 
 ---
@@ -1705,26 +1761,8 @@ inbox. The numbers must add up to the total inbox count for clarity.
 
 #### Classification Scope
 
-**All inbox emails are classified**, including unread and flagged ones. The
-classification result is recorded in the audit log for every email. However,
-only eligible emails are actually moved — unread and flagged emails receive a
-classification but are given a skip reason preventing the move:
-
-- **Unread** (`unread`): email has not been read yet (no `$seen` keyword).
-  Mailsort won't move unread mail — the user hasn't had a chance to see it.
-- **Flagged** (`flagged`): email has the `$flagged` keyword. Flagged mail is
-  treated as "user wants this in inbox" and is never moved.
-
-This means the audit log shows what mailsort *would* do with every email,
-giving full visibility into classification quality even for emails that aren't
-eligible to move yet.
-
-The `min_age_minutes` setting (default 240, i.e. 4 hours) produces a separate
-`too_new` skip reason. Emails received less than `min_age_minutes` ago are
-classified but not moved, giving the user time to read and sort them first.
-This is checked independently of the unread/flagged gates — a read email can
-still be too new. Using minutes instead of hours allows fine-grained control
-for system testing (e.g., `min_age_minutes: 1`).
+All inbox emails are classified and logged — see §4 *Eligibility & Gating* for
+the full list of pre-classification filters and post-classification gates.
 
 #### Outcome Categories
 
