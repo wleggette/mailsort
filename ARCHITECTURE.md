@@ -1071,24 +1071,38 @@ Auto-rule generation runs in two situations:
 1. After detecting a manual sort (user moved an email we left in inbox)
 2. After an LLM-classified move, once the same pattern has been seen N times
 
-Rules are created in priority order — the most reliable signal wins. Subject regex
-and body content are **not** auto-generated (see below).
+**Strategy: create all eligible rules.** Every rule type whose evidence
+thresholds are met is created independently. A single sender can produce a
+`list_id` rule *and* an `exact_sender` rule, or a `sender_domain` rule *and*
+`exact_sender` rules for individual addresses within that domain. This keeps
+the rule set complete so that:
+
+- If a broader rule is later deactivated (confidence decay, correction
+  penalty), the narrower rule still covers the sender.
+- The rule detail UI shows all evidence-backed rules, giving full visibility
+  into classification behaviour.
+- Classification-time priority (§5) determines which rule actually fires —
+  `list_id` beats `exact_sender` beats `sender_domain`.
+
+Subject regex and body content are **not** auto-generated (see below).
 
 ```python
-def maybe_create_rule(email_features, target_folder: str):
-    """Create the most appropriate rule if there is sufficient evidence.
+def maybe_create_rule(email_features, target_folder: str) -> list[int]:
+    """Create every rule type whose evidence thresholds are met.
 
-    Priority:
+    Evaluated independently (not short-circuited):
       1. list_id       — stable identifier for newsletters/mailing lists
       2. sender_domain — when domain history is coherent (most moves → same folder)
-      3. exact_sender  — fallback for one-off transactional senders
+      3. exact_sender  — narrow scope for individual transactional senders
 
-    Each rule type has its own evidence threshold and minimum confidence
-    requirement. Broader rules require more evidence and a coherence check
-    before creation to avoid misrouting unrelated emails from the same source.
+    Classification-time priority (§5) decides which rule fires; creation-time
+    builds the full set so narrower rules survive if broader ones decay.
+
+    Returns a list of created rule IDs (may be empty).
     """
     thresholds = config.classification.auto_rule_thresholds  # list_id: 2, exact_sender: 3, sender_domain: 5
     coherence_min = config.classification.auto_rule_domain_coherence  # 0.80
+    created: list[int] = []
 
     # 1. List-Id rule — highest specificity, lowest threshold
     if email_features.list_id:
@@ -1100,7 +1114,7 @@ def maybe_create_rule(email_features, target_folder: str):
         if count >= thresholds["list_id"]:
             existing = db.find_rule("list_id", email_features.list_id)
             if not existing:
-                db.create_rule(
+                rule_id = db.create_rule(
                     rule_type="list_id",
                     condition_value=email_features.list_id,
                     target_folder_path=target_folder,
@@ -1108,7 +1122,7 @@ def maybe_create_rule(email_features, target_folder: str):
                     source="auto",
                 )
                 logger.info(f"Auto-created list_id rule: {email_features.list_id} → {target_folder}")
-                return
+                created.append(rule_id)
 
     # 2. Sender domain rule — requires volume AND coherence.
     #    Coherence: what fraction of this domain's total moves go to target_folder?
@@ -1137,7 +1151,7 @@ def maybe_create_rule(email_features, target_folder: str):
         existing = db.find_rule("sender_domain", email_features.from_domain)
         if not existing:
             confidence = min(0.90, 0.75 + (domain_to_target * 0.02))
-            db.create_rule(
+            rule_id = db.create_rule(
                 rule_type="sender_domain",
                 condition_value=email_features.from_domain,
                 target_folder_path=target_folder,
@@ -1148,9 +1162,9 @@ def maybe_create_rule(email_features, target_folder: str):
                 f"Auto-created domain rule: {email_features.from_domain} → {target_folder} "
                 f"(coherence={domain_coherence:.0%}, n={domain_to_target})"
             )
-            return
+            created.append(rule_id)
 
-    # 3. Exact sender fallback — narrow scope, moderate threshold
+    # 3. Exact sender — narrow scope, moderate threshold (always evaluated)
     count = db.execute("""
         SELECT COUNT(*) FROM audit_log
         WHERE from_address = ? AND target_folder = ? AND moved = 1
@@ -1159,7 +1173,7 @@ def maybe_create_rule(email_features, target_folder: str):
     if count >= thresholds["exact_sender"]:
         existing = db.find_rule("exact_sender", email_features.from_address)
         if not existing:
-            db.create_rule(
+            rule_id = db.create_rule(
                 rule_type="exact_sender",
                 condition_value=email_features.from_address,
                 target_folder_path=target_folder,
@@ -1167,6 +1181,9 @@ def maybe_create_rule(email_features, target_folder: str):
                 source="auto",
             )
             logger.info(f"Auto-created sender rule: {email_features.from_address} → {target_folder}")
+            created.append(rule_id)
+
+    return created
 ```
 
 ### Feedback Loop: Confidence Penalty on Corrections
@@ -1297,8 +1314,12 @@ corrupting existing data.
 
 Bootstrap does not use a separate, looser rule-creation strategy. Historical
 emails are treated as evidence inputs to the same candidate evaluation logic
-used during live learning. This ensures broad rules such as `sender_domain`
-are only created when their cross-folder history is sufficiently coherent.
+used during live learning. All eligible rules are created (see §8 *Auto-Rule
+Generation*) — a sender with a `list_id` may produce both a `list_id` rule
+and an `exact_sender` rule if both thresholds are met. Classification-time
+priority (§5) determines which rule fires. This ensures broad rules such as
+`sender_domain` are only created when their cross-folder history is
+sufficiently coherent, while narrower rules remain available as fallbacks.
 
 ```python
 def bootstrap_rules(jmap_client, max_per_folder: int = 50):
@@ -1995,8 +2016,10 @@ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
         mailsort processed them) — `inbox_snapshot` table, migration 7
   - [x] Category 4: daily folder scan for emails with no audit_log record
         (`learner_state` table tracks last-scan time)
-- [x] Auto-rule generation from repeated patterns: list_id → sender_domain
-      (with coherence check) → exact_sender (`audit/learner.py`)
+- [x] Auto-rule generation from repeated patterns: all eligible rule types
+      created independently — list_id, sender_domain (with coherence check),
+      exact_sender — classification-time priority decides which fires
+      (`audit/learner.py`)
 - [x] Rule confidence adjustment: decay by 0.10 for rules not hit in 90+ days,
       floor at 0.50 (`audit/learner.py`)
 - [x] Feedback loop: correction sorts penalize originating rule by −0.15,
