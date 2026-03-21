@@ -93,6 +93,50 @@ def test_should_call_default_allows():
     assert reason is None
 
 
+def test_should_call_skip_sender():
+    config = ClassificationConfig()
+    config.llm_skip_senders = ["secret@personal.com"]
+    clf = LLMClassifier(api_key="key", config=config, valid_folder_paths=set())
+
+    features = _make_features(from_address="secret@personal.com")
+    allowed, reason = clf.should_call(features, {})
+    assert allowed is False
+    assert reason == "llm_skip_sender"
+
+
+def test_should_call_skip_sender_allows_other():
+    config = ClassificationConfig()
+    config.llm_skip_senders = ["secret@personal.com"]
+    clf = LLMClassifier(api_key="key", config=config, valid_folder_paths=set())
+
+    features = _make_features(from_address="other@example.com")
+    allowed, reason = clf.should_call(features, {})
+    assert allowed is True
+    assert reason is None
+
+
+def test_should_call_skip_domain():
+    config = ClassificationConfig()
+    config.llm_skip_domains = ["bank.example.com"]
+    clf = LLMClassifier(api_key="key", config=config, valid_folder_paths=set())
+
+    features = _make_features(from_address="alerts@bank.example.com", from_domain="bank.example.com")
+    allowed, reason = clf.should_call(features, {})
+    assert allowed is False
+    assert reason == "llm_skip_domain"
+
+
+def test_should_call_skip_domain_allows_other():
+    config = ClassificationConfig()
+    config.llm_skip_domains = ["bank.example.com"]
+    clf = LLMClassifier(api_key="key", config=config, valid_folder_paths=set())
+
+    features = _make_features(from_address="noreply@other.com", from_domain="other.com")
+    allowed, reason = clf.should_call(features, {})
+    assert allowed is True
+    assert reason is None
+
+
 def test_should_call_skip_known_contact_when_disabled():
     config = ClassificationConfig()
     config.llm_allow_known_contacts = False

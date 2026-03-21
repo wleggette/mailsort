@@ -91,6 +91,13 @@ def test_dry_run_logs_but_does_not_move(db: Database):
     assert run_row["emails_seen"] == 1
     assert run_row["emails_moved"] == 0
 
+    # Rule hit_count should NOT be incremented during dry run
+    rule_row = db.execute(
+        "SELECT hit_count, last_hit_at FROM rules WHERE condition_value='noreply@chase.com'"
+    ).fetchone()
+    assert rule_row["hit_count"] == 0
+    assert rule_row["last_hit_at"] is None
+
 
 # ------------------------------------------------------------------
 # Live run: classify + move
@@ -134,6 +141,13 @@ def test_live_run_moves_and_logs(db: Database):
     run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     assert run_row["status"] == "completed"
     assert run_row["emails_moved"] == 1
+
+    # Rule hit_count SHOULD be incremented during live run
+    rule_row = db.execute(
+        "SELECT hit_count, last_hit_at FROM rules WHERE condition_value='noreply@chase.com'"
+    ).fetchone()
+    assert rule_row["hit_count"] == 1
+    assert rule_row["last_hit_at"] is not None
 
 
 # ------------------------------------------------------------------

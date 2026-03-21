@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 class RuleEngine:
     """Matches emails against stored rules and manages rule CRUD."""
 
-    def __init__(self, db: Database, thresholds: ThresholdsConfig):
+    def __init__(self, db: Database, thresholds: ThresholdsConfig, *, record_hits: bool = True):
         self._db = db
         self._thresholds = thresholds
+        self._record_hits = record_hits
 
     # ------------------------------------------------------------------
     # Classification
@@ -39,26 +40,30 @@ class RuleEngine:
         if features.list_id:
             rule = self._find_rule("list_id", features.list_id)
             if rule and rule["confidence"] >= threshold:
-                self._record_hit(rule["id"])
+                if self._record_hits:
+                    self._record_hit(rule["id"])
                 return self._to_classification(rule)
 
         # 2. Exact sender
         rule = self._find_rule("exact_sender", features.from_address)
         if rule and rule["confidence"] >= threshold:
-            self._record_hit(rule["id"])
+            if self._record_hits:
+                self._record_hit(rule["id"])
             return self._to_classification(rule)
 
         # 3. Sender domain
         rule = self._find_rule("sender_domain", features.from_domain)
         if rule and rule["confidence"] >= threshold:
-            self._record_hit(rule["id"])
+            if self._record_hits:
+                self._record_hit(rule["id"])
             return self._to_classification(rule)
 
         # 4. Subject regex — scan all active regex rules
         for rule in self._find_rules_by_type("subject_regex"):
             try:
                 if re.search(rule["condition_value"], features.subject):
-                    self._record_hit(rule["id"])
+                    if self._record_hits:
+                        self._record_hit(rule["id"])
                     return self._to_classification(rule)
             except re.error:
                 logger.warning("Bad regex in rule %d: %s", rule["id"], rule["condition_value"])

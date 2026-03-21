@@ -86,7 +86,7 @@ def _execute_run(
     # ------------------------------------------------------------------
     # 0. Learning
     # ------------------------------------------------------------------
-    rule_engine = RuleEngine(db, cfg.classification.thresholds)
+    rule_engine = RuleEngine(db, cfg.classification.thresholds, record_hits=not dry_run)
     learner = Learner(db, rule_engine, cfg.classification)
 
     # Deactivate rules whose target folder no longer exists

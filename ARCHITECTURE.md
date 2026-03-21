@@ -516,8 +516,8 @@ CREATE TABLE rules (
     target_folder_path TEXT NOT NULL, -- e.g., "INBOX/Affairs/Banks"
     target_folder_id TEXT,           -- JMAP mailbox ID (resolved at runtime)
     confidence REAL DEFAULT 1.0,     -- 0.0 to 1.0
-    hit_count INTEGER DEFAULT 0,     -- Times this rule has matched
-    last_hit_at TEXT,                -- ISO timestamp
+    hit_count INTEGER DEFAULT 0,     -- Times this rule has matched (live runs only)
+    last_hit_at TEXT,                -- ISO timestamp (live runs only)
     source TEXT NOT NULL DEFAULT 'auto'
         CHECK(source IN ('auto','manual','bootstrap','llm_suggested')),
     created_at TEXT NOT NULL,
@@ -572,6 +572,13 @@ def classify_by_rules(email_features: EmailFeatures) -> Optional[Classification]
 
     return None  # No rule matched → fall through to LLM
 ```
+
+**Dry-run behaviour:** During `mailsort dry-run`, rule matching still runs
+normally (the classification result is logged to `audit_log`) but
+`hit_count` and `last_hit_at` are **not** updated. This prevents dry runs
+from inflating hit statistics or resetting the staleness clock used by
+confidence decay (§8). The `RuleEngine` accepts a `record_hits` flag
+(default `True`) that the orchestrator sets to `False` for dry runs.
 
 ---
 

@@ -14,10 +14,11 @@
   - [3.6 Bootstrap Verification Checklist](#36-bootstrap-verification-checklist)
   - [3.7 Static Fixture Data](#37-static-fixture-data)
 - [4. Phase 2: Dry Run](#4-phase-2-dry-run)
-  - [4.1 Classification Source Scenarios](#41-classification-source-scenarios)
-  - [4.2 Eligibility Gate Scenarios](#42-eligibility-gate-scenarios)
-  - [4.3 Dynamic Inbox Emails](#43-dynamic-inbox-emails)
+  - [4.1 Eligibility Gate Scenarios](#41-eligibility-gate-scenarios)
+  - [4.2 Classification Source Scenarios](#42-classification-source-scenarios)
+  - [4.3 No-LLM Dry Run Verification Checklist](#43-no-llm-dry-run-verification-checklist)
   - [4.4 Dry Run Verification Checklist](#44-dry-run-verification-checklist)
+  - [4.5 Dynamic Inbox Emails](#45-dynamic-inbox-emails)
 - [5. Phase 3: Live Move](#5-phase-3-live-move)
   - [5.1 Age Gate Test](#51-age-gate-test)
   - [5.2 Live Move Verification Checklist](#52-live-move-verification-checklist)
@@ -159,16 +160,6 @@ python tests/system/run_system_test.py --config config.test.yaml --setup-only
 python tests/system/run_system_test.py --config config.test.yaml
 ```
 
-**No-LLM pre-flight** — verifies fallback descriptions without API key (D3):
-
-```bash
-python tests/system/run_system_test.py --config config.test.yaml --no-llm
-```
-
-Runs on a clean DB with `ANTHROPIC_API_KEY` unset: loads fixtures, bootstraps,
-verifies all descriptions use the `"Emails filed under {name}"` fallback, then
-wipes the DB. The full sequence includes this automatically before proceeding.
-
 **Step-by-step:**
 
 ```bash
@@ -193,11 +184,12 @@ Bootstrap scans existing folders, collects email evidence into `audit_log`,
 generates folder descriptions, creates rules from accumulated evidence, and
 imports contacts. It runs in four internal sub-phases:
 
-1. **Collect evidence** — scan folders, sample up to 50 emails each, insert into `audit_log` with `classification_source='manual'` and `moved=True`
-2. **Create rules** — evaluate evidence per sender/domain/list-id using coherence and threshold checks
-3. **Import contacts** — fetch `ContactCard` from Fastmail + merge config `known_contact_overrides`
-4. **Coverage check** — report what percentage of evidence emails would match a created rule
-5. **Idempotency check** — run bootstrap a second time, verify 0 new evidence rows, rules unchanged, descriptions unchanged
+1. **No-LLM bootstrap (D3)** — temporarily unset `ANTHROPIC_API_KEY`, run bootstrap on a clean DB, verify all descriptions use `"Emails filed under {name}"` fallback, then wipe the DB
+2. **Collect evidence** — scan folders, sample up to 50 emails each, insert into `audit_log` with `classification_source='manual'` and `moved=True`
+3. **Create rules** — evaluate evidence per sender/domain/list-id using coherence and threshold checks
+4. **Import contacts** — fetch `ContactCard` from Fastmail + merge config `known_contact_overrides`
+5. **Coverage check** — report what percentage of evidence emails would match a created rule
+6. **Idempotency check** — run bootstrap a second time, verify 0 new evidence rows, rules unchanged, descriptions unchanged
 
 ### 3.1 Folder Scenarios
 
@@ -238,7 +230,7 @@ for existing descriptions and config overrides before generating new ones.
 |----|----------|-------------|-------------------|----------|
 | **D1** | Config override present | `folder_description_overrides: {"Affairs/Banks": "..."}` | Override text stored directly. LLM NOT called for this folder | Config (`folder_description_overrides` for Banks, Stores, Children) |
 | **D2** | No override, LLM available | `ANTHROPIC_API_KEY` set, no existing description | LLM called with `FOLDER_DESCRIPTION_PROMPT` + sample subjects/senders. Description stored in `folder_descriptions` table | Groups A–J (provide sample data for LLM prompt) |
-| **D3** | No override, no LLM | `ANTHROPIC_API_KEY` not set | Fallback: `"Emails filed under {leaf_name}"` (e.g., `"Emails filed under Banks"`) | (a) `Affairs/Empty` always gets fallback (0 emails, nothing to prompt LLM with); (b) `--no-llm` pre-flight: bootstrap on clean DB without API key, verify all descriptions are fallback, wipe, then proceed |
+| **D3** | No override, no LLM | `ANTHROPIC_API_KEY` not set | Fallback: `"Emails filed under {leaf_name}"` (e.g., `"Emails filed under Banks"`) | (a) `Affairs/Empty` always gets fallback (0 emails, nothing to prompt LLM with); (b) Phase 1 step 1: no-LLM bootstrap on clean DB, verify all descriptions are fallback, wipe, then proceed |
 | **D4** | Existing description | Re-run bootstrap, description already in DB | Existing description preserved — LLM NOT called again | Procedural (F5: run bootstrap ×2) |
 | **D5** | Empty folder, no override | Folder with 0 emails, no config override | Fallback description used (no email samples to send to LLM) | F3 (`Affairs/Empty`); also validates D3(a) |
 | **D6** | Path normalization | Override key `"Affairs/Banks"` vs folder path `"INBOX/Affairs/Banks"` | Override matched after normalizing: leading `INBOX/` stripped, compared case-insensitively | Config (`folder_description_overrides`) |
@@ -467,9 +459,28 @@ and optionally `listId`.
 
 Dry run classifies all inbox emails but does **not** move them. It produces
 `audit_log` entries with classification results that can be verified without
-side effects.
+side effects. It runs in three internal sub-phases:
 
-### 4.1 Classification Source Scenarios
+1. **Generate inbox emails** — create dynamic inbox emails with controlled timestamps, keywords, and senders for classification and eligibility testing
+2. **No-LLM dry run (S9)** — temporarily unset `ANTHROPIC_API_KEY`, run `mailsort dry-run`, verify rule/thread matches still work and LLM-dependent emails get `skip_reason='llm_unavailable'`
+3. **Full dry run** — run `mailsort dry-run` with LLM enabled, verify classification sources, eligibility gates, and skip reasons
+
+Each dry-run pass gets its own `run_id` so verifiers can query by run.
+
+### 4.1 Eligibility Gate Scenarios
+
+Pre-classification filters determine whether an email is even considered for
+classification. These are checked before the classification pipeline runs.
+
+| ID | Scenario | Keywords | receivedAt | Expected Outcome | Tested By |
+|----|----------|----------|------------|-----------------|----------|
+| **E1** | Read, unflagged, old enough | `$seen` | 5h ago | classified (moved or below_threshold) | Inbox gen: E1 (`noreply@chase.com`) |
+| **E2** | Unread | (none) | 5h ago | skip_reason=unread | Inbox gen: E2 (`orders@amazon.com`) |
+| **E3** | Read + flagged | `$seen`, `$flagged` | 5h ago | skip_reason=flagged | Inbox gen: E3 (`noreply@chase.com`) |
+| **E4** | Read, unflagged, too new | `$seen` | now | skip_reason=too_new | Inbox gen: E4 (`alerts@bankofamerica.com`) |
+| **E5** | Unread + flagged + new | `$flagged` | now | skip_reason=unread (checked first) | Inbox gen: E5 (`noreply@target.com`) |
+
+### 4.2 Classification Source Scenarios
 
 These test which classification source is used for each inbox email, based on
 the rules and contacts created during bootstrap.
@@ -484,22 +495,32 @@ the rules and contacts created during bootstrap.
 | **S6** | No rule, LLM below threshold | llm | below_threshold | Inbox gen: S6 (`info@ambiguous-service.com`) |
 | **S7** | Known contact, LLM above known-contact threshold | llm | moved | Inbox gen: S7 (`testcontact@example.com`, strong banking content) |
 | **S8** | Known contact, LLM between normal and known-contact threshold | llm | below_threshold_known_contact | Inbox gen: S8 (`testcontact@example.com`) |
-| **S9** | No rule, no LLM configured | — | no_classification / llm_unavailable | Config variation (unset `ANTHROPIC_API_KEY`) |
+| **S9** | No rule, no LLM configured | — | llm_unavailable | No-LLM dry run (§4.3) |
 
-### 4.2 Eligibility Gate Scenarios
+### 4.3 No-LLM Dry Run Verification Checklist
 
-Pre-classification filters determine whether an email is even considered for
-classification. These are checked before the classification pipeline runs.
+The no-LLM dry run temporarily unsets `ANTHROPIC_API_KEY` and runs
+`mailsort dry-run` before the full run. Verify:
 
-| ID | Scenario | Keywords | receivedAt | Expected Outcome | Tested By |
-|----|----------|----------|------------|-----------------|----------|
-| **E1** | Read, unflagged, old enough | `$seen` | 5h ago | classified (moved or below_threshold) | Inbox gen: E1 (`noreply@chase.com`) |
-| **E2** | Unread | (none) | 5h ago | skip_reason=unread | Inbox gen: E2 (`orders@amazon.com`) |
-| **E3** | Read + flagged | `$seen`, `$flagged` | 5h ago | skip_reason=flagged | Inbox gen: E3 (`noreply@chase.com`) |
-| **E4** | Read, unflagged, too new | `$seen` | now | skip_reason=too_new | Inbox gen: E4 (`alerts@bankofamerica.com`) |
-| **E5** | Unread + flagged + new | `$flagged` | now | skip_reason=unread (checked first) | Inbox gen: E5 (`noreply@target.com`) |
+- [ ] **Rule/thread matches work**: emails matching rules or thread context are classified normally (`classification_source='rule'` or `'thread'`)
+- [ ] **LLM-dependent emails skipped**: emails without rule/thread match have `skip_reason='llm_unavailable'`
+- [ ] **C5 specifically**: `random@unknown.com` has `skip_reason='llm_unavailable'`
+- [ ] **No crash**: graceful degradation, no unhandled exceptions
 
-### 4.3 Dynamic Inbox Emails
+### 4.4 Dry Run Verification Checklist
+
+- [ ] **Run record created**: `runs` table has a row with `status='completed'` and `emails_moved=0` for the dry-run `run_id`
+- [ ] **Hit counts unchanged**: all rules have `hit_count=0` and `last_hit_at IS NULL` after dry run (dry run does not record hits)
+- [ ] **Audit log populated**: every inbox email has an `audit_log` row for each dry-run pass (query by `run_id`)
+- [ ] **Classification sources correct**: rule, thread, llm, or none as expected
+- [ ] **Skip reasons correct**: unread, flagged, too_new where expected
+- [ ] **No emails moved**: all emails still in INBOX (dry run = read-only)
+- [ ] **Rule matches use correct rule type**: exact_sender, sender_domain, or list_id
+- [ ] **Classification priority — exact_sender over sender_domain**: `statements@bigbank.com` matches `exact_sender` rule (not `sender_domain` for `bigbank.com`)
+- [ ] **Classification priority — list_id over exact_sender**: email with list-id `<updates.ymca.org>` from `activities@ymca.org` matches `list_id` rule (not `exact_sender`)
+- [ ] **LLM called only when no rule/thread match**: classification_source=llm only for fallback cases
+
+### 4.5 Dynamic Inbox Emails
 
 A Python script (`tests/system/generate_inbox_emails.py`) creates inbox emails
 with dynamic timestamps for testing all classification and eligibility scenarios
@@ -525,19 +546,12 @@ at runtime.
 | R5a: Megastore below threshold | `returns@megastore.com` | `$seen` | 5h ago | LLM (no rule) |
 | R5b: Megastore per-address | `orders@megastore.com` | `$seen` | 5h ago | moved → Stores (exact_sender) |
 | R5c: Megastore per-address | `alerts@megastore.com` | `$seen` | 5h ago | moved → Banks (exact_sender) |
+| P1: exact_sender over sender_domain | `statements@bigbank.com` | `$seen` | 5h ago | moved → Banks (exact_sender, not sender_domain) |
+| P2: list_id over exact_sender | `activities@ymca.org` (List-Id: `<updates.ymca.org>`) | `$seen` | 5h ago | moved → Children (list_id, not exact_sender) |
 
 The generator uses `datetime.now(timezone.utc)` to produce `receivedAt`
 timestamps relative to the current time, ensuring `too_new` scenarios work
 regardless of when the test is run.
-
-### 4.4 Dry Run Verification Checklist
-
-- [ ] **Audit log populated**: every inbox email has an `audit_log` row for this run
-- [ ] **Classification sources correct**: rule, thread, llm, or none as expected
-- [ ] **Skip reasons correct**: unread, flagged, too_new where expected
-- [ ] **No emails moved**: all emails still in INBOX (dry run = read-only)
-- [ ] **Rule matches use correct rule type**: exact_sender, sender_domain, or list_id
-- [ ] **LLM called only when no rule/thread match**: classification_source=llm only for fallback cases
 
 ---
 

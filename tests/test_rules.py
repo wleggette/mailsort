@@ -136,9 +136,9 @@ def test_inactive_rule_ignored(db: Database):
 # Priority: list_id > exact_sender > domain
 # ------------------------------------------------------------------
 
-def test_list_id_takes_priority_over_sender(db: Database):
+def test_list_id_takes_priority_over_exact_sender(db: Database):
     engine = _make_engine(db)
-    engine.create_rule(
+    list_rule_id = engine.create_rule(
         rule_type="list_id",
         condition_value="<mailsort.github.com>",
         target_folder_path="INBOX/Tech/GitHub",
@@ -158,6 +158,32 @@ def test_list_id_takes_priority_over_sender(db: Database):
     )
     clf = engine.classify(features)
     assert clf.folder_path == "INBOX/Tech/GitHub"
+    assert clf.rule_id == list_rule_id
+
+
+def test_exact_sender_takes_priority_over_domain(db: Database):
+    engine = _make_engine(db)
+    exact_rule_id = engine.create_rule(
+        rule_type="exact_sender",
+        condition_value="statements@bigbank.com",
+        target_folder_path="INBOX/Affairs/Banks",
+        confidence=0.95,
+        source="bootstrap",
+    )
+    engine.create_rule(
+        rule_type="sender_domain",
+        condition_value="bigbank.com",
+        target_folder_path="INBOX/Affairs/Banks",
+        confidence=0.90,
+        source="auto",
+    )
+    features = _make_features(
+        from_address="statements@bigbank.com",
+        from_domain="bigbank.com",
+    )
+    clf = engine.classify(features)
+    assert clf is not None
+    assert clf.rule_id == exact_rule_id
 
 
 # ------------------------------------------------------------------
@@ -179,6 +205,25 @@ def test_hit_count_incremented(db: Database):
 
     row = db.execute("SELECT hit_count FROM rules WHERE id = ?", (rule_id,)).fetchone()
     assert row["hit_count"] == 2
+
+
+def test_hit_count_not_incremented_when_record_hits_false(db: Database):
+    engine = RuleEngine(db, ThresholdsConfig(), record_hits=False)
+    rule_id = engine.create_rule(
+        rule_type="exact_sender",
+        condition_value="noreply@chase.com",
+        target_folder_path="INBOX/Affairs/Banks",
+        confidence=0.95,
+        source="bootstrap",
+    )
+    features = _make_features()
+    clf = engine.classify(features)
+    assert clf is not None
+    assert clf.folder_path == "INBOX/Affairs/Banks"
+
+    row = db.execute("SELECT hit_count, last_hit_at FROM rules WHERE id = ?", (rule_id,)).fetchone()
+    assert row["hit_count"] == 0
+    assert row["last_hit_at"] is None
 
 
 def test_reconcile_folders_deactivates_stale(db: Database):
