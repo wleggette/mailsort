@@ -1666,7 +1666,7 @@ def bootstrap_rules(jmap_client, max_per_folder: int = 50):
     for candidate in evidence:
         result = maybe_create_rule_from_evidence(
             candidate=candidate,
-            source="bootstrap",
+            source="auto",
         )
         if result.created:
             report["created"].append(result)

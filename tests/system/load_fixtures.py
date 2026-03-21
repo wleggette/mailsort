@@ -24,6 +24,19 @@ JMAP_USING = [
     "urn:ietf:params:jmap:mail",
 ]
 
+JMAP_USING_CONTACTS = [
+    "urn:ietf:params:jmap:core",
+    "urn:ietf:params:jmap:contacts",
+]
+
+# Test contacts to auto-populate in the Fastmail test account.
+# These must exist as ContactCard entries for CI1 (contacts fetched from Fastmail)
+# and for known-contact threshold testing (S7, S8, C1).
+TEST_CONTACTS = [
+    {"name": "Test Contact", "email": "testcontact@example.com"},
+    {"name": "Test Friend", "email": "testfriend@gmail.com"},
+]
+
 
 class JMAPLoader:
     """Lightweight JMAP client for loading test emails."""
@@ -255,6 +268,73 @@ class JMAPLoader:
         destroyed = data["methodResponses"][0][1].get("destroyed", [])
         return len(destroyed)
 
+    def create_contacts(self, contacts: list[dict]) -> int:
+        """Create test ContactCard entries via JMAP. Returns count created.
+
+        Each contact dict has 'name' and 'email' keys.
+        Idempotent: skips contacts whose email already exists.
+        """
+        # Check if contacts scope is available
+        session = self._get_session()
+        capabilities = set(session.get("capabilities", {}).keys())
+        if "urn:ietf:params:jmap:contacts" not in capabilities:
+            logger.warning("Contacts scope not available — skipping contact creation")
+            return 0
+
+        # Fetch existing contacts to avoid duplicates
+        payload = {
+            "using": JMAP_USING_CONTACTS,
+            "methodCalls": [
+                ["ContactCard/get", {"accountId": self.account_id}, "c1"],
+            ],
+        }
+        resp = self._http.post(self.api_url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        existing_emails: set[str] = set()
+        for card in data["methodResponses"][0][1].get("list", []):
+            emails_map = card.get("emails") or {}
+            for entry in emails_map.values():
+                addr = entry.get("value") or entry.get("address") or ""
+                if addr:
+                    existing_emails.add(addr.lower())
+
+        created = 0
+        for contact in contacts:
+            if contact["email"].lower() in existing_emails:
+                logger.debug("Contact already exists: %s", contact["email"])
+                continue
+
+            create_data = {
+                "name": {"full": contact["name"]},
+                "emails": {
+                    "e1": {"value": contact["email"]},
+                },
+            }
+            payload = {
+                "using": JMAP_USING_CONTACTS,
+                "methodCalls": [
+                    ["ContactCard/set", {
+                        "accountId": self.account_id,
+                        "create": {f"ct{created}": create_data},
+                    }, "cc"],
+                ],
+            }
+            try:
+                resp = self._http.post(self.api_url, json=payload)
+                resp.raise_for_status()
+                result = resp.json()["methodResponses"][0][1]
+                if result.get("created"):
+                    created += 1
+                    logger.info("Created contact: %s <%s>", contact["name"], contact["email"])
+                else:
+                    logger.warning("Failed to create contact %s: %s",
+                                   contact["email"], result.get("notCreated"))
+            except Exception as e:
+                logger.warning("Failed to create contact %s: %s", contact["email"], e)
+
+        return created
+
     def close(self):
         self._http.close()
 
@@ -483,6 +563,10 @@ def main():
             count = cleanup_test_emails(loader)
             print(f"Cleaned up {count} test emails")
         else:
+            # Create test contacts first
+            contacts_created = loader.create_contacts(TEST_CONTACTS)
+            print(f"Created {contacts_created} test contacts")
+
             fixtures_path = Path(__file__).parent / "fixtures" / "folder_emails.json"
             count = load_folder_fixtures(loader, args.to_email, fixtures_path)
             print(f"Loaded {count} fixture emails into folders")

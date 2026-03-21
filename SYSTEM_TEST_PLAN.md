@@ -42,35 +42,6 @@ controlled test data. This covers bootstrap → dry-run → live move → learni
 feedback loop — everything the integration tests verify with mocks, but now
 against real JMAP.
 
----
-
-## Architecture → Test Plan Mapping
-
-Each row maps an architecture module (§2 diagram) to the system test scenarios
-that exercise it and the unit test file that provides deeper coverage.
-
-| Architecture Module | Code Location | System Test Scenarios | Unit Tests |
-|---|---|---|---|
-| **Scheduler** | `scheduler.py` | Not system-tested (timer only) | `test_scheduler.py` |
-| **JMAP Client** | `jmap/client.py` | All phases (real API) | `test_jmap_*.py` |
-| **Mailbox Tree** | `jmap/mailbox_tree.py` | §3.1 (F1-F7) | `test_mailbox_tree.py` |
-| **Feature Extractor** | `classifier/features.py` | §3.2 (EF1-EF9) | `test_integration.py` |
-| **Skip Senders Filter** | `orchestrator.py` | — (config variation) | `test_orchestrator.py` |
-| **Thread Context** | `classifier/pipeline.py` | §4.2 (S4) | `test_pipeline.py` |
-| **Rule Engine** | `classifier/rules.py` | §3.4 (LR/DR/ER/P), §4.2 (S1-S3), §4.4 (priority) | `test_rules.py` |
-| **LLM Classifier** | `classifier/llm.py` | §4.2 (S5-S8), §4.3 (no-LLM) | `test_llm.py` |
-| **LLM Privacy Gates** | `classifier/llm.py` | — (config variation) | `test_llm.py` |
-| **Confidence Gate** | `mover/mover.py` | §4.2 (S6, S8) | `test_mover.py` |
-| **Eligibility Gates** | `orchestrator.py` | §4.1 (E1-E5) | `test_orchestrator.py` |
-| **Age Gate** | `orchestrator.py` | §5.1 (age gate across runs) | `test_orchestrator.py` |
-| **Email/set Mover** | `jmap/client.py` | §5 (live move) | `test_jmap_move.py` |
-| **Audit Log Writer** | `audit/writer.py` | §3.6, §4.3, §4.4, §5.2, §6.2, §7.2 (checklists) | `test_audit_writer.py` |
-| **Contact Import/Refresh** | `classifier/features.py` | §3.5 (CI1-CI4) | `test_contacts.py` |
-| **Folder Descriptions** | `classifier/descriptions.py` | §3.3 (D1-D7) | `test_descriptions.py` |
-| **Learner (manual sorts)** | `audit/learner.py` | §6 (correction simulation) | `test_learner.py` |
-| **Auto-Rule Generator** | `audit/learner.py` | §3.4 (bootstrap rules), §7 (feedback) | `test_learner.py` |
-| **Rule Confidence Decay** | `audit/learner.py` | §7.1 (FP1-FP2) | `test_learner.py` |
-| **Bootstrap Pipeline** | `bootstrap.py` | §3 (entire Phase 1) | `test_bootstrap.py` |
 
 ---
 
@@ -325,7 +296,7 @@ and coherence requirements.
 
 | ID | Scenario | Expected Confidence | What It Tests | Tested By |
 |----|----------|-------------------|---------------|----------|
-| **CA1** | New rule from bootstrap evidence | `1.0` (default for auto-created rules) | Initial confidence value | All rules from Groups A–J |
+| **CA1** | Confidence by rule type | `list_id`: 0.95, `sender_domain`: min(0.90, 0.75 + n×0.02), `exact_sender`: min(0.95, 0.80 + n×0.03) | Confidence matches formula for rule type | All rules from Groups A–J |
 | **CA2** | Rule type stored | `rule_type` column matches: `list_id`, `sender_domain`, or `exact_sender` | Correct rule type recorded | All rules from Groups A–J |
 | **CA3** | Target folder stored | `target_folder` matches the dominant folder from evidence | Correct target | All rules from Groups A–J |
 
@@ -337,11 +308,13 @@ and coherence requirements.
 | **CI2** | Config override merged | `known_contact_overrides` has `testcontact@example.com` | Entry appears in contacts cache with `relationship: "friend"` | Config (`known_contact_overrides`) |
 | **CI3** | No contacts | Empty address book, no overrides | Empty contacts table; LLM uses standard threshold for all senders | Config variation (remove overrides) |
 | **CI4** | Re-run idempotent | Run bootstrap twice | Contacts refreshed (upserted), not duplicated | Procedural (F5: run bootstrap ×2) |
+| **CI5** | Contacts scope unavailable | JMAP token lacks `urn:ietf:params:jmap:contacts` scope | Contacts import skipped gracefully (log warning, empty contacts table). LLM uses standard threshold for all senders | Config variation (revoke contacts scope) |
 
 ### 3.6 Bootstrap Verification Checklist
 
 After bootstrap completes, verify:
 
+- [ ] **Bootstrap run record**: `runs` table has a row with `trigger='bootstrap'`, `status='completed'`, `emails_moved=0`
 - [ ] **Evidence rows**: `audit_log` contains one row per sampled email, all with `classification_source='manual'` and `moved=1`
 - [ ] **No duplicates**: running bootstrap again inserts 0 new rows
 - [ ] **Folder descriptions**: every non-system leaf folder has a description in `folder_descriptions`

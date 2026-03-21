@@ -186,6 +186,127 @@ def test_bootstrap_idempotent_no_duplicate_evidence(db: Database):
     assert count == 3
 
 
+def test_bootstrap_run_record_created(db: Database):
+    """Bootstrap should create a run record with trigger='bootstrap' and status='completed'."""
+    cfg = _make_config()
+    tree = _make_tree()
+
+    emails = [_make_jmap_email(f"e-{i}", "noreply@chase.com") for i in range(3)]
+
+    mock_jmap = MagicMock()
+    def query_side_effect(mailbox_id, limit=50):
+        if mailbox_id == "mb-banks":
+            return [e.id for e in emails]
+        return []
+    mock_jmap.query_folder_emails.side_effect = query_side_effect
+    mock_jmap.get_emails.return_value = emails
+    mock_jmap.get_contacts.return_value = []
+
+    run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
+
+    row = db.execute(
+        "SELECT * FROM runs WHERE trigger = 'bootstrap' ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    assert row["status"] == "completed"
+    assert row["emails_seen"] == 3
+    assert row["emails_moved"] == 0
+
+
+def test_bootstrap_skips_deleted_folder_evidence(db: Database):
+    """Rules should not be created for evidence pointing to deleted folders."""
+    cfg = _make_config()
+
+    # Build a tree WITH a "Deals" folder
+    mailboxes = [
+        JMAPMailbox(id="mb-inbox", name="INBOX", role="inbox"),
+        JMAPMailbox(id="mb-banks", name="Banks", parentId="mb-affairs"),
+        JMAPMailbox(id="mb-affairs", name="Affairs", parentId="mb-inbox"),
+        JMAPMailbox(id="mb-deals", name="Deals", parentId="mb-shopping"),
+        JMAPMailbox(id="mb-shopping", name="Shopping", parentId="mb-inbox"),
+    ]
+    tree_with_deals = MailboxTree.build(mailboxes)
+
+    # Seed evidence for Deals folder via first bootstrap
+    deals_emails = [_make_jmap_email(f"deals-{i}", "promos@deals.com") for i in range(3)]
+    for e in deals_emails:
+        e.mailbox_ids = {"mb-deals": True}
+    banks_emails = [_make_jmap_email(f"banks-{i}", "noreply@chase.com") for i in range(3)]
+
+    mock_jmap = MagicMock()
+    def query_with_deals(mailbox_id, limit=50):
+        if mailbox_id == "mb-deals":
+            return [e.id for e in deals_emails]
+        if mailbox_id == "mb-banks":
+            return [e.id for e in banks_emails]
+        return []
+    mock_jmap.query_folder_emails.side_effect = query_with_deals
+    mock_jmap.get_emails.side_effect = lambda ids, *a, **kw: (
+        deals_emails if ids[0].startswith("deals") else banks_emails
+    )
+    mock_jmap.get_contacts.return_value = []
+
+    run_bootstrap(cfg, db, mock_jmap, tree_with_deals, max_per_folder=50)
+
+    # Verify both rules exist
+    deals_rule = db.execute("SELECT * FROM rules WHERE condition_value = 'promos@deals.com'").fetchone()
+    chase_rule = db.execute("SELECT * FROM rules WHERE condition_value = 'noreply@chase.com'").fetchone()
+    assert deals_rule is not None
+    assert chase_rule is not None
+
+    # Now "delete" the Deals folder — rebuild tree without it
+    tree_without_deals = _make_tree()  # no Deals folder
+
+    # Second bootstrap with the smaller tree — deals rule should be deactivated
+    mock_jmap2 = MagicMock()
+    mock_jmap2.query_folder_emails.side_effect = lambda mid, limit=50: (
+        [e.id for e in banks_emails] if mid == "mb-banks" else []
+    )
+    mock_jmap2.get_emails.return_value = banks_emails
+    mock_jmap2.get_contacts.return_value = []
+
+    run_bootstrap(cfg, db, mock_jmap2, tree_without_deals, max_per_folder=50)
+
+    # Deals rule should be deactivated (reconcile_folders ran)
+    deals_rule = db.execute(
+        "SELECT * FROM rules WHERE condition_value = 'promos@deals.com'"
+    ).fetchone()
+    assert deals_rule["active"] == 0
+
+    # Chase rule should still be active
+    chase_rule = db.execute(
+        "SELECT * FROM rules WHERE condition_value = 'noreply@chase.com'"
+    ).fetchone()
+    assert chase_rule["active"] == 1
+
+
+def test_bootstrap_coverage_calculation(db: Database):
+    """Coverage check should report correct match/unmatch counts."""
+    cfg = _make_config()
+    tree = _make_tree()
+
+    # 3 emails from chase (will create rule) + 2 from rare (below threshold, no rule)
+    chase_emails = [_make_jmap_email(f"chase-{i}", "noreply@chase.com") for i in range(3)]
+    rare_emails = [_make_jmap_email(f"rare-{i}", "rare@oneoff.com") for i in range(2)]
+    all_emails = chase_emails + rare_emails
+
+    mock_jmap = MagicMock()
+    def query_side_effect(mailbox_id, limit=50):
+        if mailbox_id == "mb-banks":
+            return [e.id for e in all_emails]
+        return []
+    mock_jmap.query_folder_emails.side_effect = query_side_effect
+    mock_jmap.get_emails.return_value = all_emails
+    mock_jmap.get_contacts.return_value = []
+
+    report = run_bootstrap(cfg, db, mock_jmap, tree, max_per_folder=50)
+
+    # Chase: 3 emails → exact_sender rule created → 3 matched
+    # Rare: 2 emails → below threshold → 0 matched
+    assert report.emails_matched_by_rules == 3
+    assert report.emails_unmatched == 2
+
+
 def test_bootstrap_jmap_error_handled(db: Database):
     cfg = _make_config()
     tree = _make_tree()
