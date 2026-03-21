@@ -119,7 +119,10 @@ def _execute_run(
     rules_adjusted = 0
     try:
         sort_counts = learner.detect_manual_sorts(jmap, tree, run_id, current_inbox_ids=all_inbox_ids)
-        folder_scan_sorts = learner.scan_folders_for_unknown_sorts(jmap, tree, run_id)
+        folder_scan_sorts = learner.scan_folders_for_unknown_sorts(
+            jmap, tree, run_id,
+            interval_hours=cfg.scheduler.folder_scan_interval_hours,
+        )
         sort_counts.from_other += folder_scan_sorts  # Cat 4 = from_other
         rules_adjusted = learner.adjust_rule_confidence()
         learner.cleanup_old_snapshots()

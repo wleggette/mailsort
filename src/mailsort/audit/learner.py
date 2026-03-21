@@ -336,15 +336,17 @@ class Learner:
         run_id: str,
         *,
         max_per_folder: int = 25,
+        interval_hours: int = 24,
     ) -> int:
         """Scan non-inbox folders for recent emails with no audit_log record.
 
         This catches emails sorted by the user outside of any scan window
-        (e.g., moved within seconds of arrival). Runs once per day.
+        (e.g., moved within seconds of arrival). Runs at most once per
+        *interval_hours* (configurable via scheduler.folder_scan_interval_hours).
 
         Returns count of manual sorts found.
         """
-        if not self._should_run_folder_scan():
+        if not self._should_run_folder_scan(interval_hours):
             return 0
 
         logger.info("Running daily folder scan for unknown sorts")
@@ -378,17 +380,16 @@ class Learner:
             logger.info("Daily folder scan found %d unknown sort(s)", found)
         return found
 
-    def _should_run_folder_scan(self) -> bool:
-        """Check if the daily folder scan should run (at most once per 24h)."""
+    def _should_run_folder_scan(self, interval_hours: int = 24) -> bool:
+        """Check if the folder scan should run (at most once per interval_hours)."""
         row = self._db.execute(
             "SELECT value FROM learner_state WHERE key = 'last_folder_scan'"
         ).fetchone()
         if not row:
             return True
-        # Run if last scan was more than 24 hours ago
         check = self._db.execute(
-            "SELECT ? < datetime('now', '-24 hours') AS due",
-            (row["value"],),
+            "SELECT ? < datetime('now', ? || ' hours') AS due",
+            (row["value"], f"-{interval_hours}"),
         ).fetchone()
         return bool(check and check["due"])
 

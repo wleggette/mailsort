@@ -21,6 +21,7 @@ class SchedulerConfig(BaseModel):
     max_batch_size: int = 100
     health_check_port: int = 8025
     contacts_refresh_hours: int = 24
+    folder_scan_interval_hours: int = 24
 
 
 class ThresholdsConfig(BaseModel):

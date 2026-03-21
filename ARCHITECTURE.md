@@ -16,6 +16,9 @@ Mailsort is a self-hosted email classification service that periodically scans r
 
 1. [Folder Structure](#1-folder-structure)
 2. [System Architecture](#2-system-architecture)
+   - [2A. Functional Component Diagram](#2a-functional-component-diagram)
+   - [2B. Bootstrap Sequence](#2b-bootstrap-sequence)
+   - [2C. Per-Run Sequence](#2c-per-run-sequence)
 3. [JMAP Integration](#3-jmap-integration)
 4. [Classification Pipeline](#4-classification-pipeline)
 5. [Rule Engine](#5-rule-engine)
@@ -76,104 +79,343 @@ INBOX/
 
 ## 2. System Architecture
 
+### 2A. Functional Component Diagram
+
+Static view of modules, responsibilities, and call dependencies. Arrows
+show "calls / depends on". Modules are grouped by layer.
+
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                      Fastmail (JMAP)                          │
-│  Mailbox/get · Email/query · Email/get · Email/set           │
-│  ContactCard/get · Thread/get                                │
-└──────────────────────┬───────────────────────────────────────┘
-                       │ HTTPS (Bearer token)
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│                 Scheduler (APScheduler)                        │
-│            Runs classification job every N minutes             │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│              Per-Run Pre-work (Orchestrator)                   │
-│  1. Learner: detect manual sorts (4 categories)               │
-│  2. Contact refresh (daily)                                   │
-│  3. Folder description generation (new folders)               │
-│  4. Rule reconciliation (deactivate stale targets)            │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│                     JMAP Client                               │
-│  1. Query ALL inbox email IDs (snapshot for departure diff)   │
-│  2. Fetch metadata: from, subject, list-id, keywords          │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│               Skip Senders Filter                             │
-│  Remove emails from skip_senders list before classification   │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│                 Feature Extractor                              │
-│  Sender address, domain, List-Id, List-Unsubscribe,           │
-│  subject patterns, body preview, keywords, threadId           │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│              Classification Pipeline                          │
-│  Tried in order — first match wins:                           │
-│                                                               │
-│  1. Thread Context ──→ audit_log lookup + JMAP fallback       │
-│  2. Rule Engine ─────→ list_id > exact_sender > sender_domain │
-│  3. LLM Classifier ─→ Claude Haiku (privacy-gated)           │
-│     ├─ llm_skip_senders / llm_skip_domains                   │
-│     └─ Contact enrichment (known contact → prompt hint)       │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│               Confidence Gate                                 │
-│  Rule:  confidence >= rule_move (0.85)                        │
-│  LLM:   confidence >= llm_move (0.80)                         │
-│  LLM + known contact: confidence >= llm_move_known_contact    │
-│  Thread: bypasses threshold                                   │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│              Eligibility Gates                                 │
-│  ✕ unread ($seen absent)      → skip_reason="unread"          │
-│  ✕ flagged ($flagged present) → skip_reason="flagged"         │
-│  ✕ too new (< min_age_minutes)→ skip_reason="too_new"         │
-│  ✕ unknown folder             → skip_reason="unknown_folder"  │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│              Email/set Mover                                  │
-│  Update mailboxIds: remove inbox, add target folder           │
-│  Tag with $mailsort-moved keyword                             │
-│  Batch moves in single JMAP call                              │
-│  (skipped entirely in dry-run mode)                           │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│              Audit Log (SQLite)                               │
-│  Every email logged: classification + outcome + skip_reason   │
-│  Run record: run_id, status, emails_seen, emails_moved        │
-└──────────────────────┬───────────────────────────────────────┘
-                       ▼
-┌──────────────────────────────────────────────────────────────┐
-│              Auto-Rule Generator (Learner)                    │
-│  On manual sort detection: evaluate all eligible rule types   │
-│  list_id + sender_domain + exact_sender independently         │
-│  Confidence penalty on corrections (−0.15 per correction)     │
-│  Confidence decay on stale rules (−0.10 after 90 days)        │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  EXTERNAL                                                           │
+│                                                                     │
+│  ┌──────────────────────────────┐  ┌─────────────────────────────┐  │
+│  │     Fastmail JMAP API        │  │     Anthropic LLM API       │  │
+│  │  Mailbox/get · Email/query   │  │  Claude Haiku               │  │
+│  │  Email/get · Email/set       │  │  Classification + folder    │  │
+│  │  ContactCard/get · Thread/get│  │  description generation     │  │
+│  └──────────────┬───────────────┘  └──────────────┬──────────────┘  │
+└─────────────────┼──────────────────────────────────┼────────────────┘
+                  │                                  │
+┌─────────────────┼──────────────────────────────────┼────────────────┐
+│  JMAP LAYER     │                                  │                │
+│                 ▼                                  │                │
+│  ┌──────────────────────────────┐                  │                │
+│  │     JMAP Client              │                  │                │
+│  │     jmap/client.py           │                  │                │
+│  │  Session, auth, method calls │                  │                │
+│  │  Batch moves, thread lookup  │                  │                │
+│  └──────────────┬───────────────┘                  │                │
+│                 │                                  │                │
+│  ┌──────────────▼───────────────┐                  │                │
+│  │     Mailbox Tree             │                  │                │
+│  │     jmap/mailbox_tree.py     │                  │                │
+│  │  Folder path ↔ ID resolution │                  │                │
+│  │  Excluded folder filtering   │                  │                │
+│  └──────────────────────────────┘                  │                │
+└────────────────────────────────────────────────────┼────────────────┘
+                                                     │
+┌────────────────────────────────────────────────────┼────────────────┐
+│  CLASSIFICATION LAYER                              │                │
+│                                                    │                │
+│  ┌──────────────────────────────┐                  │                │
+│  │     Feature Extractor        │                  │                │
+│  │     classifier/features.py   │                  │                │
+│  │  Email → EmailFeatures       │                  │                │
+│  │  Contact refresh (daily)     │                  │                │
+│  └──────────────┬───────────────┘                  │                │
+│                 │                                  │                │
+│  ┌──────────────▼───────────────┐                  │                │
+│  │     Classification Pipeline  │                  │                │
+│  │     classifier/pipeline.py   │                  │                │
+│  │  Orchestrates: thread →      │                  │                │
+│  │  rules → LLM. First match    │                  │                │
+│  │  wins.                       │                  │                │
+│  └──┬────────────┬──────────────┘                  │                │
+│     │            │                                 │                │
+│     ▼            ▼                                 ▼                │
+│  ┌────────────┐  ┌──────────────────────────────────────────────┐   │
+│  │ Rule Engine│  │     LLM Classifier                           │   │
+│  │ classifier/│  │     classifier/llm.py                        │   │
+│  │ rules.py   │  │  Privacy gates: llm_skip_senders/domains     │   │
+│  │            │  │  Contact enrichment in prompt                │   │
+│  │ list_id >  │  │  Structured JSON response parsing            │   │
+│  │ exact >    │  └──────────────────────────────────────────────┘   │
+│  │ domain >   │                                                     │
+│  │ regex      │  ┌──────────────────────────────────────────────┐   │
+│  │            │  │     Folder Descriptions                      │   │
+│  │ hit_count  │  │     classifier/descriptions.py               │   │
+│  │ (live only)│  │  LLM-generated or fallback per folder        │   │
+│  └────────────┘  └──────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 
-── One-time / Periodic ──────────────────────────────────────────
+┌─────────────────────────────────────────────────────────────────────┐
+│  DECISION LAYER                                                     │
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │     Move Decision Builder              mover/mover.py        │   │
+│  │                                                              │   │
+│  │  Confidence Gate          │  Eligibility Gates               │   │
+│  │  rule: ≥0.85              │  unread  → skip                  │   │
+│  │  llm:  ≥0.80              │  flagged → skip                  │   │
+│  │  llm+contact: ≥0.93       │  too_new → skip                  │   │
+│  │  thread: bypass           │  unknown_folder → skip            │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────────┐
-│              Bootstrap Pipeline                               │
-│  1. No-LLM pre-flight (verify fallback descriptions)          │
-│  2. Scan folders → collect evidence into audit_log             │
-│  3. Generate folder descriptions (LLM or fallback)            │
-│  4. Create all eligible rules from evidence                   │
-│  5. Import contacts (Fastmail + config overrides)             │
-│  6. Idempotency check (re-run produces no changes)            │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  LEARNING LAYER                                                     │
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │     Learner                            audit/learner.py      │   │
+│  │                                                              │   │
+│  │  Manual sort detection (4 categories):                       │   │
+│  │    Cat 1: skipped emails user moved from inbox               │   │
+│  │    Cat 2: mailsort-moved emails user relocated               │   │
+│  │    Cat 3: inbox departures (snapshot diff)                   │   │
+│  │    Cat 4: daily folder scan                                  │   │
+│  │                                                              │   │
+│  │  Auto-rule generation:                                       │   │
+│  │    Create all eligible: list_id + sender_domain + exact      │   │
+│  │                                                              │   │
+│  │  Confidence adjustment:                                      │   │
+│  │    Correction penalty: −0.15 per correction                  │   │
+│  │    Staleness decay: −0.10 after 90 days without a hit        │   │
+│  └───────────────────────────┬──────────────────────────────────┘   │
+│                              │                                      │
+│  ┌───────────────────────────▼──────────────────────────────────┐   │
+│  │     Audit Writer                       audit/writer.py       │   │
+│  │  Run lifecycle: start_run → log_decisions → finish_run       │   │
+│  │  Per-email: classification + outcome + skip_reason           │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  ENTRY POINTS                                                       │
+│                                                                     │
+│  ┌────────────────┐ ┌────────────────┐ ┌─────────────────────────┐  │
+│  │  Orchestrator   │ │  Bootstrap     │ │  Scheduler              │  │
+│  │  orchestrator.py│ │  bootstrap.py  │ │  scheduler.py           │  │
+│  │                 │ │                │ │                         │  │
+│  │  Wires a single │ │  One-time seed:│ │  APScheduler timer      │  │
+│  │  classify+move  │ │  evidence,     │ │  Triggers orchestrator  │  │
+│  │  pass. Calls    │ │  rules, desc,  │ │  every N minutes.       │  │
+│  │  learner, then  │ │  contacts.     │ │  max_instances=1        │  │
+│  │  pipeline, then │ │  Uses learner  │ │                         │  │
+│  │  mover.         │ │  for rule eval.│ │                         │  │
+│  └────────────────┘ └────────────────┘ └─────────────────────────┘  │
+│                                                                     │
+│  ┌────────────────┐ ┌──────────────────────────────────────────┐    │
+│  │  CLI            │ │  Web UI                                  │    │
+│  │  main.py        │ │  web/                                    │    │
+│  │                 │ │  Dashboard, audit log, rules, contacts,  │    │
+│  │  bootstrap,     │ │  folders, settings views.                │    │
+│  │  dry-run, run,  │ │  Read-only monitoring + manual rule      │    │
+│  │  analyze,       │ │  creation/toggle.                        │    │
+│  │  check-config,  │ │                                          │    │
+│  │  export-rules   │ │                                          │    │
+│  └────────────────┘ └──────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│  INFRASTRUCTURE                                                     │
+│                                                                     │
+│  ┌────────────────────────────┐  ┌───────────────────────────────┐  │
+│  │  Database                  │  │  Config                       │  │
+│  │  db/database.py            │  │  config.py                    │  │
+│  │  db/migrations.py          │  │  Pydantic model from YAML    │  │
+│  │  SQLite: rules, audit_log, │  │  Secrets from env vars       │  │
+│  │  runs, contacts,           │  │                               │  │
+│  │  folder_descriptions,      │  │                               │  │
+│  │  inbox_snapshot,           │  │                               │  │
+│  │  learner_state             │  │                               │  │
+│  └────────────────────────────┘  └───────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 2B. Bootstrap Sequence
+
+One-time initialization run via `mailsort bootstrap`. Seeds the database
+with evidence, rules, descriptions, and contacts from existing folders.
+
+```
+┌─ Phase 1: Collect Evidence (per folder) ─────────────────────────────┐
+│  (pre: reconcile_folders — deactivate rules for deleted folders)     │
+│  Input:    Fastmail folders + up to 50 most recent emails each       │
+│  Module:   bootstrap.py → jmap/client.py → classifier/features.py    │
+│  Output:   audit_log rows with classification_source='manual'        │
+│  Decisions:                                                          │
+│    • Skip system folders (role = trash/junk/sent/drafts)             │
+│    • Skip excluded folder patterns (config)                          │
+│    • Cap at max_per_folder (default 50, most recent by receivedAt)   │
+│    • Skip already-known email_ids on re-run (idempotency)            │
+│  Tests:    F1–F7, EF1–EF9                                           │
+└──────────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─ Phase 2: Generate Folder Descriptions ──────────────────────────────┐
+│  (in code: done per-folder inline during Phase 1)                    │
+│  Input:    Folder path + sample emails from Phase 1                  │
+│  Module:   classifier/descriptions.py → Anthropic API (optional)     │
+│  Output:   folder_descriptions table rows                            │
+│  Decisions:                                                          │
+│    • Config override present? → use override, skip LLM               │
+│    • Description already exists? → keep existing, skip               │
+│    • LLM available? → call with FOLDER_DESCRIPTION_PROMPT            │
+│    • LLM unavailable? → fallback: "Emails filed under {leaf_name}"  │
+│    • Empty folder (0 emails)? → always fallback                      │
+│  Tests:    D1–D7                                                     │
+└──────────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─ Phase 3: Create Rules from Evidence ────────────────────────────────┐
+│  Input:    audit_log evidence (distinct sender/domain/list-id/folder │
+│            combinations)                                             │
+│  Module:   bootstrap.py → audit/learner.py → classifier/rules.py     │
+│  Output:   rules table rows (active=1, source='auto')                │
+│  Decisions:                                                          │
+│    • All eligible rule types created independently per sender:       │
+│      - list_id:       ≥2 emails to target, coherence ≥80%           │
+│      - sender_domain: ≥5 emails, ≥3 distinct senders, coh ≥80%     │
+│      - exact_sender:  ≥3 emails to target, coherence ≥80%           │
+│    • Skip if rule already exists (find_existing_rule)                │
+│    • Skip evidence pointing to deleted folders                       │
+│  Tests:    LR1–LR4, DR1–DR5, ER1–ER6, P1–P3                        │
+└──────────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─ Phase 4: Import Contacts ───────────────────────────────────────────┐
+│  Input:    Fastmail ContactCard/get + config known_contact_overrides  │
+│  Module:   classifier/features.py → jmap/client.py                   │
+│  Output:   contacts table rows                                       │
+│  Decisions:                                                          │
+│    • Contacts scope unavailable? → skip gracefully, log warning      │
+│    • Config overrides merged (adds relationship hints, extra addrs)  │
+│    • Per-contact error isolation (one bad record doesn't block rest)  │
+│  Tests:    CI1–CI4                                                   │
+└──────────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─ Phase 5: Coverage Check (read-only: summary/reporting) ─────────────┐
+│  Input:    All audit_log evidence rows + created rules                │
+│  Module:   bootstrap.py → classifier/rules.py                        │
+│  Output:   Coverage percentage in bootstrap report                   │
+│            (% of evidence emails that would match a rule)            │
+│  Decisions:                                                          │
+│    • Per evidence email: run classify() — match or no-match          │
+│    • Exclude evidence for deleted folders                            │
+│    • No state changes — purely diagnostic                            │
+│  Tests:    §3.6 Bootstrap Verification Checklist                     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### 2C. Per-Run Sequence
+
+Triggered by `mailsort run` (live) or `mailsort dry-run`. The scheduler
+calls the same path with `dry_run=False` on a timer.
+
+```
+  [Scheduler / CLI]
+        │
+        │  run_classification_pass(dry_run=T/F)
+        ▼
+  ┌─ Step 1: Pre-work ────────────────────────────────┐
+  │  (pre: start_run() → run_id)                      │
+  │  • reconcile_folders — deactivate stale rules     │
+  │  • detect_manual_sorts (Cat 1-3):                 │
+  │      Cat 1: skipped emails user moved from inbox  │
+  │      Cat 2: mailsort-moved emails user relocated  │
+  │      Cat 3: inbox departures (snapshot diff)      │
+  │    → log as manual + maybe_create_rule()          │
+  │  • scan_folders_for_unknown_sorts (Cat 4, daily)  │
+  │    → log as manual + maybe_create_rule()          │
+  │  • refresh_contacts (if stale, daily)             │
+  │  • generate_descriptions (new folders only)       │
+  └───────────────────────┬───────────────────────────┘
+                          ▼
+  ┌─ Step 2: Fetch Inbox ─────────────────────────────┐
+  │  • query ALL inbox email IDs (no filters)         │
+  │  • save_inbox_snapshot (for next run's Cat 3)     │
+  │  • get_emails — fetch metadata for batch          │
+  └───────────────────────┬───────────────────────────┘
+                          ▼
+  ┌─ Step 3: Filter + Extract ────────────────────────┐
+  │  • remove skip_senders                            │
+  │  • extract_features → EmailFeatures[]             │
+  └───────────────────────┬───────────────────────────┘
+                          ▼
+          ┌───── per email ─────┐
+          ▼                     │
+  ┌─ Step 4: Classify ─────────────────────────────────────────────┐
+  │                                                                │
+  │  ◇ Thread context?                                             │
+  │  │  audit_log: sibling in same thread already sorted?          │
+  │  │  JMAP fallback: thread sibling in non-inbox folder?         │
+  │  yes → Classification(source="thread")                         │
+  │  │                                                             │
+  │  no ▼                                                          │
+  │  ◇ Rule match?                                                 │
+  │  │  Try in order: list_id → exact_sender → sender_domain       │
+  │  │  → subject_regex. First match above threshold wins.         │
+  │  │  (hit_count updated only if live run)                       │
+  │  yes → Classification(source="rule", rule_id=N)                │
+  │  │                                                             │
+  │  no ▼                                                          │
+  │  ◇ LLM available?                                              │
+  │  no → skip_reason="llm_unavailable"                            │
+  │  │                                                             │
+  │  yes ▼                                                         │
+  │  ◇ Privacy gate?                                               │
+  │  │  llm_skip_senders? llm_skip_domains?                        │
+  │  │  known contact + llm_allow_known_contacts=false?            │
+  │  blocked → skip_reason="llm_skip_*"                            │
+  │  │                                                             │
+  │  allowed ▼                                                     │
+  │  Call LLM (with contact enrichment if known)                   │
+  │  → Classification(source="llm", confidence=N)                  │
+  │  │  (api_error → skip_reason="llm_api_error")                  │
+  └────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+  ┌─ Step 5: Build Move Decision (per email) ──────────────────────┐
+  │                                                                │
+  │  ◇ Confidence gate                                             │
+  │  │  rule:          confidence ≥ 0.85?                          │
+  │  │  llm:           confidence ≥ 0.80?                          │
+  │  │  llm + contact: confidence ≥ 0.93?                          │
+  │  │  thread:        always passes                               │
+  │  no → skip_reason="below_threshold" (or "…_known_contact")    │
+  │  │                                                             │
+  │  yes ▼                                                         │
+  │  ◇ Eligibility gates                                           │
+  │  │  $seen absent?       → skip_reason="unread"                 │
+  │  │  $flagged present?   → skip_reason="flagged"                │
+  │  │  receivedAt too new? → skip_reason="too_new"                │
+  │  │  folder not in tree? → skip_reason="unknown_folder"         │
+  │  any fail → should_move=false                                  │
+  │  │                                                             │
+  │  all pass ▼                                                    │
+  │  MoveDecision(should_move=true)                                │
+  └────────────────────────────────────────────────────────────────┘
+          │
+          └───── end per email ─┘
+                          │
+                          ▼
+  ┌─ Step 6: Execute Moves ───────────────────────────┐
+  │                                                   │
+  │  ◇ dry_run?                                       │
+  │  yes → skip JMAP call, log "would move" count     │
+  │  │                                                │
+  │  no ▼                                             │
+  │  Batch Email/set: remove inbox, add target folder │
+  │  Tag with $mailsort-moved keyword                 │
+  │  Per-email outcome: moved or move_failed          │
+  └───────────────────────┬───────────────────────────┘
+                          ▼
+  ┌─ Step 7: Log + Finish ────────────────────────────┐
+  │  • log_decisions — every email to audit_log       │
+  │    (classification + outcome + skip_reason)       │
+  │  • finish_run(status, emails_seen, emails_moved)  │
+  └───────────────────────────────────────────────────┘
 ```
 
 ---
