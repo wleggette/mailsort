@@ -6,6 +6,40 @@ chronological — newest entries first.
 
 ---
 
+## 2026-03-21 — System test vs unit test boundary for bootstrap scenarios
+
+**Context:** Some bootstrap behaviors (deleted folder evidence filtering,
+coverage calculation accuracy, per-contact error isolation) are documented
+in the architecture phase cards but not tested in the system test plan.
+Should they be system tests or unit/integration tests?
+
+**Decision:** Cover these in unit/integration tests, not in the system
+test plan.
+
+**Rationale:** System tests add value when they exercise **real network
+I/O, real JMAP behavior, or real LLM non-determinism** — things that
+mocks can't faithfully reproduce. These three scenarios are pure logic
+that is fully testable with mocks:
+
+- **Deleted folder filtering** — a set membership check
+  (`target_folder in live_folders`). The integration test creates two
+  folder trees and verifies the rule is deactivated. No JMAP needed.
+- **Coverage calculation** — calls `classify()` against a DB. No
+  network I/O. The integration test verifies exact match/unmatch counts.
+- **Per-contact error isolation** — requires injecting a malformed
+  ContactCard, which isn't possible via normal JMAP. The unit test mocks
+  a bad record alongside a good one.
+
+A system test for these would add setup complexity (multi-step JMAP
+operations, folder creation/deletion) without catching bugs that the
+unit tests miss. The system test plan notes these as "covered by
+unit/integration tests" with references to the specific test functions.
+
+**Affected docs:** `docs/planning/system-test-plan.md` §3.4,
+`docs/architecture.md` bootstrap phase cards (Covered by: field).
+
+---
+
 ## 2026-03-21 — Create all eligible rules (not priority-blocks)
 
 **Context:** When a sender qualifies for multiple rule types (e.g., has a

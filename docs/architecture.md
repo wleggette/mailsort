@@ -182,6 +182,7 @@ with evidence, rules, descriptions, and contacts from existing folders.
 │    • Skip excluded folder patterns (config)                          │
 │    • Cap at max_per_folder (default 50, most recent by receivedAt)   │
 │    • Skip already-known email_ids on re-run (idempotency)            │
+│  System Tests:         F1–F7, EF1–EF9                                │
 └──────────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -196,6 +197,7 @@ with evidence, rules, descriptions, and contacts from existing folders.
 │    • LLM available? → call with FOLDER_DESCRIPTION_PROMPT            │
 │    • LLM unavailable? → fallback: "Emails filed under {leaf_name}"  │
 │    • Empty folder (0 emails)? → always fallback                      │
+│  System Tests:         D1–D7                                         │
 └──────────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -211,6 +213,8 @@ with evidence, rules, descriptions, and contacts from existing folders.
 │      - exact_sender:  ≥3 emails to target, coherence ≥80%           │
 │    • Skip if rule already exists (find_existing_rule)                │
 │    • Skip evidence pointing to deleted folders                       │
+│  System Tests:         LR1–LR4, DR1–DR6, ER1–ER8, P1–P3, CA1–CA3    │
+│  CI Tests: deleted folder filtering (test_bootstrap.py)            │
 └──────────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -222,6 +226,8 @@ with evidence, rules, descriptions, and contacts from existing folders.
 │    • Contacts scope unavailable? → skip gracefully, log warning      │
 │    • Config overrides merged (adds relationship hints, extra addrs)  │
 │    • Per-contact error isolation (one bad record doesn't block rest)  │
+│  System Tests:         CI1–CI5                                       │
+│  CI Tests: error isolation (test_contacts.py)                        │
 └──────────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -234,6 +240,8 @@ with evidence, rules, descriptions, and contacts from existing folders.
 │    • Per evidence email: run classify() — match or no-match          │
 │    • Exclude evidence for deleted folders                            │
 │    • No state changes — purely diagnostic                            │
+│  System Tests:         §3.6 checklist (coverage report)              │
+│  CI Tests: calculation accuracy (test_bootstrap.py)                  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 

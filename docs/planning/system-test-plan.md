@@ -256,6 +256,11 @@ and coherence requirements.
   - `sender_domain`: ≥5 emails, ≥3 distinct senders to same folder, coherence ≥80%
   - `exact_sender`: ≥3 emails, coherence ≥80%
 
+**Covered by unit/integration tests** (not in this system test plan — no real JMAP needed):
+- Deleted folder evidence filtering — `test_bootstrap_skips_deleted_folder_evidence` in `test_bootstrap.py`
+- Coverage calculation accuracy — `test_bootstrap_coverage_calculation` in `test_bootstrap.py`
+- Per-contact error isolation — `test_refresh_contacts_bad_contact_skipped` in `test_contacts.py`
+
 #### 3.4.1 list_id Rules
 
 | ID | Scenario | Evidence Shape | Expected Outcome | What It Tests | Tested By |
@@ -274,6 +279,7 @@ and coherence requirements.
 | **DR3** | High coherence but <3 distinct senders | 5× `single@concentrated.com` → Banks | NO domain rule (only 1 sender). `exact_sender` rule forms instead | Distinct sender threshold | Group J |
 | **DR4** | High coherence, 3 senders, exactly 5 total | Threshold boundary | `sender_domain` rule created | Boundary: minimum passing | Group M (`@boundarybank.com`) |
 | **DR5** | Domain qualifies and emails also have list_id | 5× from 3 senders at `@community.org`, all with list-id `<updates.community.org>` → Children | **Both** `sender_domain` rule for `community.org` AND `list_id` rule created. `list_id` fires at classification time | All eligible rules created; list_id + sender_domain coexistence | Group O |
+| **DR6** | High coherence, exactly 2 distinct senders (boundary fail) | `info@twopeople.com` (3×) + `support@twopeople.com` (2×) all → Banks | NO domain rule (2 distinct senders < 3). `exact_sender` for `info@` only (3 ≥ 3) | Boundary: distinct sender threshold rejection | Group Q |
 
 #### 3.4.3 exact_sender Rules
 
@@ -285,6 +291,8 @@ and coherence requirements.
 | **ER4** | Sender qualifies alongside domain rule | `statements@bigbank.com` (3×) and `alerts@bigbank.com` (3×) both → Banks, domain rule also exists | `exact_sender` rules created for both (alongside domain rule). `fraud@bigbank.com` (2×) below threshold — no exact_sender | All eligible rules created independently | Group B |
 | **ER5** | Multiple senders, same domain, different folders | Per-address `exact_sender` rules for each address that qualifies | `orders@megastore.com` → Stores, `alerts@megastore.com` → Banks (separate rules) | Per-address routing when domain is split | Group C |
 | **ER6** | Sender at split domain, below threshold | `returns@megastore.com` (2×) → Stores | NO rule (count < 3). Falls to LLM at inbox time | Below threshold at split domain | Group C (`returns@megastore.com`) |
+| **ER7** | Exactly at count threshold (boundary) | 3× `receipts@shopify.com` → Stores | `exact_sender` rule created | Boundary pass: exactly at ≥3 threshold | Group P |
+| **ER8** | Coherence exactly at 80% (boundary) | 4× `billing@utility.com` → Banks, 1× → Stores | `exact_sender` rule created (4/5 = 80% ≥ 80%) | Boundary pass: coherence exactly at threshold | Group R |
 
 #### 3.4.4 Priority Interactions
 
@@ -453,7 +461,30 @@ the folders with enough evidence for bootstrap to create rules.
 | `<updates.community.org>` | `admin@community.org` | Children | 1 |
 | | | | **5 total, 3 distinct senders, 100% coherence, all with same list-id. Expected: `sender_domain` rule for `community.org` AND `list_id` rule for `<updates.community.org>` both created; `list_id` fires at classification time** |
 
-**Total: ~106 fixture emails across 3 folders**
+**Group P: exact_sender count boundary — tests ER7**
+
+| Sender | Folder | Count |
+|--------|--------|-------|
+| `receipts@shopify.com` | Stores | 3 |
+| | | **3 total, 100% coherence → `exact_sender` rule (boundary: exactly at ≥3 threshold)** |
+
+**Group Q: sender_domain distinct sender boundary — tests DR6**
+
+| Sender | Folder | Count |
+|--------|--------|-------|
+| `info@twopeople.com` | Banks | 3 |
+| `support@twopeople.com` | Banks | 2 |
+| | | **5 total, 2 distinct senders, 100% coherence → NO `sender_domain` rule (2 < 3 senders). `exact_sender` for `info@` only (3 ≥ 3); `support@` below threshold (2 < 3)** |
+
+**Group R: exact_sender coherence boundary — tests ER8**
+
+| Sender | Folder | Count |
+|--------|--------|-------|
+| `billing@utility.com` | Banks | 4 |
+| `billing@utility.com` | Stores | 1 |
+| | | **5 total, coherence = 4/5 = 80% (exactly at threshold). Count to target = 4 ≥ 3 → `exact_sender` rule created (boundary: coherence exactly at ≥80%)** |
+
+**Total: ~119 fixture emails across 3 folders**
 
 Each fixture email includes: `from`, `to`, `subject`, `textBody`, `receivedAt`
 (spread across last 30 days), `keywords` (`{"$seen": true}`), `targetFolder`,

@@ -5,7 +5,7 @@ description: Rules for working on the mailsort project
 ## General Methodology
 
 - Follow the guides in `docs/methodology/`: architecture-documentation, system-test-methodology, ai-pair-programming.
-- **For non-trivial tasks** (multiple files or multi-step), propose a plan before writing code. Get approval before proceeding.
+- **For non-trivial tasks** (multiple files or multi-step), write the plan to `docs/dev/scratch.md` first, then present it for approval before writing code.
 - Use `docs/dev/scratch.md` for working notes across sessions (gitignored). See `docs/methodology/ai-pair-programming.md` §1.
 
 ## Documentation Maintenance
