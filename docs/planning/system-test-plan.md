@@ -426,8 +426,8 @@ the folders with enough evidence for bootstrap to create rules.
 
 | Sender | Folder | Count | Notes |
 |--------|--------|-------|-------|
-| `notifications@mybank.com` | Banks | 21 | Pushes Banks to 52 total (31 existing + 21) |
-| | | | **Bootstrap samples only 50 of 52; exact_sender rule also created** |
+| `notifications@mybank.com` | Banks | 21 | Pushes Banks to 64 total (43 existing + 21) |
+| | | | **Bootstrap samples only 50 of 64; exact_sender rule also created** |
 
 **Group L: Single list-id email — tests LR3**
 
