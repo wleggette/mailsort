@@ -29,6 +29,9 @@ data/*.db-wal
 data/*.db-journal
 data/*.log
 
+# Working notes (ephemeral, not documentation)
+docs/dev/scratch.md
+
 # Testing
 .pytest_cache/
 .coverage
