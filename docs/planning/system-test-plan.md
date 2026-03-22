@@ -42,6 +42,8 @@ controlled test data. This covers bootstrap → dry-run → live move → learni
 feedback loop — everything the integration tests verify with mocks, but now
 against real JMAP.
 
+This plan follows the methodology in
+[system-test-methodology.md](../methodology/system-test-methodology.md).
 
 ---
 
