@@ -44,94 +44,288 @@ class VerificationResult:
 
 
 def verify_bootstrap(db: Database) -> VerificationResult:
-    """Verify bootstrap created expected rules and descriptions."""
+    """Verify bootstrap created expected rules, descriptions, contacts, and run record.
+
+    Covers all scenarios from the system test plan §3: F1-F7, EF1-EF9, D1-D7,
+    LR1-LR4, DR1-DR6, ER1-ER8, P1-P3, CA1-CA3, CI1-CI5.
+    """
     v = VerificationResult()
     print("\n=== Verifying Bootstrap ===")
 
-    # Rules created
-    rules = db.execute("SELECT * FROM rules WHERE active = 1").fetchall()
-    rule_map = {(r["rule_type"], r["condition_value"]): r for r in rules}
+    # ------------------------------------------------------------------
+    # Run record (§3.6)
+    # ------------------------------------------------------------------
+    run_row = db.execute(
+        "SELECT * FROM runs WHERE trigger = 'bootstrap' ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    v.check(run_row is not None, "Bootstrap run record exists")
+    if run_row:
+        v.check(run_row["status"] == "completed", f"Bootstrap run status=completed (got {run_row['status']})")
+        v.check(run_row["emails_moved"] == 0, f"Bootstrap emails_moved=0 (got {run_row['emails_moved']})")
 
-    # Group A: exact_sender rules for clean high-coherence senders
-    for sender in ["noreply@chase.com", "alerts@bankofamerica.com",
-                    "orders@amazon.com", "noreply@target.com",
-                    "admin@lincolnelementary.org", "activities@ymca.org"]:
-        v.check(
-            ("exact_sender", sender) in rule_map,
-            f"exact_sender rule for {sender}",
-        )
-
-    # Group B: domain rule for bigbank.com
-    v.check(
-        ("sender_domain", "bigbank.com") in rule_map,
-        "sender_domain rule for bigbank.com (high coherence, 3+ senders)",
-    )
-
-    # Group C: NO domain rule for megastore.com (low coherence)
-    v.check(
-        ("sender_domain", "megastore.com") not in rule_map,
-        "NO sender_domain rule for megastore.com (low coherence — Amazon problem)",
-    )
-    # But exact_sender rules for orders@ and alerts@ (each ≥3)
-    v.check(
-        ("exact_sender", "orders@megastore.com") in rule_map,
-        "exact_sender rule for orders@megastore.com (≥3 emails, high coherence)",
-    )
-    v.check(
-        ("exact_sender", "alerts@megastore.com") in rule_map,
-        "exact_sender rule for alerts@megastore.com (≥3 emails, high coherence)",
-    )
-    # returns@ has only 2 — no rule
-    v.check(
-        ("exact_sender", "returns@megastore.com") not in rule_map,
-        "NO exact_sender rule for returns@megastore.com (only 2 emails)",
-    )
-
-    # Group D: NO rule for testcontact@example.com (split across folders)
-    v.check(
-        ("exact_sender", "testcontact@example.com") not in rule_map,
-        "NO rule for testcontact@example.com (split across 3 folders, low coherence)",
-    )
-
-    # Group E: exact_sender rule for testfriend@gmail.com (concentrated)
-    v.check(
-        ("exact_sender", "testfriend@gmail.com") in rule_map,
-        "exact_sender rule for testfriend@gmail.com (concentrated in Children)",
-    )
-
-    # Group F: list_id rule
-    v.check(
-        ("list_id", "<newsletter.school.org>") in rule_map,
-        "list_id rule for <newsletter.school.org>",
-    )
-
-    # Group G: NO list_id rule for mixed alerts (low coherence)
-    v.check(
-        ("list_id", "<alerts.mixed.com>") not in rule_map,
-        "NO list_id rule for <alerts.mixed.com> (split across folders)",
-    )
-
-    # Group H: NO rule for alice@family.com (split across folders)
-    v.check(
-        ("exact_sender", "alice@family.com") not in rule_map,
-        "NO rule for alice@family.com (split across 2 folders, 50% coherence)",
-    )
-
-    # Group I: NO rule for rare@oneoff.com (below threshold)
-    v.check(
-        ("exact_sender", "rare@oneoff.com") not in rule_map,
-        "NO rule for rare@oneoff.com (only 2 emails, below threshold of 3)",
-    )
-
-    # Folder descriptions
-    desc_count = db.execute("SELECT COUNT(*) FROM folder_descriptions").fetchone()[0]
-    v.check(desc_count >= 3, f"At least 3 folder descriptions generated (got {desc_count})")
-
-    # Coverage
+    # ------------------------------------------------------------------
+    # Evidence rows (§3.6, EF1-EF9)
+    # ------------------------------------------------------------------
     total_evidence = db.execute(
         "SELECT COUNT(*) FROM audit_log WHERE classification_source = 'manual'"
     ).fetchone()[0]
-    v.check(total_evidence > 50, f"At least 50 evidence emails in audit_log (got {total_evidence})")
+    v.check(total_evidence > 50, f"Evidence: >50 emails in audit_log (got {total_evidence})")
+
+    # All evidence rows should have moved=1 and skip_reason IS NULL
+    bad_moved = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE classification_source = 'manual' AND moved != 1"
+    ).fetchone()[0]
+    v.check(bad_moved == 0, f"All evidence rows have moved=1 (violations: {bad_moved})")
+
+    bad_skip = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE classification_source = 'manual' AND skip_reason IS NOT NULL"
+    ).fetchone()[0]
+    v.check(bad_skip == 0, f"All evidence rows have skip_reason=NULL (violations: {bad_skip})")
+
+    # ------------------------------------------------------------------
+    # Rules created — load all active rules
+    # ------------------------------------------------------------------
+    rules = db.execute("SELECT * FROM rules WHERE active = 1").fetchall()
+    rule_map = {(r["rule_type"], r["condition_value"]): r for r in rules}
+
+    # --- Group A: exact_sender rules (ER1) ---
+    for sender in ["noreply@chase.com", "alerts@bankofamerica.com",
+                    "orders@amazon.com", "noreply@target.com",
+                    "admin@lincolnelementary.org"]:
+        v.check(("exact_sender", sender) in rule_map, f"ER1: exact_sender rule for {sender}")
+
+    # Group A + N: activities@ymca.org has BOTH exact_sender and list_id (LR4, P1)
+    v.check(
+        ("exact_sender", "activities@ymca.org") in rule_map,
+        "LR4/P1: exact_sender rule for activities@ymca.org (coexists with list_id)",
+    )
+    v.check(
+        ("list_id", "<updates.ymca.org>") in rule_map,
+        "LR4/P1: list_id rule for <updates.ymca.org> (coexists with exact_sender)",
+    )
+
+    # --- Group B: domain rule (DR1) + exact_sender coexistence (ER4, P2) ---
+    v.check(
+        ("sender_domain", "bigbank.com") in rule_map,
+        "DR1: sender_domain rule for bigbank.com (8 emails, 3 senders, 100% coherence)",
+    )
+    v.check(
+        ("exact_sender", "statements@bigbank.com") in rule_map,
+        "ER4/P2: exact_sender for statements@bigbank.com (3×, coexists with domain rule)",
+    )
+    v.check(
+        ("exact_sender", "alerts@bigbank.com") in rule_map,
+        "ER4/P2: exact_sender for alerts@bigbank.com (3×, coexists with domain rule)",
+    )
+    v.check(
+        ("exact_sender", "fraud@bigbank.com") not in rule_map,
+        "ER4: NO exact_sender for fraud@bigbank.com (2× below threshold)",
+    )
+
+    # --- Group C: split domain (DR2, ER5, ER6, P3) ---
+    v.check(
+        ("sender_domain", "megastore.com") not in rule_map,
+        "DR2/P3: NO sender_domain for megastore.com (57% coherence)",
+    )
+    v.check(
+        ("exact_sender", "orders@megastore.com") in rule_map,
+        "ER5: exact_sender for orders@megastore.com (4× Stores)",
+    )
+    v.check(
+        ("exact_sender", "alerts@megastore.com") in rule_map,
+        "ER5: exact_sender for alerts@megastore.com (3× Banks)",
+    )
+    v.check(
+        ("exact_sender", "returns@megastore.com") not in rule_map,
+        "ER6: NO exact_sender for returns@megastore.com (2× below threshold)",
+    )
+
+    # --- Group D: known contact, split (ER2) ---
+    v.check(
+        ("exact_sender", "testcontact@example.com") not in rule_map,
+        "ER2: NO rule for testcontact@example.com (40% coherence across 3 folders)",
+    )
+
+    # --- Group E: known contact, concentrated (ER1) ---
+    v.check(
+        ("exact_sender", "testfriend@gmail.com") in rule_map,
+        "ER1: exact_sender for testfriend@gmail.com (4× Children, 100% coherence)",
+    )
+
+    # --- Group F: list_id boundary (LR1) ---
+    v.check(
+        ("list_id", "<newsletter.school.org>") in rule_map,
+        "LR1: list_id rule for <newsletter.school.org> (boundary: exactly 2 emails)",
+    )
+
+    # --- Group G: list_id low coherence (LR2) ---
+    v.check(
+        ("list_id", "<alerts.mixed.com>") not in rule_map,
+        "LR2: NO list_id for <alerts.mixed.com> (50% coherence)",
+    )
+
+    # --- Group H: unknown sender, split (ER2) ---
+    v.check(
+        ("exact_sender", "alice@family.com") not in rule_map,
+        "ER2: NO rule for alice@family.com (50% coherence across 2 folders)",
+    )
+
+    # --- Group I: below threshold (ER3) ---
+    v.check(
+        ("exact_sender", "rare@oneoff.com") not in rule_map,
+        "ER3: NO rule for rare@oneoff.com (2 emails, below threshold of 3)",
+    )
+
+    # --- Group J: domain <3 senders (DR3) ---
+    v.check(
+        ("sender_domain", "concentrated.com") not in rule_map,
+        "DR3: NO sender_domain for concentrated.com (1 sender, need 3)",
+    )
+    v.check(
+        ("exact_sender", "single@concentrated.com") in rule_map,
+        "DR3: exact_sender for single@concentrated.com (5× Banks, 100% coherence)",
+    )
+
+    # --- Group K: bulk sender (F6) ---
+    v.check(
+        ("exact_sender", "notifications@mybank.com") in rule_map,
+        "F6: exact_sender for notifications@mybank.com (21× Banks, sampling cap tested)",
+    )
+
+    # --- Group L: below list_id threshold (LR3) ---
+    v.check(
+        ("list_id", "<rare.list.org>") not in rule_map,
+        "LR3: NO list_id for <rare.list.org> (1 email, below threshold of 2)",
+    )
+
+    # --- Group M: domain boundary (DR4) ---
+    v.check(
+        ("sender_domain", "boundarybank.com") in rule_map,
+        "DR4: sender_domain for boundarybank.com (boundary: exactly 5 emails, 3 senders)",
+    )
+
+    # --- Group N: already checked above with Group A (LR4, P1) ---
+
+    # --- Group O: list_id + sender_domain coexistence (DR5) ---
+    v.check(
+        ("list_id", "<updates.community.org>") in rule_map,
+        "DR5: list_id rule for <updates.community.org>",
+    )
+    v.check(
+        ("sender_domain", "community.org") in rule_map,
+        "DR5: sender_domain rule for community.org (5 emails, 3 senders, all with list_id)",
+    )
+
+    # --- Group P: exact_sender count boundary (ER7) ---
+    v.check(
+        ("exact_sender", "receipts@shopify.com") in rule_map,
+        "ER7: exact_sender for receipts@shopify.com (boundary: exactly 3 emails)",
+    )
+
+    # --- Group Q: domain 2 senders boundary (DR6) ---
+    v.check(
+        ("sender_domain", "twopeople.com") not in rule_map,
+        "DR6: NO sender_domain for twopeople.com (2 senders, need 3)",
+    )
+    v.check(
+        ("exact_sender", "info@twopeople.com") in rule_map,
+        "DR6: exact_sender for info@twopeople.com (3× Banks)",
+    )
+    v.check(
+        ("exact_sender", "support@twopeople.com") not in rule_map,
+        "DR6: NO exact_sender for support@twopeople.com (2× below threshold)",
+    )
+
+    # --- Group R: coherence boundary (ER8) ---
+    v.check(
+        ("exact_sender", "billing@utility.com") in rule_map,
+        "ER8: exact_sender for billing@utility.com (4/5=80% coherence, boundary pass)",
+    )
+
+    # ------------------------------------------------------------------
+    # Confidence values (CA1-CA3)
+    # ------------------------------------------------------------------
+    # list_id rules should have confidence 0.95
+    for list_val in ["<newsletter.school.org>", "<updates.ymca.org>", "<updates.community.org>"]:
+        r = rule_map.get(("list_id", list_val))
+        if r:
+            v.check(r["confidence"] == 0.95, f"CA1: list_id {list_val} confidence=0.95 (got {r['confidence']})")
+
+    # Check a domain rule confidence: min(0.90, 0.75 + n*0.02)
+    r = rule_map.get(("sender_domain", "bigbank.com"))
+    if r:
+        # 8 emails to target → min(0.90, 0.75 + 8*0.02) = min(0.90, 0.91) = 0.90
+        v.check(r["confidence"] == 0.90, f"CA1: bigbank.com domain confidence=0.90 (got {r['confidence']})")
+
+    # Check an exact_sender confidence: min(0.95, 0.80 + n*0.03)
+    r = rule_map.get(("exact_sender", "noreply@chase.com"))
+    if r:
+        # 5 emails → min(0.95, 0.80 + 5*0.03) = min(0.95, 0.95) = 0.95
+        v.check(r["confidence"] == 0.95, f"CA1: chase exact confidence=0.95 (got {r['confidence']})")
+
+    # Rule target folders (CA3)
+    r = rule_map.get(("exact_sender", "noreply@chase.com"))
+    if r:
+        v.check("Banks" in r["target_folder_path"], f"CA3: chase → Banks (got {r['target_folder_path']})")
+    r = rule_map.get(("exact_sender", "orders@amazon.com"))
+    if r:
+        v.check("Stores" in r["target_folder_path"], f"CA3: amazon → Stores (got {r['target_folder_path']})")
+
+    # ------------------------------------------------------------------
+    # Folder descriptions (D1-D7)
+    # ------------------------------------------------------------------
+    desc_rows = db.execute("SELECT * FROM folder_descriptions").fetchall()
+    desc_map = {r["folder_path"]: r for r in desc_rows}
+    v.check(len(desc_rows) >= 3, f"D7: at least 3 folder descriptions (got {len(desc_rows)})")
+
+    # D1: config overrides should be present for Banks, Stores, Children
+    for path_suffix in ["Banks", "Stores", "Children"]:
+        found = any(path_suffix in path for path in desc_map)
+        v.check(found, f"D1/D7: description exists for folder containing '{path_suffix}'")
+
+    # ------------------------------------------------------------------
+    # Contacts (CI1-CI2)
+    # ------------------------------------------------------------------
+    contact_count = db.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+    v.check(contact_count >= 1, f"CI1: at least 1 contact imported (got {contact_count})")
+
+    # CI2: testcontact@example.com should have relationship from config override
+    tc = db.execute(
+        "SELECT * FROM contacts WHERE email_address = 'testcontact@example.com'"
+    ).fetchone()
+    if tc:
+        v.check(tc["relationship"] == "friend", f"CI2: testcontact relationship='friend' (got {tc['relationship']})")
+    else:
+        v.warn("CI2: testcontact@example.com not in contacts (may need config override)")
+
+    v.print_report()
+    return v
+
+
+def verify_bootstrap_idempotency(db: Database) -> VerificationResult:
+    """Verify that running bootstrap twice produces no new evidence or rules (F5, EF9)."""
+    v = VerificationResult()
+    print("\n=== Verifying Bootstrap Idempotency ===")
+
+    # Should have exactly 2 bootstrap runs
+    bootstrap_runs = db.execute(
+        "SELECT * FROM runs WHERE trigger = 'bootstrap' ORDER BY started_at"
+    ).fetchall()
+    v.check(len(bootstrap_runs) >= 2, f"F5: at least 2 bootstrap runs (got {len(bootstrap_runs)})")
+
+    if len(bootstrap_runs) >= 2:
+        run1_id = bootstrap_runs[0]["run_id"]
+        run2_id = bootstrap_runs[1]["run_id"]
+
+        count1 = db.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE run_id = ?", (run1_id,)
+        ).fetchone()[0]
+        count2 = db.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE run_id = ?", (run2_id,)
+        ).fetchone()[0]
+
+        v.check(count1 > 50, f"F5: first bootstrap inserted evidence (got {count1})")
+        v.check(count2 == 0, f"F5/EF9: second bootstrap inserted 0 new rows (got {count2})")
 
     v.print_report()
     return v

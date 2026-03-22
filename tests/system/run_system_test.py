@@ -64,7 +64,7 @@ def phase_setup(config: str, to_email: str) -> bool:
         cfg = yaml.safe_load(f)
     session_url = cfg.get("fastmail", {}).get("session_url", "https://api.fastmail.com/jmap/session")
 
-    from tests.system.load_fixtures import JMAPLoader, load_folder_fixtures, load_inbox_emails
+    from tests.system.load_fixtures import JMAPLoader, load_folder_fixtures, load_inbox_emails, TEST_CONTACTS
     from tests.system.generate_inbox_emails import generate_inbox_emails
 
     loader = JMAPLoader(token, session_url)
@@ -76,6 +76,10 @@ def phase_setup(config: str, to_email: str) -> bool:
             loader.ensure_folder_path(folder_path)
         folder_map = loader.resolve_folder_paths()
         print(f"  Folders verified: {len(folder_map)} mailboxes")
+
+        # Create test contacts (CI1)
+        contacts_created = loader.create_contacts(TEST_CONTACTS)
+        print(f"  Test contacts: {contacts_created} created")
 
         # Load static fixtures
         fixtures_path = SYSTEM_DIR / "fixtures" / "folder_emails.json"
@@ -93,35 +97,95 @@ def phase_setup(config: str, to_email: str) -> bool:
 
 
 def phase_bootstrap(config: str) -> bool:
-    """Phase 2: Run bootstrap and verify results."""
+    """Phase 2: Run bootstrap and verify results.
+
+    Sub-phases:
+      1. No-LLM pre-flight (D3): bootstrap without API key, verify fallback descriptions
+      2. Normal bootstrap: full bootstrap with LLM
+      3. Idempotency re-run (F5): bootstrap again, verify 0 new rows
+    """
     print("\n" + "=" * 60)
     print("Phase 2: Bootstrap")
     print("=" * 60)
 
-    # Clean DB before bootstrap
     import yaml
     with open(config) as f:
         cfg = yaml.safe_load(f)
     db_path = cfg.get("db_path", "data/test.db")
+
+    from mailsort.db.database import Database
+    from mailsort.db.migrations import run_migrations
+    from tests.system.verify_results import verify_bootstrap, verify_bootstrap_idempotency
+
+    # --- Step 1: No-LLM pre-flight (D3) ---
+    print("\n  Step 1: No-LLM pre-flight (D3)...")
     if os.path.exists(db_path):
         os.remove(db_path)
-        print(f"  Removed existing test database: {db_path}")
 
+    saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+    try:
+        result = run_mailsort("bootstrap", config)
+        if result.returncode != 0:
+            print("  ERROR: No-LLM bootstrap failed")
+            return False
+
+        # Verify all descriptions are fallback (no LLM)
+        db = Database(db_path)
+        db.connect()
+        try:
+            run_migrations(db)
+            descs = db.execute("SELECT * FROM folder_descriptions").fetchall()
+            all_fallback = all(
+                d["description"].startswith("Emails filed under ")
+                for d in descs
+                if d["source"] == "auto"
+            )
+            if all_fallback:
+                print(f"  D3 PASS: all {len(descs)} auto descriptions use fallback")
+            else:
+                print(f"  D3 FAIL: some descriptions are not fallback")
+                return False
+        finally:
+            db.close()
+    finally:
+        if saved_key:
+            os.environ["ANTHROPIC_API_KEY"] = saved_key
+
+    # Wipe DB for the real bootstrap
+    if os.path.exists(db_path):
+        os.remove(db_path)
+        print("  Wiped DB after no-LLM pre-flight")
+
+    # --- Step 2: Normal bootstrap ---
+    print("\n  Step 2: Normal bootstrap...")
     result = run_mailsort("bootstrap", config)
     if result.returncode != 0:
         print("  ERROR: Bootstrap failed")
         return False
 
     # Verify
-    from mailsort.db.database import Database
-    from mailsort.db.migrations import run_migrations
-    from tests.system.verify_results import verify_bootstrap
-
     db = Database(db_path)
     db.connect()
     try:
         run_migrations(db)
         v = verify_bootstrap(db)
+        if v.failed > 0:
+            return False
+    finally:
+        db.close()
+
+    # --- Step 3: Idempotency re-run (F5) ---
+    print("\n  Step 3: Idempotency re-run (F5)...")
+    result = run_mailsort("bootstrap", config)
+    if result.returncode != 0:
+        print("  ERROR: Second bootstrap failed")
+        return False
+
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        v = verify_bootstrap_idempotency(db)
         return v.failed == 0
     finally:
         db.close()
