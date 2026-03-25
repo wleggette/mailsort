@@ -67,6 +67,22 @@ class JMAPLoader:
         return self._get_session()["apiUrl"]
 
     @property
+    def account_email(self) -> str:
+        """Derive the account email from the JMAP session.
+
+        Fastmail exposes the account email as the 'name' field in the accounts map.
+        """
+        session = self._get_session()
+        account_data = session["accounts"].get(self.account_id, {})
+        name = account_data.get("name", "")
+        if "@" not in name:
+            raise RuntimeError(
+                f"Could not derive email from JMAP session (account name={name!r}). "
+                f"Pass --to-email explicitly."
+            )
+        return name
+
+    @property
     def upload_url(self) -> str:
         return self._get_session()["uploadUrl"].replace("{accountId}", self.account_id)
 
@@ -538,7 +554,7 @@ def main():
     parser = argparse.ArgumentParser(description="Load fixture emails into Fastmail test account")
     parser.add_argument("--config", default="config.test.yaml", help="Path to test config")
     parser.add_argument("--cleanup", action="store_true", help="Delete all test emails instead of loading")
-    parser.add_argument("--to-email", required=True, help="Test account email address")
+    parser.add_argument("--to-email", default=None, help="Test account email address (auto-detected from JMAP session if omitted)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -559,6 +575,9 @@ def main():
     loader = JMAPLoader(token, session_url)
 
     try:
+        to_email = args.to_email or loader.account_email
+        print(f"Using recipient address: {to_email}")
+
         if args.cleanup:
             count = cleanup_test_emails(loader)
             print(f"Cleaned up {count} test emails")
@@ -568,7 +587,7 @@ def main():
             print(f"Created {contacts_created} test contacts")
 
             fixtures_path = Path(__file__).parent / "fixtures" / "folder_emails.json"
-            count = load_folder_fixtures(loader, args.to_email, fixtures_path)
+            count = load_folder_fixtures(loader, to_email, fixtures_path)
             print(f"Loaded {count} fixture emails into folders")
     finally:
         loader.close()

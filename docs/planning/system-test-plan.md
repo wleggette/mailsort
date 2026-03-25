@@ -422,12 +422,14 @@ the folders with enough evidence for bootstrap to create rules.
 | `single@concentrated.com` | Banks | 5 |
 | | | **5 total, 1 distinct sender, 100% coherence → NO domain rule; exact_sender rule only** |
 
-**Group K: Bulk sender for >50 sampling cap — tests F6**
+**Group K: Bulk multi-sender domain + sampling cap — tests F6, DR, ER**
 
-| Sender | Folder | Count | Notes |
-|--------|--------|-------|-------|
-| `notifications@mybank.com` | Banks | 21 | Pushes Banks to 64 total (43 existing + 21) |
-| | | | **Bootstrap samples only 50 of 64; exact_sender rule also created** |
+| Sender | Folder | Count |
+|--------|--------|-------|
+| `portal@myhealth.com` | Medical | 20 |
+| `labs@myhealth.com` | Medical | 18 |
+| `appointments@myhealth.com` | Medical | 17 |
+| | | **55 total, 3 distinct senders, 100% coherence. Bootstrap samples only 50 of 55 (F6). First 5 emails in fixture array are oldest and excluded by the cap (2 portal, 2 labs, 1 appointments). After sampling: portal ~18, labs ~16, appointments ~16 — all above thresholds. Expected: `sender_domain` rule for `myhealth.com` + 3 `exact_sender` rules, all surviving the sampling cap** |
 
 **Group L: Single list-id email — tests LR3**
 
@@ -484,7 +486,7 @@ the folders with enough evidence for bootstrap to create rules.
 | `billing@utility.com` | Stores | 1 |
 | | | **5 total, coherence = 4/5 = 80% (exactly at threshold). Count to target = 4 ≥ 3 → `exact_sender` rule created (boundary: coherence exactly at ≥80%)** |
 
-**Total: ~119 fixture emails across 3 folders**
+**Total: 153 fixture emails across 4 folders (Banks: 43, Stores: 27, Children: 28, Medical: 55)**
 
 Each fixture email includes: `from`, `to`, `subject`, `textBody`, `receivedAt`
 (spread across last 30 days), `keywords` (`{"$seen": true}`), `targetFolder`,

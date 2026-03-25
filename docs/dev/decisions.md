@@ -6,6 +6,41 @@ chronological — newest entries first.
 
 ---
 
+## 2026-03-25 — Auto-detect test account email from JMAP session
+
+**Context:** The system test scripts (`run_system_test.py`, `load_fixtures.py`)
+require a `--to-email` address for constructing the `To:` header on fixture
+emails injected via JMAP `Email/import`. This is not needed for authentication
+(that's the API token) nor for mailsort itself (which only reads existing
+emails). Requiring it as a mandatory CLI argument is friction for running tests.
+
+**Options considered:**
+1. **Keep `--to-email` required** — explicit, but annoying since the token
+   already identifies the account.
+2. **Add `FASTMAIL_TEST_EMAIL` env var** — less CLI friction, but another env
+   var to manage alongside `FASTMAIL_API_TOKEN`.
+3. **Auto-detect from JMAP session** — Fastmail's session response includes
+   `accounts[id].name` which is the account email address. Derive it at
+   runtime; keep `--to-email` as an optional override.
+
+**Decision:** Option 3 — auto-detect from JMAP session, keep `--to-email` as
+optional override.
+
+**Rationale:**
+- Zero-config for the common case (one test account, one token).
+- `--to-email` still works for edge cases (shared account, non-standard setup).
+- The JMAP session is already fetched during setup — no extra API call.
+- Fastmail reliably exposes the email as `accounts[].name`. If a provider
+  doesn't, the `account_email` property raises a clear error telling the user
+  to pass `--to-email` explicitly.
+
+**Affected code:** `tests/system/load_fixtures.py` (`JMAPLoader.account_email`
+property, `--to-email` now `default=None`), `tests/system/run_system_test.py`
+(`--to-email` now `default=None`, `phase_setup` resolves via
+`loader.account_email` fallback).
+
+---
+
 ## 2026-03-21 — System test vs unit test boundary for bootstrap scenarios
 
 **Context:** Some bootstrap behaviors (deleted folder evidence filtering,

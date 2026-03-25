@@ -24,6 +24,7 @@ folder_description_overrides:
   "Affairs/Stores": "Order confirmations, shipping updates, and return receipts"
   "People": "Parent folder only — do NOT sort emails here. Use subfolders like People/Children instead."
   "People/Children": "School notices, activity signups, and pediatrician communications"
+  "Affairs/Medical": "Medical appointment reminders, lab results, and health notifications"
 
 known_contact_overrides:
   "testcontact@example.com":

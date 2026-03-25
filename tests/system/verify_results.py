@@ -186,10 +186,33 @@ def verify_bootstrap(db: Database) -> VerificationResult:
         "DR3: exact_sender for single@concentrated.com (5× Banks, 100% coherence)",
     )
 
-    # --- Group K: bulk sender (F6) ---
+    # --- Group K: bulk sender + domain rule under sampling cap (F6) ---
+    # 55 emails in Medical from 3 senders at myhealth.com; only 50 sampled
     v.check(
-        ("exact_sender", "notifications@mybank.com") in rule_map,
-        "F6: exact_sender for notifications@mybank.com (21× Banks, sampling cap tested)",
+        ("sender_domain", "myhealth.com") in rule_map,
+        "F6/DR: sender_domain for myhealth.com (3 senders, 100% coherence, survives 50-email cap)",
+    )
+    v.check(
+        ("exact_sender", "portal@myhealth.com") in rule_map,
+        "F6: exact_sender for portal@myhealth.com (Medical)",
+    )
+    v.check(
+        ("exact_sender", "labs@myhealth.com") in rule_map,
+        "F6: exact_sender for labs@myhealth.com (Medical)",
+    )
+    v.check(
+        ("exact_sender", "appointments@myhealth.com") in rule_map,
+        "F6: exact_sender for appointments@myhealth.com (Medical)",
+    )
+
+    # F6 sampling cap: Medical has 55 emails but only 50 should be sampled
+    medical_evidence = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE classification_source = 'manual' "
+        "AND target_folder LIKE '%Medical%'"
+    ).fetchone()[0]
+    v.check(
+        medical_evidence == 50,
+        f"F6: Medical sampled exactly 50 of 55 emails (got {medical_evidence})",
     )
 
     # --- Group L: below list_id threshold (LR3) ---
@@ -276,7 +299,7 @@ def verify_bootstrap(db: Database) -> VerificationResult:
     # ------------------------------------------------------------------
     desc_rows = db.execute("SELECT * FROM folder_descriptions").fetchall()
     desc_map = {r["folder_path"]: r for r in desc_rows}
-    v.check(len(desc_rows) >= 3, f"D7: at least 3 folder descriptions (got {len(desc_rows)})")
+    v.check(len(desc_rows) >= 4, f"D7: at least 4 folder descriptions (got {len(desc_rows)})")
 
     # D1: config overrides should be present for Banks, Stores, Children
     for path_suffix in ["Banks", "Stores", "Children"]:

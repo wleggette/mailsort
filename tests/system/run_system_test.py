@@ -34,10 +34,11 @@ SYSTEM_DIR = Path(__file__).parent
 def run_mailsort(command: str, config: str) -> subprocess.CompletedProcess:
     """Run a mailsort CLI command and return the result."""
     config_abs = str(Path(config).resolve())
-    cmd = f"mailsort --config {config_abs} {command}"
-    logger.info("Running: %s", cmd)
+    mailsort_bin = str(Path(sys.executable).parent / "mailsort")
+    cmd = [mailsort_bin, "--config", config_abs] + command.split()
+    logger.info("Running: %s", " ".join(cmd))
     result = subprocess.run(
-        cmd, shell=True, capture_output=True, text=True,
+        cmd, capture_output=True, text=True,
         cwd=str(_PROJECT_ROOT),
     )
     if result.stdout:
@@ -48,7 +49,7 @@ def run_mailsort(command: str, config: str) -> subprocess.CompletedProcess:
     return result
 
 
-def phase_setup(config: str, to_email: str) -> bool:
+def phase_setup(config: str, to_email: str | None) -> bool:
     """Phase 1: Load fixtures and inbox emails into test account."""
     print("\n" + "=" * 60)
     print("Phase 1: Setup — Loading test data")
@@ -70,8 +71,11 @@ def phase_setup(config: str, to_email: str) -> bool:
     loader = JMAPLoader(token, session_url)
 
     try:
+        # Auto-detect email from JMAP session if not provided
+        to_email = to_email or loader.account_email
+        print(f"  Using recipient address: {to_email}")
         # Ensure required folders exist (create if missing)
-        required = ["Affairs/Banks", "Affairs/Stores", "People/Children"]
+        required = ["Affairs/Banks", "Affairs/Stores", "Affairs/Medical", "People/Children"]
         for folder_path in required:
             loader.ensure_folder_path(folder_path)
         folder_map = loader.resolve_folder_paths()
@@ -455,7 +459,7 @@ def phase_cleanup(config: str) -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Run mailsort system tests against a Fastmail test account")
     parser.add_argument("--config", default="config.test.yaml", help="Path to test config")
-    parser.add_argument("--to-email", required=True, help="Test account email address")
+    parser.add_argument("--to-email", default=None, help="Test account email address (auto-detected from JMAP session if omitted)")
     parser.add_argument("--setup-only", action="store_true", help="Only setup (load fixtures + bootstrap), then stop")
     parser.add_argument("--cleanup", "--cleanup-only", action="store_true", help="Only cleanup test data")
     parser.add_argument("--skip-cleanup", action="store_true", help="Skip cleanup phase in full test run")
