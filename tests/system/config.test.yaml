@@ -9,7 +9,7 @@ fastmail:
 scheduler:
   interval_minutes: 15
   min_age_minutes: 1            # 1 minute — allows testing too_new gate quickly
-  max_batch_size: 200
+  max_batch_size: 250
 
 classification:
   thresholds:

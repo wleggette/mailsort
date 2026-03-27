@@ -231,4 +231,35 @@ def generate_inbox_emails() -> list[dict]:
             "expected_folder": "People/Children",
             "description": "S3: List-Id rule match — newsletter.school.org list",
         },
+
+        # P1: exact_sender should beat sender_domain
+        # statements@bigbank.com has BOTH an exact_sender rule AND bigbank.com has a sender_domain rule.
+        # exact_sender (priority 2) should fire, not sender_domain (priority 3).
+        {
+            "from_email": "statements@bigbank.com",
+            "from_name": "BigBank Statements",
+            "subject": f"[TEST] BigBank P1 exact over domain {ts}",
+            "body": "Your monthly statement for March is now available online.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "moved",
+            "expected_folder": "Affairs/Banks",
+            "description": "P1: exact_sender beats sender_domain — statements@bigbank.com matches both rule types",
+        },
+
+        # P2: list_id should beat exact_sender
+        # activities@ymca.org has BOTH an exact_sender rule AND <updates.ymca.org> has a list_id rule.
+        # list_id (priority 1) should fire, not exact_sender (priority 2).
+        {
+            "from_email": "activities@ymca.org",
+            "from_name": "YMCA Activities",
+            "subject": f"[TEST] YMCA P2 listid over exact {ts}",
+            "body": "Summer camp registration opens next week! Sign up early for the best spots.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "list_id": "<updates.ymca.org>",
+            "expected_outcome": "moved",
+            "expected_folder": "People/Children",
+            "description": "P2: list_id beats exact_sender — activities@ymca.org has both rule types, list_id wins",
+        },
     ]

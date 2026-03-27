@@ -447,6 +447,36 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
         elif "megastore return" in subject.lower():
             v.check(src == "llm", f"R5a returns@megastore.com: source=llm (got {src}, no rule)")
 
+        # --- Priority interactions (P1, P2) ---
+        elif "p1 exact over domain" in subject.lower():
+            v.check(src == "rule", f"P1 exact_sender over sender_domain: source=rule (got {src})")
+            v.check("banks" in folder.lower(), f"P1 BigBank → Banks (got {folder})")
+            if r["rule_id"]:
+                matched_rule = db.execute(
+                    "SELECT rule_type FROM rules WHERE id = ?", (r["rule_id"],)
+                ).fetchone()
+                if matched_rule:
+                    v.check(matched_rule["rule_type"] == "exact_sender",
+                             f"P1 matched via exact_sender (not sender_domain) (got {matched_rule['rule_type']})")
+                else:
+                    v.check(False, f"P1 rule_id {r['rule_id']} not found in rules table")
+            else:
+                v.check(False, "P1 no rule_id — expected exact_sender rule match")
+        elif "p2 listid over exact" in subject.lower():
+            v.check(src == "rule", f"P2 list_id over exact_sender: source=rule (got {src})")
+            v.check("children" in folder.lower(), f"P2 YMCA → Children (got {folder})")
+            if r["rule_id"]:
+                matched_rule = db.execute(
+                    "SELECT rule_type FROM rules WHERE id = ?", (r["rule_id"],)
+                ).fetchone()
+                if matched_rule:
+                    v.check(matched_rule["rule_type"] == "list_id",
+                             f"P2 matched via list_id (not exact_sender) (got {matched_rule['rule_type']})")
+                else:
+                    v.check(False, f"P2 rule_id {r['rule_id']} not found in rules table")
+            else:
+                v.check(False, "P2 no rule_id — expected list_id rule match")
+
         # --- Known contact with rule (C1) ---
         elif "friend playdate" in subject.lower():
             v.check(src == "rule", f"C1 testfriend rule: source=rule (got {src})")
