@@ -790,3 +790,181 @@ def test_deleted_folder_cascade_deactivate_and_fallthrough(db: Database, monkeyp
     assert row["skip_reason"] in ("no_classification", "llm_unavailable"), (
         f"Email should be skipped with no_classification or llm_unavailable (got {row['skip_reason']})"
     )
+
+
+# ---------------------------------------------------------------------------
+# X11: Snapshot scope vs batch scope — departure detected beyond batch
+# ---------------------------------------------------------------------------
+
+def test_snapshot_captures_beyond_batch_for_departure_detection(db: Database, monkeypatch):
+    """Inbox snapshot covers all emails; batch classification covers only max_batch_size.
+
+    Tests X11: an email beyond the batch but in the snapshot should be detected
+    as a departure if the user moves it before the next run.
+
+    Pass 1: Inbox has 5 emails. max_batch_size=3. Snapshot saves all 5.
+            Only 3 are classified.
+    (User moves email D to Banks between runs)
+    Pass 2: Inbox now has 4 emails (A,B,C,E). Snapshot diff finds D departed.
+            Departure detected, manual audit row created.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _cfg()
+    # Override max_batch_size to 3 so we can test with just 5 emails
+    cfg.scheduler.max_batch_size = 3
+    tree = _tree()
+
+    emails_pass1 = [
+        _email("e-a", "a@test.com", "Email A"),
+        _email("e-b", "b@test.com", "Email B"),
+        _email("e-c", "c@test.com", "Email C"),
+        _email("e-d", "d@test.com", "Email D"),
+        _email("e-e", "e@test.com", "Email E"),
+    ]
+
+    mock_jmap1 = MagicMock()
+    # Unfiltered inbox returns all 5 (for snapshot)
+    mock_jmap1.query_inbox_emails.side_effect = [
+        {"e-a", "e-b", "e-c", "e-d", "e-e"},     # unfiltered (snapshot)
+        ["e-a", "e-b", "e-c", "e-d", "e-e"],      # filtered
+    ]
+    # get_emails called with batch slice (first 3)
+    mock_jmap1.get_emails.return_value = emails_pass1[:3]  # only A, B, C
+    mock_jmap1.get_thread_email_ids.return_value = []
+    mock_jmap1.get_contacts.return_value = []
+    mock_jmap1.query_folder_emails.return_value = []
+    mock_jmap1.session_capabilities = set()
+    mock_jmap1.is_read_only = False
+
+    run1_id = run_classification_pass(cfg, db, mock_jmap1, tree, dry_run=False, trigger="test")
+
+    # Verify: snapshot has all 5, but only 3 were classified
+    snapshot_count = db.execute("SELECT COUNT(*) FROM inbox_snapshot WHERE run_id = ?", (run1_id,)).fetchone()[0]
+    assert snapshot_count == 5, f"Snapshot should have all 5 emails (got {snapshot_count})"
+
+    classified_count = db.execute("SELECT COUNT(*) FROM audit_log WHERE run_id = ?", (run1_id,)).fetchone()[0]
+    assert classified_count == 3, f"Only 3 emails should be classified (got {classified_count})"
+
+    # Verify D was NOT classified (beyond batch)
+    d_row = db.execute("SELECT * FROM audit_log WHERE email_id = 'e-d'").fetchone()
+    assert d_row is None, "Email D should not be in audit_log (beyond batch)"
+
+    # --- Pass 2: User moved D to Banks between runs ---
+    # D is now in Banks, no longer in inbox
+    departed_d = MagicMock()
+    departed_d.id = "e-d"
+    departed_d.thread_id = "thread-e-d"
+    departed_d.from_address = "d@test.com"
+    departed_d.from_domain = "test.com"
+    departed_d.subject = "Email D"
+    departed_d.list_id = None
+    departed_d.received_at = "2026-03-10T10:00:00Z"
+    departed_d.mailbox_ids = {"mb-banks": True}  # user moved to Banks
+
+    mock_jmap2 = MagicMock()
+    # Inbox now has only A, B, C, E (D is gone)
+    mock_jmap2.query_inbox_emails.side_effect = [
+        {"e-a", "e-b", "e-c", "e-e"},   # unfiltered
+        ["e-a", "e-b", "e-c", "e-e"],   # filtered
+    ]
+    # Learner's departure detection fetches the departed email
+    mock_jmap2.get_emails.side_effect = lambda ids, *a, **kw: (
+        [departed_d] if "e-d" in ids else [
+            e for e in emails_pass1 if e.id in ids
+        ]
+    )
+    mock_jmap2.get_thread_email_ids.return_value = []
+    mock_jmap2.get_contacts.return_value = []
+    mock_jmap2.query_folder_emails.return_value = []
+    mock_jmap2.session_capabilities = set()
+    mock_jmap2.is_read_only = False
+
+    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=False, trigger="test")
+
+    # Verify: departure detected for email D
+    manual_d = db.execute(
+        "SELECT * FROM audit_log WHERE email_id = 'e-d' AND classification_source = 'manual'"
+    ).fetchone()
+    assert manual_d is not None, "Email D departure should be detected as manual sort"
+    assert "Banks" in manual_d["target_folder"], f"Email D should be sorted to Banks (got {manual_d['target_folder']})"
+
+
+# ---------------------------------------------------------------------------
+# X12: Dry run still runs learning step
+# ---------------------------------------------------------------------------
+
+def test_dry_run_detects_corrections_and_penalizes_rules(db: Database, monkeypatch):
+    """Learning (correction detection + rule penalty) runs even in dry_run mode.
+
+    Tests X12: if a user corrects an email between a live run and a dry run,
+    the dry run's learning step should detect the correction and adjust rule
+    confidence — even though it won't move any new emails.
+
+    Pass 1 (live): Rule moves chase to Banks.
+    (User corrects chase to Travel)
+    Pass 2 (dry_run=True): Learning detects correction, penalizes rule.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _cfg()
+    tree = _tree()
+    rules = _seed_rules(db)
+
+    # --- Pass 1 (live): move chase to Banks ---
+    e_chase = _email("e-chase-x12", "noreply@chase.com", "Statement")
+
+    mock_jmap1 = MagicMock()
+    mock_jmap1.query_inbox_emails.side_effect = [{"e-chase-x12"}, ["e-chase-x12"]]
+    mock_jmap1.get_emails.return_value = [e_chase]
+    mock_jmap1.get_thread_email_ids.return_value = []
+    mock_jmap1.get_contacts.return_value = []
+    mock_jmap1.query_folder_emails.return_value = []
+    mock_jmap1.session_capabilities = set()
+    mock_jmap1.is_read_only = False
+    mock_jmap1.move_emails.return_value = {"e-chase-x12": True}
+
+    run_classification_pass(cfg, db, mock_jmap1, tree, dry_run=False, trigger="test")
+
+    # Confirm rule is still active
+    rule_row = db.execute(
+        "SELECT confidence, active FROM rules WHERE id = ?",
+        (rules["noreply@chase.com"],),
+    ).fetchone()
+    assert rule_row["confidence"] == 0.95
+    assert rule_row["active"] == 1
+
+    # --- User corrects chase from Banks to Travel ---
+    corrected_chase = MagicMock()
+    corrected_chase.id = "e-chase-x12"
+    corrected_chase.mailbox_ids = {"mb-travel": True}
+
+    mock_jmap2 = MagicMock()
+    mock_jmap2.query_inbox_emails.side_effect = [set(), []]
+    mock_jmap2.get_emails.return_value = [corrected_chase]
+    mock_jmap2.get_contacts.return_value = []
+    mock_jmap2.query_folder_emails.return_value = []
+    mock_jmap2.session_capabilities = set()
+    mock_jmap2.is_read_only = False
+
+    # --- Pass 2 (DRY RUN): should still detect correction and penalize ---
+    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=True, trigger="test")
+
+    # Verify: rule was penalized even though this was a dry run
+    rule_row = db.execute(
+        "SELECT confidence, active FROM rules WHERE id = ?",
+        (rules["noreply@chase.com"],),
+    ).fetchone()
+    assert abs(rule_row["confidence"] - 0.80) < 1e-9, (
+        f"Rule should be penalized to 0.80 even in dry run (got {rule_row['confidence']})"
+    )
+    assert rule_row["active"] == 0, "Rule should be deactivated even in dry run"
+
+    # Verify: manual audit row was created
+    manual_row = db.execute(
+        "SELECT * FROM audit_log WHERE email_id = 'e-chase-x12' AND classification_source = 'manual'"
+    ).fetchone()
+    assert manual_row is not None, "Manual sort should be detected in dry run"
+    assert "Travel" in manual_row["target_folder"]
+
+    # Verify: no emails were moved (dry run)
+    run_row = db.execute("SELECT * FROM runs WHERE run_id = ?", (run2_id,)).fetchone()
+    assert run_row["emails_moved"] == 0, "Dry run should not move any emails"

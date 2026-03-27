@@ -23,12 +23,11 @@
 - [5. Phase 3: Live Move](#5-phase-3-live-move)
   - [5.1 Age Gate Test](#51-age-gate-test)
   - [5.2 Live Move Verification Checklist](#52-live-move-verification-checklist)
-- [6. Phase 4: Learning](#6-phase-4-learning)
-  - [6.1 User Correction Simulation](#61-user-correction-simulation)
-  - [6.2 Learning Verification Checklist](#62-learning-verification-checklist)
-- [7. Phase 5: Feedback Loop](#7-phase-5-feedback-loop)
-  - [7.1 Rule Confidence Penalty](#71-rule-confidence-penalty)
-  - [7.2 Feedback Verification Checklist](#72-feedback-verification-checklist)
+- [6. Phase 4: Learning & Feedback](#6-phase-4-learning--feedback)
+  - [6.1 Learning Scenarios](#61-learning-scenarios)
+  - [6.2 Test Execution Sequence](#62-test-execution-sequence)
+  - [6.3 Learning Verification Checklist](#63-learning-verification-checklist)
+  - [6.4 Scenarios Deferred to Unit Tests](#64-scenarios-deferred-to-unit-tests)
 - [8. Cross-Cutting Edge Cases](#8-cross-cutting-edge-cases)
 - [9. What This Validates That Unit/Integration Tests Don't](#9-what-this-validates)
 - [10. Risks and Mitigations](#10-risks-and-mitigations)
@@ -756,8 +755,8 @@ Behaviors that depend on state accumulated across multiple phases.
 | **X8** | LLM API error — per-email isolation | One email's LLM error doesn't prevent others from being classified and moved | Observed organically in Phase 3 (`shipment-tracking@amazon.com`). *Not reproducible on demand* — covered by unit test (`test_no_classification_logs_skip`) |
 | **X9** | Folder deletion → rule deactivation → unknown_folder skip | Delete a folder after bootstrap; `reconcile_folders` deactivates its rules; emails targeting it get `skip_reason=unknown_folder` | *Deferred to integration test* (`test_deleted_folder_rule_deactivated_on_run`, `test_deleted_folder_email_gets_unknown_folder_skip`) — destructive JMAP operation, better with mocks |
 | **X10** | skip_senders filtering (no audit row) | Email from `skip_senders` is filtered before classification — no audit_log row at all (unlike LLM skip which gets a row) | *Deferred to unit test* (`test_skip_sender_is_filtered`) — requires config change mid-test |
-| **X11** | Inbox snapshot scope vs batch scope | Snapshot covers all inbox emails (up to 500); classification covers only `max_batch_size`. Emails beyond the batch can still be detected as departures | Tested implicitly — snapshot uses 500 limit, batch uses 250. Would need 500+ emails to observe truncation |
-| **X12** | Dry run still runs learning step | Dry run detects corrections from previous live runs and adjusts rule confidence | Tested implicitly — learning step runs in all modes (`orchestrator.py` line 121) |
+| **X11** | Inbox snapshot scope vs batch scope | Snapshot covers all inbox emails (up to 500); classification covers only `max_batch_size`. Emails beyond the batch can still be detected as departures | *Deferred to integration test* (`test_snapshot_captures_beyond_batch_for_departure_detection`) — uses `max_batch_size=3` to test with 5 emails |
+| **X12** | Dry run still runs learning step | Dry run detects corrections from previous live runs and adjusts rule confidence — even penalizing rules | *Deferred to integration test* (`test_dry_run_detects_corrections_and_penalizes_rules`) — verifies correction detection + rule penalty in `dry_run=True` mode |
 
 ---
 
