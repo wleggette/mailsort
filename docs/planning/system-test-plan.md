@@ -621,50 +621,126 @@ Live run re-processes inbox emails and actually moves eligible ones via JMAP
 
 ---
 
-## 6. Phase 4: Learning
+## 6. Phase 4: Learning & Feedback
 
-Learning detects when a user manually moves an email to a different folder
-than where the system placed it. This simulates the correction feedback loop.
+Tests all four manual-sort detection categories, correction penalty,
+dedup logic, and behavioral impact of rule deactivation. Combines the
+previous Phase 4 (Learning) and Phase 5 (Feedback Loop).
 
-### 6.1 User Correction Simulation
+### 6.1 Test Sequence
 
-1. Pick one email that was moved to Banks by a rule (e.g., `noreply@chase.com`)
-2. Move it from Banks → Stores via JMAP `Email/set` (simulate user drag-and-drop)
-3. Run `mailsort run --config config.test.yaml` again
-4. The learning step should detect the correction:
-   - Email's current mailbox (Stores) ≠ `audit_log.folder` (Banks)
-   - Creates a new `audit_log` row with `classification_source='manual'`, `folder='Stores'`, `moved=1`
+**Step 1: Simulate 4 user actions via JMAP moves**
 
-### 6.2 Learning Verification Checklist
+| Move | Email | From | To | Tests |
+|------|-------|------|----|-------|
+| **L3** | `noreply@chase.com` (rule-moved) | Banks | Stores | Cat 2 correction + penalty + deactivation |
+| **L4** | `alerts@megastore.com` (rule-moved) | Banks | INBOX | Cat 2 inbox return (should be ignored) |
+| **L5** | `returns@megastore.com` (LLM-moved) | Stores | Banks | Cat 2 LLM correction (no rule penalty) |
+| **L1** | `info@ambiguous-service.com` (skipped, `below_threshold`) | INBOX | Banks | Cat 1 skipped sort detection |
 
-- [ ] **Correction detected**: learning step identifies the relocated email
-- [ ] **Manual audit row created**: new `audit_log` entry with `classification_source='manual'` and the corrected folder
-- [ ] **Original audit row preserved**: the original rule-based classification row still exists
+**Step 2: Run `mailsort run`** — learning step detects the moves above.
 
----
+**Step 3: Verify L1, L3, L4, L5** — check audit_log rows, rule confidence, rule active status.
 
-## 7. Phase 5: Feedback Loop
+**Step 4: Run `mailsort run` again** (no new JMAP moves) — tests L6 (dedup) and L9 (deactivated rule behavior).
 
-After corrections are detected, the system adjusts rule confidence to reflect
-user disagreement.
+**Step 5: Verify L6, L9** — no double-counting, chase emails now classified by LLM.
 
-### 7.1 Rule Confidence Penalty
+### 6.2 Scenario Details
 
-When a user corrects a rule-based move:
-- The rule's confidence is reduced by `correction_penalty` (0.15 in test config)
-- If confidence drops below `rule_move` threshold (0.85), the rule stops triggering moves
+#### L1: Skipped email sorted by user (Category 1)
 
-| ID | Scenario | Initial Confidence | Corrections | Expected Confidence | Tested By |
-|----|----------|--------------------|-------------|-------------------|----------|
-| **FP1** | Single correction | 1.0 | 1 | 0.85 (still triggers) | Phase 6 correction (move `noreply@chase.com` email Banks → Stores) |
-| **FP2** | Two corrections | 1.0 | 2 | 0.70 (below threshold, rule inactive for moves) | Repeat Phase 6 correction on same rule |
+- **Setup:** Move `info@ambiguous-service.com` (skip_reason=`below_threshold`, still in
+  inbox after Phase 3) from INBOX to Banks via JMAP.
+- **Expected:** Learner's `_detect_skipped_sorts` finds the email (moved=0 in
+  audit_log, no longer in inbox). Creates manual audit row for Banks.
+  `ManualSortCounts.from_inbox` incremented.
+- **Verify:** audit_log has new row with `classification_source='manual'`,
+  `target_folder` containing 'Banks', `moved=1`.
 
-### 7.2 Feedback Verification Checklist
+#### L3: Rule-based correction with penalty (Category 2)
 
-- [ ] **Rule confidence penalized**: the corrected rule has lower confidence after learning
-- [ ] **Penalty amount correct**: confidence decreased by `correction_penalty` (0.15)
-- [ ] **Rule still active**: rule record exists but with adjusted confidence
-- [ ] **Future behavior changed**: if confidence < threshold, next run won't move using that rule
+- **Setup:** Move `noreply@chase.com` email from Banks → Stores via JMAP.
+  The chase rule has `confidence=0.95`, `rule_id` is known from Phase 3.
+- **Expected:** Learner's `_detect_correction_sorts` finds the email (moved=1
+  in audit_log, current folder ≠ expected folder). Creates manual audit row
+  for Stores. Penalizes chase rule: 0.95 − 0.15 = 0.80. Since 0.80 < 0.85
+  (rule_move threshold), **rule is deactivated** (active=0).
+- **Verify:**
+  - [ ] Manual audit row exists for chase → Stores
+  - [ ] Chase rule confidence = 0.80
+  - [ ] Chase rule active = 0
+  - [ ] `ManualSortCounts.from_other` incremented
+
+> **Note:** With current thresholds (`correction_penalty=0.15`, `rule_move=0.85`),
+> every auto-created rule is deactivated after a single correction. Max starting
+> confidence is 0.95, and 0.95 − 0.15 = 0.80 < 0.85. See
+> `docs/dev/design-ideas.md` "Correction Penalty Tuning" for analysis and
+> options.
+
+#### L4: Inbox return ignored (Category 2 — negative)
+
+- **Setup:** Move `alerts@megastore.com` email from Banks → INBOX via JMAP.
+- **Expected:** Learner's `_detect_correction_sorts` sees the email is no longer
+  in Banks, but the new location is INBOX. Code checks `new_path != "INBOX"`
+  and **skips** — inbox returns are ambiguous (user may just want to re-read).
+- **Verify:**
+  - [ ] NO manual audit row for megastore alerts email
+  - [ ] Megastore alerts rule confidence unchanged
+  - [ ] Megastore alerts rule still active
+
+#### L5: LLM-based correction, no rule penalty (Category 2)
+
+- **Setup:** Move `returns@megastore.com` email (LLM-classified, rule_id=NULL)
+  from Stores → Banks via JMAP.
+- **Expected:** Learner detects the correction and creates a manual audit row.
+  But `_penalize_rule(None)` exits immediately — no rule to penalize.
+- **Verify:**
+  - [ ] Manual audit row exists for megastore returns → Banks
+  - [ ] No rules have changed confidence (compared to pre-L5 state)
+
+#### L6: Dedup — same correction not double-counted (Category 2)
+
+- **Setup:** Run `mailsort run` again WITHOUT making any new JMAP moves.
+- **Expected:** Learner's `_already_corrected_email_ids` filters out the chase
+  email (already has a manual audit row from L3). No new correction detected.
+- **Verify:**
+  - [ ] No new manual audit rows for the chase email_id
+  - [ ] Chase rule confidence still 0.80 (no double penalty)
+
+#### L9: Deactivated rule stops matching (behavioral impact)
+
+- **Setup:** Same run as L6. Chase rule is now active=0 from L3.
+- **Expected:** Any chase emails still in inbox are classified by LLM (not
+  by the deactivated exact_sender rule). The audit_log for the L6 run shows
+  `classification_source='llm'` for chase emails instead of `'rule'`.
+- **Verify:**
+  - [ ] Chase emails in this run have `classification_source='llm'` (not 'rule')
+  - [ ] Chase emails have no `rule_id` (NULL)
+
+### 6.3 Learning Verification Checklist
+
+After the learning sequence completes, verify:
+
+- [ ] **L1 — Skipped sort detected**: manual audit row for ambiguous-service → Banks
+- [ ] **L3 — Correction detected**: manual audit row for chase → Stores
+- [ ] **L3 — Rule penalized**: chase rule confidence = 0.80 (was 0.95)
+- [ ] **L3 — Rule deactivated**: chase rule active = 0 (0.80 < 0.85 threshold)
+- [ ] **L4 — Inbox return ignored**: NO manual row for megastore alerts, rule unchanged
+- [ ] **L5 — LLM correction detected**: manual audit row for megastore returns → Banks
+- [ ] **L5 — No rule penalized**: no rule confidence changes from LLM correction
+- [ ] **L6 — Dedup works**: no new manual rows for chase on second run
+- [ ] **L9 — Deactivated rule stops matching**: chase emails classified by LLM on second run
+
+### 6.4 Scenarios Deferred to Unit Tests
+
+| ID | Scenario | Why deferred |
+|----|----------|-------------|
+| **L7** | Cat 3 inbox departure | Requires email in snapshot but not in audit_log — hard to set up after live run processed everything |
+| **L8** | Cat 4 folder scan | Runs once per 24h; would need DB state manipulation to reset timer |
+| **L10** | Penalty boundary (confidence exactly at threshold) | No auto-created rule reaches confidence 1.0; would need direct DB manipulation |
+| **L11** | Staleness decay (90+ days) | Requires manipulating `last_hit_at` to 91 days ago |
+| **L12** | Auto-rule from accumulated corrections | Would need 3+ JMAP moves from same sender to same folder; excessive for system test |
 
 ---
 

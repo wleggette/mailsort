@@ -323,10 +323,17 @@ def phase_live_verify(config: str, run_id: str) -> bool:
         db.close()
 
 
-def phase_correction(config: str, to_email: str) -> bool:
-    """Phase 6: Simulate user correction and verify detection."""
+def phase_learning(config: str, to_email: str) -> bool:
+    """Phase 4: Learning & Feedback — L1, L3, L4, L5, L6, L9.
+
+    Step 1: Make 4 JMAP moves simulating user actions.
+    Step 2: Run mailsort → learning detects the moves.
+    Step 3: Verify L1, L3, L4, L5.
+    Step 4: Run mailsort again → tests L6 (dedup) and L9 (deactivated rule).
+    Step 5: Verify L6, L9.
+    """
     print("\n" + "=" * 60)
-    print("Phase 6: User Correction Simulation")
+    print("Phase 4: Learning & Feedback (L1, L3, L4, L5, L6, L9)")
     print("=" * 60)
 
     import yaml
@@ -336,93 +343,186 @@ def phase_correction(config: str, to_email: str) -> bool:
 
     from mailsort.db.database import Database
     from mailsort.db.migrations import run_migrations
+    from tests.system.load_fixtures import JMAPLoader
 
+    token = os.environ.get("FASTMAIL_API_TOKEN", "")
+    session_url = cfg.get("fastmail", {}).get("session_url", "https://api.fastmail.com/jmap/session")
+
+    # ------------------------------------------------------------------
+    # Find the emails we need to move
+    # ------------------------------------------------------------------
     db = Database(db_path)
     db.connect()
     try:
         run_migrations(db)
-        # Find a moved email to "correct"
-        moved_row = db.execute(
+
+        # L3: chase rule-moved email (for correction Banks → Stores)
+        l3_row = db.execute(
             "SELECT email_id, target_folder, rule_id FROM audit_log "
-            "WHERE moved = 1 AND classification_source = 'rule' AND rule_id IS NOT NULL "
+            "WHERE moved = 1 AND from_address = 'noreply@chase.com' "
+            "AND classification_source = 'rule' AND rule_id IS NOT NULL "
             "ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
-        if not moved_row:
-            print("  WARN: No rule-moved emails found to correct. Skipping correction test.")
-            return True
 
-        email_id = moved_row["email_id"]
-        original_folder = moved_row["target_folder"]
-        rule_id = moved_row["rule_id"]
-        print(f"  Will correct email {email_id[:12]}... from {original_folder}")
+        # L4: megastore alerts rule-moved email (for inbox return)
+        l4_row = db.execute(
+            "SELECT email_id, target_folder, rule_id FROM audit_log "
+            "WHERE moved = 1 AND from_address = 'alerts@megastore.com' "
+            "AND classification_source = 'rule' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+
+        # L5: megastore returns LLM-moved email (for LLM correction)
+        l5_row = db.execute(
+            "SELECT email_id, target_folder, rule_id FROM audit_log "
+            "WHERE moved = 1 AND from_address = 'returns@megastore.com' "
+            "AND classification_source = 'llm' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+
+        # L1: ambiguous-service skipped email (for skipped sort)
+        l1_row = db.execute(
+            "SELECT email_id, target_folder FROM audit_log "
+            "WHERE moved = 0 AND from_address = 'info@ambiguous-service.com' "
+            "AND skip_reason = 'below_threshold' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+
+        # Snapshot rule confidences before moves
+        pre_rules = {
+            r["id"]: {"confidence": r["confidence"], "active": r["active"]}
+            for r in db.execute("SELECT id, confidence, active FROM rules").fetchall()
+        }
     finally:
         db.close()
 
-    # Move the email to a different folder via JMAP
-    token = os.environ.get("FASTMAIL_API_TOKEN", "")
-    session_url = cfg.get("fastmail", {}).get("session_url", "https://api.fastmail.com/jmap/session")
+    # Check we found all needed emails
+    missing = []
+    if not l3_row:
+        missing.append("L3 (chase rule-moved)")
+    if not l4_row:
+        missing.append("L4 (megastore alerts rule-moved)")
+    if not l5_row:
+        missing.append("L5 (megastore returns LLM-moved)")
+    if not l1_row:
+        missing.append("L1 (ambiguous-service skipped)")
+    if missing:
+        print(f"  WARN: Missing emails for: {', '.join(missing)}")
+        print("  Continuing with available scenarios...")
 
-    from tests.system.load_fixtures import JMAPLoader
+    # ------------------------------------------------------------------
+    # Step 1: Make JMAP moves
+    # ------------------------------------------------------------------
+    print("\n  Step 1: Simulating user actions via JMAP moves...")
     loader = JMAPLoader(token, session_url)
     try:
         folder_map = loader.resolve_folder_paths()
 
-        # Pick a different folder
-        if "Stores" in original_folder or "stores" in original_folder.lower():
-            correction_folder = "Affairs/Banks"
-        else:
-            correction_folder = "Affairs/Stores"
+        def resolve_folder(name: str) -> str | None:
+            return (folder_map.get(name)
+                    or folder_map.get(f"INBOX/{name}")
+                    or folder_map.get(f"Inbox/{name}"))
 
-        correction_id = folder_map.get(correction_folder) or folder_map.get(f"INBOX/{correction_folder}")
-        if not correction_id:
-            print(f"  ERROR: Could not find correction folder {correction_folder}")
-            return False
+        stores_id = resolve_folder("Affairs/Stores")
+        banks_id = resolve_folder("Affairs/Banks")
+        inbox_id = resolve_folder("INBOX")
+        # INBOX might not be in folder_map — get it from the tree
+        if not inbox_id:
+            mailboxes = loader.get_mailboxes()
+            for mid, mbox in mailboxes.items():
+                if mbox.get("role") == "inbox":
+                    inbox_id = mid
+                    break
 
-        # Move email via JMAP
-        data = loader.call([
-            ["Email/get", {
-                "accountId": loader.account_id,
-                "ids": [email_id],
-                "properties": ["mailboxIds"],
-            }, "g1"],
-        ])
-        email_data = data["methodResponses"][0][1].get("list", [])
-        if not email_data:
-            print(f"  WARN: Email {email_id[:12]} not found in JMAP (may have been deleted)")
-            return True
+        def move_email(email_id: str, target_id: str, label: str) -> bool:
+            try:
+                loader.call([
+                    ["Email/set", {
+                        "accountId": loader.account_id,
+                        "update": {email_id: {"mailboxIds": {target_id: True}}},
+                    }, "s1"],
+                ])
+                print(f"    {label}: moved {email_id[:12]}...")
+                return True
+            except Exception as e:
+                print(f"    {label}: FAILED — {e}")
+                return False
 
-        new_mailbox_ids = {correction_id: True}
-        loader.call([
-            ["Email/set", {
-                "accountId": loader.account_id,
-                "update": {
-                    email_id: {"mailboxIds": new_mailbox_ids},
-                },
-            }, "s1"],
-        ])
-        print(f"  Moved email to {correction_folder} (simulating user correction)")
+        if l3_row and stores_id:
+            move_email(l3_row["email_id"], stores_id, "L3 chase → Stores")
+        if l4_row and inbox_id:
+            move_email(l4_row["email_id"], inbox_id, "L4 megastore alerts → INBOX")
+        if l5_row and banks_id:
+            move_email(l5_row["email_id"], banks_id, "L5 megastore returns → Banks")
+        if l1_row and banks_id:
+            move_email(l1_row["email_id"], banks_id, "L1 ambiguous → Banks")
     finally:
         loader.close()
 
-    # Run again to detect correction
+    # ------------------------------------------------------------------
+    # Step 2: Run mailsort to detect the moves
+    # ------------------------------------------------------------------
+    print("\n  Step 2: Running mailsort to detect learning...")
     result = run_mailsort("run", config)
     if result.returncode != 0:
         print("  ERROR: Post-correction run failed")
         return False
 
-    # Verify
+    # ------------------------------------------------------------------
+    # Step 3: Verify L1, L3, L4, L5
+    # ------------------------------------------------------------------
+    print("\n  Step 3: Verifying L1, L3, L4, L5...")
     db = Database(db_path)
     db.connect()
     try:
         run_migrations(db)
-        row = db.execute(
+        run1_id = db.execute(
             "SELECT run_id FROM runs WHERE trigger != 'bootstrap' ORDER BY started_at DESC LIMIT 1"
-        ).fetchone()
-        run_id = row["run_id"] if row else ""
+        ).fetchone()["run_id"]
 
-        from tests.system.verify_results import verify_correction
-        v = verify_correction(db, run_id, "")
-        return v.failed == 0
+        from tests.system.verify_results import verify_learning_step1
+        v1 = verify_learning_step1(
+            db, run1_id,
+            l1_email_id=l1_row["email_id"] if l1_row else None,
+            l3_email_id=l3_row["email_id"] if l3_row else None,
+            l3_rule_id=l3_row["rule_id"] if l3_row else None,
+            l4_email_id=l4_row["email_id"] if l4_row else None,
+            l4_rule_id=l4_row["rule_id"] if l4_row else None,
+            l5_email_id=l5_row["email_id"] if l5_row else None,
+            pre_rules=pre_rules,
+        )
+        if v1.failed > 0:
+            print("  Step 3 had failures — continuing to step 4")
+    finally:
+        db.close()
+
+    # ------------------------------------------------------------------
+    # Step 4: Run again for L6 (dedup) and L9 (deactivated rule)
+    # ------------------------------------------------------------------
+    print("\n  Step 4: Running mailsort again (no new moves — tests dedup + deactivation)...")
+    result = run_mailsort("run", config)
+    if result.returncode != 0:
+        print("  ERROR: Second post-correction run failed")
+        return False
+
+    # ------------------------------------------------------------------
+    # Step 5: Verify L6, L9
+    # ------------------------------------------------------------------
+    print("\n  Step 5: Verifying L6, L9...")
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        run2_id = db.execute(
+            "SELECT run_id FROM runs WHERE trigger != 'bootstrap' ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()["run_id"]
+
+        from tests.system.verify_results import verify_learning_step2
+        v2 = verify_learning_step2(
+            db, run2_id,
+            l3_email_id=l3_row["email_id"] if l3_row else None,
+        )
+        return v1.failed == 0 and v2.failed == 0
     finally:
         db.close()
 
@@ -508,8 +608,8 @@ def main():
     if live_run_id:
         phase_live_verify(args.config, live_run_id)
 
-    # Phase 6: User Correction
-    phase_correction(args.config, args.to_email)
+    # Phase 4: Learning & Feedback
+    phase_learning(args.config, args.to_email or "")
 
     # Phase 7: Cleanup
     if not args.skip_cleanup:

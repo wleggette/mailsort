@@ -618,28 +618,169 @@ def verify_age_gate(db: Database, run_id: str) -> VerificationResult:
     return v
 
 
-def verify_correction(db: Database, run_id: str, corrected_email_subject: str) -> VerificationResult:
-    """Verify user correction was detected and rule penalized."""
+def verify_learning_step1(
+    db: Database,
+    run_id: str,
+    *,
+    l1_email_id: str | None,
+    l3_email_id: str | None,
+    l3_rule_id: int | None,
+    l4_email_id: str | None,
+    l4_rule_id: int | None,
+    l5_email_id: str | None,
+    pre_rules: dict[int, dict],
+) -> VerificationResult:
+    """Verify L1, L3, L4, L5 after the first learning run."""
     v = VerificationResult()
-    print(f"\n=== Verifying Correction Detection ({run_id[:8]}) ===")
+    print(f"\n=== Verifying Learning Step 1 ({run_id[:8]}) — L1, L3, L4, L5 ===")
 
-    # Check for manual audit_log row
-    manual_rows = db.execute(
-        "SELECT * FROM audit_log WHERE run_id = ? AND classification_source = 'manual'",
+    # Helper: check if a manual audit row exists for an email in this run
+    def has_manual_row(email_id: str, expected_folder_fragment: str | None = None) -> bool:
+        rows = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? AND classification_source = 'manual'",
+            (run_id, email_id),
+        ).fetchall()
+        if not rows:
+            return False
+        if expected_folder_fragment:
+            return any(expected_folder_fragment.lower() in (r["target_folder"] or "").lower() for r in rows)
+        return True
+
+    # --- L1: Skipped email sorted by user (Category 1) ---
+    if l1_email_id:
+        v.check(
+            has_manual_row(l1_email_id, "Banks"),
+            f"L1: manual audit row for ambiguous-service → Banks (email {l1_email_id[:12]})",
+        )
+    else:
+        v.warn("L1: skipped (ambiguous-service email not found)")
+
+    # --- L3: Rule-based correction with penalty (Category 2) ---
+    if l3_email_id:
+        v.check(
+            has_manual_row(l3_email_id, "Stores"),
+            f"L3: manual audit row for chase → Stores (email {l3_email_id[:12]})",
+        )
+
+        # Check rule was penalized and deactivated
+        if l3_rule_id:
+            rule = db.execute("SELECT * FROM rules WHERE id = ?", (l3_rule_id,)).fetchone()
+            if rule:
+                v.check(
+                    abs(rule["confidence"] - 0.80) < 0.01,
+                    f"L3: chase rule confidence = {rule['confidence']:.2f} (expected 0.80 = 0.95 - 0.15)",
+                )
+                v.check(
+                    not rule["active"],
+                    f"L3: chase rule deactivated (active={rule['active']}, expected 0 because 0.80 < 0.85)",
+                )
+            else:
+                v.check(False, f"L3: chase rule {l3_rule_id} not found")
+    else:
+        v.warn("L3: skipped (chase email not found)")
+
+    # --- L4: Inbox return ignored (Category 2 — negative) ---
+    if l4_email_id:
+        # Should NOT have a manual row — inbox returns are ignored
+        has_row = has_manual_row(l4_email_id)
+        v.check(
+            not has_row,
+            f"L4: NO manual row for megastore alerts inbox return (email {l4_email_id[:12]}, has_row={has_row})",
+        )
+
+        # Rule should be unchanged
+        if l4_rule_id:
+            rule = db.execute("SELECT * FROM rules WHERE id = ?", (l4_rule_id,)).fetchone()
+            pre = pre_rules.get(l4_rule_id, {})
+            if rule and pre:
+                v.check(
+                    rule["confidence"] == pre["confidence"],
+                    f"L4: megastore alerts rule confidence unchanged ({rule['confidence']:.2f}, was {pre['confidence']:.2f})",
+                )
+                v.check(
+                    bool(rule["active"]) == bool(pre["active"]),
+                    f"L4: megastore alerts rule still active={rule['active']}",
+                )
+    else:
+        v.warn("L4: skipped (megastore alerts email not found)")
+
+    # --- L5: LLM-based correction, no rule penalty (Category 2) ---
+    if l5_email_id:
+        v.check(
+            has_manual_row(l5_email_id, "Banks"),
+            f"L5: manual audit row for megastore returns → Banks (email {l5_email_id[:12]})",
+        )
+
+        # No rules should have changed confidence (except the chase rule from L3)
+        changed_rules = []
+        for rule_id, pre in pre_rules.items():
+            if rule_id == l3_rule_id:
+                continue  # L3 intentionally changed this one
+            current = db.execute("SELECT confidence FROM rules WHERE id = ?", (rule_id,)).fetchone()
+            if current and abs(current["confidence"] - pre["confidence"]) > 0.001:
+                changed_rules.append(rule_id)
+        v.check(
+            len(changed_rules) == 0,
+            f"L5: no rules changed confidence except chase (unexpected changes: {changed_rules})",
+        )
+    else:
+        v.warn("L5: skipped (megastore returns email not found)")
+
+    v.print_report()
+    return v
+
+
+def verify_learning_step2(
+    db: Database,
+    run_id: str,
+    *,
+    l3_email_id: str | None,
+) -> VerificationResult:
+    """Verify L6 (dedup) and L9 (deactivated rule) after the second learning run."""
+    v = VerificationResult()
+    print(f"\n=== Verifying Learning Step 2 ({run_id[:8]}) — L6, L9 ===")
+
+    # --- L6: Dedup — same correction not double-counted ---
+    if l3_email_id:
+        manual_rows = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? AND classification_source = 'manual'",
+            (run_id, l3_email_id),
+        ).fetchall()
+        v.check(
+            len(manual_rows) == 0,
+            f"L6: no new manual rows for chase in second run (got {len(manual_rows)})",
+        )
+
+        # Chase rule confidence should still be 0.80 (no double penalty)
+        chase_rule = db.execute(
+            "SELECT * FROM rules WHERE condition_value = 'noreply@chase.com' AND rule_type = 'exact_sender'"
+        ).fetchone()
+        if chase_rule:
+            v.check(
+                abs(chase_rule["confidence"] - 0.80) < 0.01,
+                f"L6: chase rule confidence still 0.80 (got {chase_rule['confidence']:.2f}, no double penalty)",
+            )
+    else:
+        v.warn("L6: skipped (chase email not available)")
+
+    # --- L9: Deactivated rule stops matching ---
+    # Chase emails in this run should be classified by LLM, not by rule
+    chase_rows = db.execute(
+        "SELECT * FROM audit_log WHERE run_id = ? AND from_address = 'noreply@chase.com'",
         (run_id,),
     ).fetchall()
-    v.check(len(manual_rows) > 0, f"Manual sort detected (found {len(manual_rows)} manual rows)")
-
-    # Check that a rule was penalized
-    # Look for rules with confidence < their original value
-    penalized = db.execute(
-        "SELECT * FROM rules WHERE confidence < 0.95 AND source = 'auto'"
-    ).fetchall()
-    if penalized:
-        for r in penalized:
-            v.check(True, f"Rule {r['id']} ({r['condition_value']}) penalized to {r['confidence']:.2f}")
+    if chase_rows:
+        for r in chase_rows:
+            v.check(
+                r["classification_source"] != "rule",
+                f"L9: chase email classified by {r['classification_source']} (not rule — rule is deactivated)",
+            )
+            v.check(
+                r["rule_id"] is None,
+                f"L9: chase email has no rule_id (got {r['rule_id']})",
+            )
     else:
-        v.warn("No rules appear to have been penalized (may be expected if correction was for LLM-classified email)")
+        v.warn("L9: no chase emails found in second run (may all be in other folders now)")
 
     v.print_report()
     return v
