@@ -125,9 +125,44 @@ async def analyze(request: Request, days: int = 30):
         "  AND a1.created_at >= datetime('now', ?)", (window,)
     ).fetchall()
 
+    # Rule confidence distribution
+    rule_threshold = cfg.classification.thresholds.rule_move
+    rule_buckets = [
+        ("< 0.70", "r.confidence < 0.70"),
+        ("0.70–0.79", "r.confidence >= 0.70 AND r.confidence < 0.80"),
+        ("0.80–0.84", "r.confidence >= 0.80 AND r.confidence < 0.85"),
+        ("0.85–0.89", "r.confidence >= 0.85 AND r.confidence < 0.90"),
+        ("0.90–0.94", "r.confidence >= 0.90 AND r.confidence < 0.95"),
+        ("0.95–1.00", "r.confidence >= 0.95"),
+    ]
+    rule_conf_dist = []
+    for label, condition in rule_buckets:
+        row = db.execute(
+            f"SELECT "
+            f"SUM(CASE WHEN r.active = 1 THEN 1 ELSE 0 END) as active, "
+            f"SUM(CASE WHEN r.active = 0 THEN 1 ELSE 0 END) as inactive "
+            f"FROM rules r WHERE {condition}"
+        ).fetchone()
+        a = row["active"] or 0
+        i = row["inactive"] or 0
+        if a > 0 or i > 0:
+            is_threshold_bucket = label == "0.85–0.89" or label == "0.80–0.84"
+            below_threshold = "< 0.70" in label or "0.70" in label or "0.80–0.84" in label
+            rule_conf_dist.append({
+                "label": label,
+                "active": a,
+                "inactive": i,
+                "total": a + i,
+                "is_threshold": is_threshold_bucket,
+                "below_threshold": below_threshold,
+            })
+
+    total_rules = db.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+    active_rules = db.execute("SELECT COUNT(*) FROM rules WHERE active = 1").fetchone()[0]
+    inactive_rules = total_rules - active_rules
+
     # Recommendations
     llm_threshold = cfg.classification.thresholds.llm_move
-    rule_threshold = cfg.classification.thresholds.rule_move
     llm_rec = {"status": "ok", "current": llm_threshold, "message": "insufficient data to suggest changes"}
     if len(same_folder) > 3:
         suggested = round(avg_conf_same - 0.05, 2)
@@ -155,6 +190,11 @@ async def analyze(request: Request, days: int = 30):
         "same_folder": same_folder,
         "avg_conf_same": round(avg_conf_same, 2),
         "rule_corrections": rule_corrections,
+        "rule_conf_dist": rule_conf_dist,
+        "total_rules": total_rules,
+        "active_rules": active_rules,
+        "inactive_rules": inactive_rules,
+        "rule_threshold": rule_threshold,
         "llm_rec": llm_rec,
         "rule_rec": rule_rec,
         "nav_active": "analyze",
