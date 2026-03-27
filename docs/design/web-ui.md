@@ -262,6 +262,70 @@ is accessible on port 8080 (configurable), the health check on port 8025.
   classification source (rule/llm/thread/manual)
 - **Empty states**: Friendly message + suggested action when no data
 
+### Filter Bar Patterns
+
+All filterable pages (audit log, rules) follow these conventions:
+
+- **Consistent input height**: All selects, text inputs, and buttons use
+  `h-[34px]` for visual alignment.
+- **Bookmarkable filters**: All filter values are query params in the URL
+  (e.g., `/rules?filter=all&search=chase&conf_min=0.85`).
+- **Auto-search on typing**: Text inputs submit the form after a 500ms
+  debounce (`setTimeout`). No need to press Filter.
+- **Select auto-submit**: Dropdowns submit immediately on `change` event.
+- **Focus restoration**: Before submit, the focused input's `name` is saved
+  to `sessionStorage`. After page reload, focus is restored to that input
+  with cursor at end of text (`setSelectionRange`).
+- **Filter bar layout**: Use `flex gap-2 items-end flex-wrap` on the form.
+  Give each input a fixed or min width (`w-32`, `w-40`, `w-20`) so they
+  don't stretch unevenly. Use `flex-1 min-w-[120px]` for the primary
+  search field so it fills remaining space.
+- **Filter + Clear buttons**: Filter and ✕ sit in a `flex gap-1` container
+  with no fixed width (shrink-wraps to content). Both buttons are **fixed
+  width** (no `flex-1`). Filter: `px-3 h-[34px] bg-blue-600 text-white
+  hover:bg-blue-700`. ✕: `px-2 h-[34px]` bordered gray. ✕ uses Tailwind
+  `invisible` class when no filters are active (preserves layout). ✕ links
+  to the page with filters cleared but tab state preserved. All filter
+  buttons across the app use **blue** (`bg-blue-600`).
+- **Results count**: When filters are active, show "Showing N rule(s)
+  matching filters" above the table.
+
+```javascript
+// Standard filter bar script pattern
+(function() {
+  const form = document.querySelector('form[action="/PAGE"]');
+  let timer;
+  function debounceSubmit(inputName) {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      sessionStorage.setItem('PAGE_focus', inputName);
+      form.submit();
+    }, 500);
+  }
+  form.querySelectorAll('input[type="text"]').forEach(el => {
+    el.addEventListener('input', () => debounceSubmit(el.name));
+  });
+  form.querySelectorAll('select').forEach(el => {
+    el.addEventListener('change', () => {
+      sessionStorage.setItem('PAGE_focus', el.name);
+      form.submit();
+    });
+  });
+  const savedFocus = sessionStorage.getItem('PAGE_focus');
+  if (savedFocus) {
+    sessionStorage.removeItem('PAGE_focus');
+    const el = form.querySelector('[name="' + savedFocus + '"]');
+    if (el) {
+      el.focus();
+      if (el.type === 'text') {
+        const len = el.value.length;
+        el.setSelectionRange(len, len);
+      }
+    }
+  }
+})();
+```
+
 ---
 
 ## Implementation Checklist

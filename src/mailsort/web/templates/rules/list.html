@@ -73,51 +73,92 @@
 
 <!-- Search / Filter Bar -->
 <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-  <form method="get" action="/rules" class="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+  <form method="get" action="/rules" class="flex gap-2 items-end flex-wrap">
     <input type="hidden" name="filter" value="{{ filter }}">
-    <div>
+    <div class="w-32">
       <label class="block text-xs font-medium text-gray-500 mb-1">Type</label>
-      <select name="type" class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm">
+      <select name="type" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All types</option>
         {% for t in ['exact_sender', 'sender_domain', 'list_id', 'subject_regex'] %}
         <option value="{{ t }}" {{ 'selected' if filters.type == t }}>{{ t }}</option>
         {% endfor %}
       </select>
     </div>
-    <div>
-      <label class="block text-xs font-medium text-gray-500 mb-1">Search value</label>
+    <div class="flex-1 min-w-[120px]">
+      <label class="block text-xs font-medium text-gray-500 mb-1">Value</label>
       <input name="search" type="text" value="{{ filters.search }}" placeholder="chase.com"
-             class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-mono">
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
-    <div>
+    <div class="w-40">
       <label class="block text-xs font-medium text-gray-500 mb-1">Folder</label>
-      <select name="folder" class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm">
+      <select name="folder" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All folders</option>
         {% for f in folders %}
         <option value="{{ f }}" {{ 'selected' if filters.folder == f }}>{{ f | replace("INBOX/", "") }}</option>
         {% endfor %}
       </select>
     </div>
-    <div>
+    <div class="w-20">
       <label class="block text-xs font-medium text-gray-500 mb-1">Conf. min</label>
       <input name="conf_min" type="text" value="{{ filters.conf_min }}" placeholder="0.85"
-             class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-mono">
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
-    <div>
+    <div class="w-20">
       <label class="block text-xs font-medium text-gray-500 mb-1">Conf. max</label>
       <input name="conf_max" type="text" value="{{ filters.conf_max }}" placeholder="0.95"
-             class="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm font-mono">
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
-    <div class="flex gap-2">
-      <button type="submit" class="px-4 py-1.5 text-sm font-medium text-white bg-gray-800 rounded-md hover:bg-gray-900">
+    <div class="flex gap-1">
+      <button type="submit" class="px-3 h-[34px] text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
         Filter
       </button>
-      {% if filters.type or filters.search or filters.folder or filters.conf_min or filters.conf_max %}
-      <a href="/rules?filter={{ filter }}" class="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">Clear</a>
-      {% endif %}
+      <a href="/rules?filter={{ filter }}"
+         class="px-2 h-[34px] inline-flex items-center text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 {{ '' if filters.type or filters.search or filters.folder or filters.conf_min or filters.conf_max else 'invisible' }}">
+        ✕
+      </a>
     </div>
   </form>
 </div>
+
+<script>
+(function() {
+  const form = document.querySelector('form[action="/rules"]');
+  let timer;
+
+  function debounceSubmit(inputName) {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      sessionStorage.setItem('rules_focus', inputName);
+      form.submit();
+    }, 500);
+  }
+
+  form.querySelectorAll('input[type="text"]').forEach(el => {
+    el.addEventListener('input', () => debounceSubmit(el.name));
+  });
+
+  form.querySelectorAll('select').forEach(el => {
+    el.addEventListener('change', () => {
+      sessionStorage.setItem('rules_focus', el.name);
+      form.submit();
+    });
+  });
+
+  // Restore focus after page reload
+  const savedFocus = sessionStorage.getItem('rules_focus');
+  if (savedFocus) {
+    sessionStorage.removeItem('rules_focus');
+    const el = form.querySelector('[name="' + savedFocus + '"]');
+    if (el) {
+      el.focus();
+      if (el.type === 'text') {
+        const len = el.value.length;
+        el.setSelectionRange(len, len);
+      }
+    }
+  }
+})();
+</script>
 
 {% if filters.type or filters.search or filters.folder or filters.conf_min or filters.conf_max %}
 <p class="text-sm text-gray-500 mb-3">Showing {{ rules | length }} rule(s) matching filters</p>

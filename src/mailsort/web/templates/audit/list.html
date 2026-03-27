@@ -12,7 +12,7 @@
   <div class="grid grid-cols-3 md:grid-cols-9 gap-2">
     <div class="col-span-1">
       <label class="block text-xs font-medium text-gray-500 mb-1">Source</label>
-      <select name="source" class="w-full rounded-md border border-gray-300 px-1.5 py-1.5 text-sm">
+      <select name="source" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All</option>
         <option value="rule" {{ 'selected' if filters.source == 'rule' }}>Rule</option>
         <option value="llm" {{ 'selected' if filters.source == 'llm' }}>LLM</option>
@@ -22,7 +22,7 @@
     </div>
     <div class="col-span-1">
       <label class="block text-xs font-medium text-gray-500 mb-1">Moved</label>
-      <select name="moved" class="w-full rounded-md border border-gray-300 px-1.5 py-1.5 text-sm">
+      <select name="moved" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All</option>
         <option value="1" {{ 'selected' if filters.moved == '1' }}>Yes</option>
         <option value="0" {{ 'selected' if filters.moved == '0' }}>No</option>
@@ -30,7 +30,7 @@
     </div>
     <div class="col-span-1">
       <label class="block text-xs font-medium text-gray-500 mb-1">Folder</label>
-      <select name="folder" class="w-full rounded-md border border-gray-300 px-1.5 py-1.5 text-sm">
+      <select name="folder" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All</option>
         {% for f in folders %}
         <option value="{{ f }}" {{ 'selected' if filters.folder == f }}>{{ f }}</option>
@@ -40,21 +40,21 @@
     <div class="col-span-1">
       <label class="block text-xs font-medium text-gray-500 mb-1">Sender</label>
       <input name="sender" type="text" value="{{ filters.sender }}" placeholder="email"
-             class="w-full rounded-md border border-gray-300 px-1.5 py-1.5 text-sm font-mono">
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
     <div class="col-span-2">
       <label class="block text-xs font-medium text-gray-500 mb-1">Subject</label>
       <input name="subject" type="text" value="{{ filters.subject }}" placeholder="search subject"
-             class="w-full rounded-md border border-gray-300 px-1.5 py-1.5 text-sm">
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
     </div>
     <div class="col-span-1">
       <label class="block text-xs font-medium text-gray-500 mb-1">Run</label>
       <input name="run_id" type="text" value="{{ filters.run_id }}" placeholder="run ID"
-             class="w-full rounded-md border border-gray-300 px-1.5 py-1.5 text-sm font-mono">
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
     <div class="col-span-1">
       <label class="block text-xs font-medium text-gray-500 mb-1">Days</label>
-      <select name="days" class="w-full rounded-md border border-gray-300 px-1.5 py-1.5 text-sm">
+      <select name="days" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="7" {{ 'selected' if filters.days == 7 }}>7d</option>
         <option value="30" {{ 'selected' if filters.days == 30 }}>30d</option>
         <option value="90" {{ 'selected' if filters.days == 90 }}>90d</option>
@@ -62,10 +62,11 @@
       </select>
     </div>
     <div class="col-span-1 flex items-end gap-1">
-      <button type="submit" class="flex-1 px-2 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
+      <button type="submit" class="px-3 h-[34px] text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
         Filter
       </button>
-      <a href="/audit" class="px-2 py-1.5 text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
+      <a href="/audit"
+         class="px-2 h-[34px] inline-flex items-center text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 {{ '' if filters.source or filters.moved or filters.folder or filters.sender or filters.subject or filters.run_id or filters.days != 30 else 'invisible' }}">
         ✕
       </a>
     </div>
@@ -89,15 +90,24 @@
     el.addEventListener('input', () => debounceSubmit(el.name));
   });
 
+  form.querySelectorAll('select').forEach(el => {
+    el.addEventListener('change', () => {
+      sessionStorage.setItem('audit_focus', el.name);
+      form.submit();
+    });
+  });
+
   // Restore focus after page reload
   const savedFocus = sessionStorage.getItem('audit_focus');
   if (savedFocus) {
     sessionStorage.removeItem('audit_focus');
-    const el = form.querySelector('input[name="' + savedFocus + '"]');
+    const el = form.querySelector('[name="' + savedFocus + '"]');
     if (el) {
       el.focus();
-      const len = el.value.length;
-      el.setSelectionRange(len, len);
+      if (el.type === 'text') {
+        const len = el.value.length;
+        el.setSelectionRange(len, len);
+      }
     }
   }
 })();
