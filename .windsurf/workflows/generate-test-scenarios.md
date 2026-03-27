@@ -77,20 +77,49 @@ For any threshold-based behavior:
 
 ## 6. Present results
 
-Output a table of proposed scenarios with:
+Format the output to match the existing system test plan style in `docs/planning/system-test-plan.md`:
 
-| ID | Category | Scenario | Setup (what JMAP operations or state changes) | Expected behavior | Verification checks | Testable in system test? | Notes |
+### Scenario tables
 
-Group by behavioral category. Flag:
+Group all scenarios by **behavioral category** (e.g., "Category 1: Skipped Sorts", "Confidence Penalty & Feedback Loop"). Each category gets:
+- A short description of the behavior and which code implements it
+- A table with these columns:
+
+| ID | Scenario | Setup | Expected Behavior | Tested By |
+
+Where **Tested By** is one of:
+- `System test: <brief description of JMAP operation + run>` — for scenarios tested in the system test
+- `*Deferred to unit test* (<test function name>) — <reason>` — for scenarios not practical in a system test
+
+List scenarios in **sequential order** (L1, L2, L3...) within each category. Number them sequentially across all categories (not per-category).
+
+### Execution sequence
+
+After the scenario tables, provide a numbered **test execution sequence** showing the concrete steps:
+1. What JMAP moves to make (and in what order)
+2. When to run `mailsort run`
+3. When to verify
+
+### Verification checklist
+
+End with a **verification checklist** — one checkbox per verifiable assertion, referencing the scenario ID:
+```
+- [ ] **L1**: manual audit row for sender → folder
+- [ ] **L3**: rule confidence = X.XX (was Y.YY)
+```
+
+### Flags
+
+Call out separately (above or below the tables):
 - **Gaps**: scenarios not covered by existing tests
 - **Contradictions**: where docs say one thing but code does another
 - **Design tensions**: where the behavior may be correct per code but questionable per intent
-- **Impractical**: scenarios better suited to unit tests (with explanation)
 
 ## 7. Recommend a practical test set
 
-From the full table, recommend which scenarios to implement in the system test, considering:
-- High-value scenarios that exercise real JMAP behavior
+From the full scenario list, recommend which to implement in the system test:
+- High-value scenarios that exercise real I/O behavior
 - Edge cases that unit tests can't faithfully reproduce
-- A reasonable number of JMAP operations (each move is a real API call)
+- A reasonable number of operations (each move is a real API call)
 - Scenarios that can share setup (e.g., one correction tests both detection AND penalty)
+- Group moves that can be done before a single run to minimize the number of runs needed
