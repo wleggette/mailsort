@@ -142,15 +142,36 @@
       {% for b in rule_conf_dist %}
       <tr class="border-b border-gray-100 {{ 'bg-amber-50' if b.below_threshold else 'bg-blue-50' if b.is_threshold else '' }}">
         <td class="py-2 px-3 font-mono text-gray-700">
-          {{ b.label }}
+          {% set conf_ranges = {
+            '< 0.70': {'min': '0', 'max': '0.70'},
+            '0.70–0.79': {'min': '0.70', 'max': '0.80'},
+            '0.80–0.84': {'min': '0.80', 'max': '0.85'},
+            '0.85–0.89': {'min': '0.85', 'max': '0.90'},
+            '0.90–0.94': {'min': '0.90', 'max': '0.95'},
+            '0.95–1.00': {'min': '0.95', 'max': ''},
+          } %}
+          <a href="/rules?filter=all&conf_min={{ conf_ranges[b.label].min }}&conf_max={{ conf_ranges[b.label].max }}"
+             class="hover:text-blue-600 hover:underline">
+            {{ b.label }}
+          </a>
           {% if b.is_threshold and not b.below_threshold %}
           <span class="ml-2 text-xs text-blue-600 font-sans">← threshold</span>
           {% elif b.below_threshold %}
           <span class="ml-2 text-xs text-amber-600 font-sans">below threshold</span>
           {% endif %}
         </td>
-        <td class="py-2 px-3 text-right text-green-600 font-medium">{{ b.active }}</td>
-        <td class="py-2 px-3 text-right text-gray-400">{{ b.inactive }}</td>
+        <td class="py-2 px-3 text-right">
+          <a href="/rules?filter=active&conf_min={{ conf_ranges[b.label].min }}&conf_max={{ conf_ranges[b.label].max }}"
+             class="text-green-600 font-medium hover:underline">{{ b.active }}</a>
+        </td>
+        <td class="py-2 px-3 text-right">
+          {% if b.inactive > 0 %}
+          <a href="/rules?filter=inactive&conf_min={{ conf_ranges[b.label].min }}&conf_max={{ conf_ranges[b.label].max }}"
+             class="text-gray-400 hover:underline">{{ b.inactive }}</a>
+          {% else %}
+          <span class="text-gray-400">{{ b.inactive }}</span>
+          {% endif %}
+        </td>
         <td class="py-2 px-3 text-right text-gray-700 font-medium">{{ b.total }}</td>
         <td class="py-2 px-3">
           {% if total_rules > 0 %}

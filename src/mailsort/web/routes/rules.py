@@ -9,30 +9,72 @@ router = APIRouter(prefix="/rules")
 
 
 @router.get("/")
-async def rules_list(request: Request, filter: str = "active"):
+async def rules_list(
+    request: Request,
+    filter: str = "active",
+    type: str = "",
+    search: str = "",
+    folder: str = "",
+    conf_min: str = "",
+    conf_max: str = "",
+):
     db = request.state.db
     templates = request.app.state.templates
 
-    if filter == "all":
-        where = ""
-    elif filter == "inactive":
-        where = "WHERE active = 0"
-    elif filter == "suggested":
-        where = "WHERE active = 0 AND source = 'llm_suggested'"
-    else:
-        where = "WHERE active = 1"
+    conditions: list[str] = []
+    params: list = []
 
+    # Tab filter
+    if filter == "inactive":
+        conditions.append("active = 0")
+    elif filter == "suggested":
+        conditions.append("active = 0 AND source = 'llm_suggested'")
+    elif filter == "all":
+        pass  # no active filter
+    else:
+        conditions.append("active = 1")
+
+    # Search filters
+    if type:
+        conditions.append("rule_type = ?")
+        params.append(type)
+    if search:
+        conditions.append("condition_value LIKE ?")
+        params.append(f"%{search}%")
+    if folder:
+        conditions.append("target_folder_path LIKE ?")
+        params.append(f"%{folder}%")
+    if conf_min:
+        try:
+            conditions.append("confidence >= ?")
+            params.append(float(conf_min))
+        except ValueError:
+            pass
+    if conf_max:
+        try:
+            conditions.append("confidence < ?")
+            params.append(float(conf_max))
+        except ValueError:
+            pass
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     rules = db.execute(
-        f"SELECT * FROM rules {where} ORDER BY rule_type, condition_value"
+        f"SELECT * FROM rules {where} ORDER BY rule_type, condition_value",
+        tuple(params),
     ).fetchall()
 
-    # Counts for tabs
+    # Counts for tabs (unaffected by search filters)
     count_active = db.execute("SELECT COUNT(*) FROM rules WHERE active = 1").fetchone()[0]
     count_inactive = db.execute("SELECT COUNT(*) FROM rules WHERE active = 0").fetchone()[0]
     count_suggested = db.execute(
         "SELECT COUNT(*) FROM rules WHERE active = 0 AND source = 'llm_suggested'"
     ).fetchone()[0]
     count_all = count_active + count_inactive
+
+    # Distinct folders for filter dropdown
+    folders = db.execute(
+        "SELECT DISTINCT target_folder_path FROM rules ORDER BY target_folder_path"
+    ).fetchall()
 
     return templates.TemplateResponse("rules/list.html", {
         "request": request,
@@ -44,6 +86,14 @@ async def rules_list(request: Request, filter: str = "active"):
             "suggested": count_suggested,
             "all": count_all,
         },
+        "filters": {
+            "type": type,
+            "search": search,
+            "folder": folder,
+            "conf_min": conf_min,
+            "conf_max": conf_max,
+        },
+        "folders": [r["target_folder_path"] for r in folders],
         "nav_active": "rules",
     })
 
