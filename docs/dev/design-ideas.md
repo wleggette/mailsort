@@ -5,6 +5,152 @@ without re-investigating from scratch.
 
 ---
 
+## Correction Penalty Tuning — One-Strike Deactivation Problem
+
+**Status:** Needs investigation (2026-03-26)
+
+### Problem
+
+With current thresholds, **every rule is deactivated after a single user
+correction**. The `correction_penalty` (0.15) is large enough relative to
+the gap between any rule's starting confidence and the `rule_move` threshold
+(0.85) that no auto-created rule survives even one correction:
+
+| Rule type | Max confidence | After 1 correction | Deactivated? |
+|-----------|---------------|--------------------| -------------|
+| list_id | 0.95 | 0.80 | Yes (< 0.85) |
+| exact_sender (5 emails) | 0.95 | 0.80 | Yes |
+| exact_sender (3 emails) | 0.89 | 0.74 | Yes |
+| sender_domain (8 emails) | 0.90 | 0.75 | Yes |
+| sender_domain (5 emails) | 0.85 | 0.70 | Yes |
+
+A rule would need `confidence ≥ 1.0` to survive one correction. No
+auto-created rule reaches 1.0.
+
+### Secondary problem: recovery in the new direction is nearly impossible
+
+After deactivation, the old evidence (e.g., 5 bootstrap rows → Banks) poisons
+the coherence calculation for the corrected direction (e.g., Stores). Example:
+
+- chase.com: 6 audit_log rows → Banks, 1 manual correction → Stores
+- `maybe_create_rule(target_folder="Stores")`: coherence = 1/7 = 14% → no rule
+- Would need **many** manual sorts to Stores before coherence reaches 80%
+
+Meanwhile, the old direction (Banks) has excellent coherence (6/7 = 86%) and
+would be instantly recreated if any manual sort to Banks is detected — even
+though the user just told the system that Banks was wrong for this email.
+
+### Options to consider
+
+**Option A: Reduce correction_penalty (e.g., 0.05)**
+- Pro: Rules survive 1-2 corrections, gradual degradation
+- Pro: Matches the design doc's stated intent ("accumulated negative signal")
+- Con: Bad rules persist longer — user sees the same misroute multiple times
+  before the rule deactivates
+- Deactivation after: 2-3 corrections (depending on starting confidence)
+
+**Option B: Raise starting confidence for high-evidence rules**
+- Pro: Rules backed by 10+ emails are harder to kill than rules from 3 emails
+- Pro: Proportional — more evidence = more trust
+- Con: More complex confidence formula
+- Example: `exact_sender` with 10 emails → confidence 1.10 (capped at 1.0),
+  survives 1 correction (0.85 = threshold)
+
+**Option C: Scale penalty by evidence count**
+- Pro: A correction against a rule with 50 evidence emails is a weaker signal
+  than against one with 3 emails
+- Pro: Natural dampening — well-established rules are resilient
+- Con: More complex, harder to reason about
+- Example: `penalty = base_penalty / log2(evidence_count + 1)`
+
+**Option D: Use a correction ratio instead of absolute penalty**
+- Pro: Deactivation requires a *pattern* of corrections, not a single event
+- Pro: A single accidental drag-and-drop doesn't kill a good rule
+- Con: Needs a new tracking mechanism (correction count per rule)
+- Example: Deactivate when `corrections / (corrections + hits) > 0.2`
+
+**Option E: Keep one-strike but fix recovery**
+- Pro: Aggressive correction is "safe by default" — the stated goal
+- Pro: Simpler than changing the penalty math
+- Con: Recovery still depends on manual sorts
+- Fix: When a correction is detected, evaluate rule creation for the OLD
+  folder too (not just the correction destination). If the old evidence
+  still has high coherence, leave the rule active but flag it for review
+  instead of deactivating.
+
+### Research questions — analyze your real inbox before deciding
+
+Run these against your production account (after deploying) to understand
+what correction patterns actually look like:
+
+1. **How often do you correct mailsort?** If corrections are rare (< 1% of
+   moves), the one-strike policy may be fine — you'd rarely hit it. If
+   corrections are frequent (> 5%), one-strike kills too many rules.
+
+   ```sql
+   -- Correction rate after mailsort is running on real account
+   SELECT
+     COUNT(*) FILTER (WHERE classification_source = 'manual' AND
+       email_id IN (SELECT email_id FROM audit_log WHERE moved = 1
+                    AND classification_source != 'manual')) as corrections,
+     COUNT(*) FILTER (WHERE moved = 1 AND classification_source != 'manual') as total_moves,
+     ROUND(100.0 * corrections / total_moves, 1) as correction_pct
+   FROM audit_log WHERE created_at >= datetime('now', '-30 days');
+   ```
+
+2. **Are corrections one-offs or patterns?** If the same rule gets corrected
+   multiple times, it's genuinely wrong. If corrections are scattered across
+   many rules with 1 correction each, they may be accidents.
+
+   ```sql
+   -- Corrections per rule
+   SELECT r.rule_type, r.condition_value, COUNT(*) as corrections
+   FROM audit_log a
+   JOIN rules r ON r.id = a.rule_id
+   WHERE a.classification_source = 'manual'
+     AND a.email_id IN (SELECT email_id FROM audit_log WHERE moved = 1 AND rule_id IS NOT NULL)
+   GROUP BY r.id ORDER BY corrections DESC;
+   ```
+
+3. **How many senders route to multiple folders?** This is the "Amazon
+   problem" — senders that legitimately split across folders. If many of
+   your senders do this, aggressive correction makes sense. If most senders
+   are coherent, the penalty is too harsh.
+
+   ```sql
+   -- Senders that route to multiple folders
+   SELECT from_address, COUNT(DISTINCT target_folder) as folders, COUNT(*) as emails
+   FROM audit_log WHERE moved = 1
+   GROUP BY from_address HAVING folders > 1
+   ORDER BY emails DESC LIMIT 20;
+   ```
+
+4. **What's the typical evidence count behind a rule when it gets corrected?**
+   If rules with 20+ evidence emails get corrected, the correction is probably
+   an accident. If rules with 3 evidence emails get corrected, they were
+   probably wrong.
+
+   ```sql
+   -- Evidence count for corrected rules
+   SELECT r.condition_value, r.rule_type,
+     (SELECT COUNT(*) FROM audit_log WHERE from_address = r.condition_value
+      AND moved = 1 AND classification_source != 'manual') as evidence_count
+   FROM rules r WHERE r.confidence < 0.85
+   ORDER BY evidence_count DESC;
+   ```
+
+5. **Do inbox returns happen?** If users frequently move emails back to inbox
+   (re-read, respond later), the "ignore inbox returns" design is important.
+   If inbox returns are rare, it doesn't matter.
+
+### Script idea
+
+Consider building an analysis script (like `scripts/analyze_list_unsubscribe.py`)
+that runs against your real account after a few weeks of operation and
+calculates the metrics above. The answers will determine which option is right.
+
+---
+
 ## Web UI Threshold Analysis Page (`/analyze`)
 
 **Status:** Designed, not implemented (2026-03-21)
