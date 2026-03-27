@@ -113,6 +113,7 @@ logging_config:
 | `min_age_minutes` | `240` | Minimum email age before moving (4 hours) |
 | `max_batch_size` | `100` | Max emails to process per run |
 | `health_check_port` | `8025` | Port for the `/health` endpoint |
+| `web_port` | `8080` | Port for the embedded web UI (0 to disable) |
 | `contacts_refresh_hours` | `24` | Hours between Fastmail contact cache refreshes |
 | `folder_scan_interval_hours` | `24` | Hours between Category 4 daily folder scans |
 

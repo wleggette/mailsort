@@ -225,22 +225,26 @@ src/mailsort/
 
 ### Integration with Existing System
 
-- The web server runs in the **same process** as the scheduler (or as a
-  separate `mailsort web` CLI command)
-- Reads the **same SQLite database** — no API layer between web and data
+- When running `mailsort start`, the web server is **embedded in the same
+  process** as the scheduler — started in a background daemon thread using
+  Uvicorn, the same pattern as the health check server.
+- `mailsort web` is still available as a **standalone command** for development
+  (runs the web UI without the scheduler).
+- Reads the **same SQLite database** — no API layer between web and data.
 - Write operations (rule toggle, contact refresh) use the existing
-  `RuleEngine` and `refresh_contacts` functions
-- The scheduler continues running independently; the web UI is read-mostly
+  `RuleEngine` and `refresh_contacts` functions.
+- The scheduler continues running independently; the web UI is read-mostly.
+- Configurable via `scheduler.web_port` (default 8080, set to 0 to disable).
 
-### CLI Command
+### CLI Commands
 
 ```
-mailsort web [--port 8080]
+mailsort start              # Scheduler + health check + web UI (all-in-one)
+mailsort web [--port 8080]  # Standalone web UI (for development)
 ```
 
-Starts the web UI server. Can run alongside `mailsort start` or standalone.
-In Docker, could be a separate service or run in the same container on a
-different port from the health check.
+In Docker, `mailsort start` provides everything in one container. The web UI
+is accessible on port 8080 (configurable), the health check on port 8025.
 
 ---
 

@@ -20,6 +20,7 @@ class SchedulerConfig(BaseModel):
     min_age_minutes: int = 240
     max_batch_size: int = 100
     health_check_port: int = 8025
+    web_port: int = 8080              # Port for embedded web UI (0 = disabled)
     contacts_refresh_hours: int = 24
     folder_scan_interval_hours: int = 24
 

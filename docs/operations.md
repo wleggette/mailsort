@@ -24,8 +24,16 @@ RUN pip install --no-cache-dir .
 COPY config.yaml ./config.yaml
 RUN mkdir -p /app/data
 
-CMD ["python", "-m", "mailsort.main"]
+EXPOSE 8025 8080
+HEALTHCHECK --interval=60s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8025/health')" || exit 1
+
+CMD ["mailsort", "start"]
 ```
+
+The `start` command runs the scheduler, health check (port 8025), and web UI
+(port 8080) in a single process. See `docs/dev/decisions.md` "Embed web UI in
+scheduler process" for rationale.
 
 ### docker-compose.yml
 
@@ -38,6 +46,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro
+    ports:
+      - "8080:8080"
     environment:
       - FASTMAIL_API_TOKEN=${FASTMAIL_API_TOKEN}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}

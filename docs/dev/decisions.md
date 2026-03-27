@@ -6,6 +6,43 @@ chronological — newest entries first.
 
 ---
 
+## 2026-03-26 — Embed web UI in scheduler process
+
+**Context:** `mailsort start` runs the scheduler + health check in a single
+process. `mailsort web` runs the web UI as a separate process. The PRD's
+"set-and-forget Docker container" user story requires both to be available
+from a single `docker compose up`. Currently this needs either two containers,
+a process manager like supervisord, or a shell script that backgrounds one.
+
+**Options considered:**
+1. **Two containers** sharing a SQLite volume — clean separation, but complex
+   for a single-user tool (compose file, shared DB locking concerns, two
+   images to manage).
+2. **Process manager (supervisord)** — reliable but adds a dependency and
+   config file for something simple.
+3. **Background thread** — start Uvicorn in a daemon thread alongside the
+   scheduler, same pattern as the existing `start_health_server()` which
+   runs an HTTP server in a background thread.
+
+**Decision:** Option 3 — embed the web UI in the scheduler process as a
+background daemon thread.
+
+**Rationale:**
+- The health check server already demonstrates this pattern works reliably.
+- Single process = single container = simple deployment.
+- SQLite is accessed from both the scheduler thread and the web thread, but
+  SQLite handles concurrent readers fine (WAL mode), and the web UI is
+  read-mostly.
+- `mailsort web` is preserved as a standalone command for development (run
+  the UI without the scheduler).
+- Configurable via `scheduler.web_port` (default 8080, set to 0 to disable).
+
+**Affected code:** `scheduler.py` (add `_start_web_server`), `config.py`
+(add `web_port`), `Dockerfile` (expose 8080), `docker-compose.yml` (port
+mapping).
+
+---
+
 ## 2026-03-25 — Auto-detect test account email from JMAP session
 
 **Context:** The system test scripts (`run_system_test.py`, `load_fixtures.py`)

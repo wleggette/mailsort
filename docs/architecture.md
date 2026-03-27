@@ -132,8 +132,8 @@ show "calls / depends on". Modules are grouped by layer.
 │  │  classify+move  │ │  evidence,     │ │  Triggers orchestrator  │  │
 │  │  pass. Calls    │ │  rules, desc,  │ │  every N minutes.       │  │
 │  │  learner, then  │ │  contacts.     │ │  max_instances=1        │  │
-│  │  pipeline, then │ │  Uses learner  │ │                         │  │
-│  │  mover.         │ │  for rule eval.│ │                         │  │
+│  │  pipeline, then │ │  Uses learner  │ │  + health check :8025   │  │
+│  │  mover.         │ │  for rule eval.│ │  + web UI :8080         │  │
 │  └────────────────┘ └────────────────┘ └─────────────────────────┘  │
 │                                                                     │
 │  ┌────────────────┐ ┌──────────────────────────────────────────┐    │

@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 import signal
 import sys
-from typing import Any
+import threading
+from typing import Any, Optional
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -54,6 +55,9 @@ def start_scheduler(cfg: Config) -> None:
     # Start health check server in background thread
     health_server = start_health_server(cfg.db_path, port=cfg.scheduler.health_check_port)
 
+    # Start web UI in background thread (if configured)
+    web_server = _start_web_server(cfg)
+
     logger.info(
         "Scheduler started: running every %d minutes",
         cfg.scheduler.interval_minutes,
@@ -70,6 +74,8 @@ def start_scheduler(cfg: Config) -> None:
     except (KeyboardInterrupt, SystemExit):
         logger.info("Scheduler stopped")
     finally:
+        if web_server:
+            web_server.should_exit = True
         if health_server:
             health_server.shutdown()
 
@@ -101,3 +107,48 @@ def _scheduled_run(cfg: Config) -> None:
             logger.exception("Scheduled classification pass failed")
         finally:
             jmap.close()
+
+
+def _start_web_server(cfg: Config) -> Optional[Any]:
+    """Start the web UI in a background daemon thread using Uvicorn.
+
+    Returns the uvicorn.Server instance (for shutdown), or None if disabled
+    or if startup fails.
+    """
+    port = cfg.scheduler.web_port
+    if port == 0:
+        logger.info("Web UI disabled (web_port=0)")
+        return None
+
+    try:
+        import asyncio
+        import uvicorn
+        from mailsort.web.app import create_app
+
+        app = create_app(cfg)
+        uv_config = uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="warning",
+        )
+        server = uvicorn.Server(uv_config)
+
+        def _run() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(server.serve())
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        logger.info("Web UI listening on port %d", port)
+        return server
+    except ImportError:
+        logger.warning("Web UI dependencies not installed (uvicorn/fastapi), skipping")
+        return None
+    except OSError as e:
+        logger.warning("Could not start web UI on port %d: %s", port, e)
+        return None
+    except Exception:
+        logger.exception("Failed to start web UI")
+        return None
