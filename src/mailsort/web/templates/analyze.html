@@ -253,8 +253,12 @@
       {% for r in rule_corrections %}
       <tr class="border-b border-gray-100">
         <td class="py-2 px-3 font-mono text-xs text-gray-600">{{ r.from_address }}</td>
-        <td class="py-2 px-3 text-gray-700 truncate max-w-xs">{{ r.subject[:60] }}</td>
-        <td class="py-2 px-3 text-gray-600">{{ r.rule_folder | replace("INBOX/", "") }}</td>
+        <td class="py-2 px-3 text-gray-700 truncate max-w-xs">
+          <a href="/audit/{{ r['correction_audit_id'] }}" class="hover:text-blue-600 hover:underline">{{ r.subject[:60] }}</a>
+        </td>
+        <td class="py-2 px-3">
+          <a href="/rules/{{ r['rule_id'] }}" class="text-gray-600 hover:text-blue-600 hover:underline">{{ r.rule_folder | replace("INBOX/", "") }}</a>
+        </td>
         <td class="py-2 px-3 text-amber-600 font-medium">{{ r.corrected_folder | replace("INBOX/", "") }}</td>
         <td class="py-2 px-3 text-right font-mono text-gray-700">{{ "%.2f" | format(r.confidence) }}</td>
       </tr>

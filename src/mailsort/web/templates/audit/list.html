@@ -140,11 +140,15 @@
           <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">
             <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600">{{ row['created_at'][:16] }}</a>
           </td>
-          <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</td>
+          <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">
+            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</a>
+          </td>
           <td class="px-4 py-2 text-sm font-mono text-gray-700 truncate">
             <a href="/audit?sender={{ row['from_address'] }}&days={{ filters.days }}" class="hover:text-blue-600 hover:underline">{{ row['from_address'] }}</a>
           </td>
-          <td class="px-4 py-2 text-sm text-gray-700 truncate" style="max-width: 28rem;">{{ row['subject'] or '(no subject)' }}</td>
+          <td class="px-4 py-2 text-sm text-gray-700 truncate" style="max-width: 28rem;">
+            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600 hover:underline">{{ row['subject'] or '(no subject)' }}</a>
+          </td>
           <td class="px-4 py-2 whitespace-nowrap">
             {% if row['classification_source'] == 'rule' and row['rule_id'] %}
             <a href="/rules/{{ row['rule_id'] }}" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 hover:bg-blue-100">

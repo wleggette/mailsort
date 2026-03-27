@@ -113,7 +113,7 @@ async def analyze(request: Request, days: int = 30):
     rule_corrections = db.execute(
         "SELECT a1.email_id, a1.from_address, a1.subject, "
         "       a1.target_folder AS rule_folder, a1.confidence, a1.rule_id, "
-        "       a2.target_folder AS corrected_folder "
+        "       a2.target_folder AS corrected_folder, a2.id AS correction_audit_id "
         "FROM audit_log a1 "
         "JOIN runs r1 ON r1.run_id = a1.run_id "
         "JOIN audit_log a2 ON a1.email_id = a2.email_id "
