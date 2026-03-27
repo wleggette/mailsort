@@ -112,6 +112,9 @@ logging_config:
 | `interval_minutes` | `15` | Minutes between classification passes |
 | `min_age_minutes` | `240` | Minimum email age before moving (4 hours) |
 | `max_batch_size` | `100` | Max emails to process per run |
+| `health_check_port` | `8025` | Port for the `/health` endpoint |
+| `contacts_refresh_hours` | `24` | Hours between Fastmail contact cache refreshes |
+| `folder_scan_interval_hours` | `24` | Hours between Category 4 daily folder scans |
 
 ### `classification.thresholds`
 
@@ -120,6 +123,7 @@ logging_config:
 | `rule_move` | `0.85` | Minimum confidence for rule-based moves |
 | `llm_move` | `0.80` | Minimum confidence for LLM-based moves |
 | `llm_move_known_contact` | `0.93` | Stricter LLM threshold for known contacts |
+| `rule_learn` | `0.70` | Minimum confidence for rule-based learning signals |
 
 ### `classification.auto_rule_thresholds`
 
@@ -140,6 +144,7 @@ logging_config:
 | `llm_allow_known_contacts` | `true` | Allow LLM for known contacts |
 | `llm_suggest_rule_after_n` | `5` | Suggest regex rule after N consistent LLM classifications |
 | `correction_penalty` | `0.15` | Confidence reduction per user correction |
+| `learner_lookback_days` | `7` | How many days back to check for skipped/corrected emails |
 
 ### `logging_config`
 
@@ -149,3 +154,4 @@ logging_config:
 | `file` | `/app/data/mailsort.log` | Log file path |
 | `max_size_mb` | `10` | Max log file size before rotation |
 | `backup_count` | `3` | Number of rotated log files to keep |
+| `format` | `text` | Log format: `text` (human-readable) or `json` (structured) |

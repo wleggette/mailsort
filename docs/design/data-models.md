@@ -69,6 +69,7 @@ CREATE TABLE audit_log (
                                            -- | llm_unavailable | llm_api_error
                                            -- | llm_skip_sender | llm_skip_domain
                                            -- | llm_skip_known_contact | classification_error
+    email_received_at       TEXT,            -- original receivedAt from JMAP (added in migration 8)
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
 
     FOREIGN KEY (rule_id) REFERENCES rules(id)
@@ -118,6 +119,43 @@ CREATE TABLE folder_descriptions (
     updated_at TEXT NOT NULL
 );
 ```
+
+### Inbox Snapshot
+
+Stores the set of email IDs seen in the inbox for each run, used by Category 3
+(inbox departure detection) to diff between consecutive runs.
+
+```sql
+CREATE TABLE inbox_snapshot (
+    email_id    TEXT NOT NULL,
+    run_id      TEXT NOT NULL,
+    captured_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (run_id) REFERENCES runs(run_id)
+);
+
+CREATE INDEX idx_snapshot_run ON inbox_snapshot(run_id);
+```
+
+Populated by `learner.save_inbox_snapshot()` at the end of each run.
+Cleaned up by `learner.cleanup_old_snapshots()` — rows older than 2 days are
+removed to prevent unbounded growth.
+
+### Learner State
+
+Key-value store for learner bookkeeping (last folder scan time, live folder
+paths for the web UI).
+
+```sql
+CREATE TABLE learner_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+```
+
+Known keys:
+- `last_folder_scan` — ISO timestamp of the most recent Category 4 daily scan
+- `last_contacts_refresh` — ISO timestamp of the most recent contact refresh
+- `live_folder_paths` — JSON array of folder paths from the most recent run
 
 ### Schema Version
 
