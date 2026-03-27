@@ -330,26 +330,36 @@ def _print_analysis(db: Database, cfg: Config, days: int) -> None:
         "WHERE r.trigger != 'bootstrap' AND a.created_at >= datetime('now', ?)"
     )
 
-    # Overall counts
-    total = db.execute(f"SELECT COUNT(*) {base}", (window,)).fetchone()[0]
+    # Overall counts — exclude manual rows (user actions, not mailsort classifications)
+    classify_base = f"{base} AND a.classification_source != 'manual'"
+    total = db.execute(f"SELECT COUNT(*) {classify_base}", (window,)).fetchone()[0]
     if total == 0:
         click.echo("No classification data found. Run 'mailsort run' or 'mailsort dry-run' first.")
         return
 
     moved = db.execute(
-        f"SELECT COUNT(*) {base} AND a.moved = 1", (window,)
+        f"SELECT COUNT(*) {classify_base} AND a.moved = 1", (window,)
     ).fetchone()[0]
     skipped = total - moved
 
-    # By source
+    # By source (exclude manual — those are user actions, not classifications)
     source_rows = db.execute(
-        f"SELECT a.classification_source, COUNT(*) as n, SUM(a.moved) as m {base} "
+        f"SELECT a.classification_source, COUNT(*) as n, SUM(a.moved) as m {classify_base} "
         "GROUP BY a.classification_source ORDER BY n DESC", (window,)
     ).fetchall()
 
-    # User corrections: manual sorts from learner detection (not bootstrap seed data)
+    # True corrections: manual rows where the same email was previously moved
+    # by mailsort (has a prior non-manual moved=1 row). Excludes Cat 1 (skipped
+    # sorts) and Cat 3 (departures) which are not corrections.
     corrections = db.execute(
-        f"SELECT COUNT(*) {base} AND a.classification_source = 'manual'", (window,)
+        "SELECT COUNT(DISTINCT a.email_id) FROM audit_log a "
+        "JOIN runs r ON r.run_id = a.run_id "
+        "WHERE r.trigger != 'bootstrap' AND a.classification_source = 'manual' "
+        "  AND a.created_at >= datetime('now', ?) "
+        "  AND a.email_id IN ("
+        "    SELECT email_id FROM audit_log "
+        "    WHERE classification_source != 'manual' AND moved = 1"
+        "  )", (window,)
     ).fetchone()[0]
 
     error_rate = corrections / moved * 100 if moved > 0 else 0.0
