@@ -332,8 +332,11 @@ After bootstrap completes, verify:
 - [ ] **Rules created**: expected rules exist in `rules` table with `active=1`
 - [ ] **Rules NOT created**: conditions below threshold or coherence produce no rule
 - [ ] **All eligible rules created**: each rule type that meets its thresholds is created independently (e.g., both `list_id` and `exact_sender` for the same sender)
+- [ ] **Confidence values**: rule confidence matches the formula for each rule type (CA1–CA3)
+- [ ] **Hit counts unchanged**: all rules have `hit_count=0` and `last_hit_at IS NULL` after bootstrap (coverage check is read-only, must not record hits)
 - [ ] **Contacts imported**: `contacts` table populated from Fastmail + config overrides
 - [ ] **Coverage report**: bootstrap prints coverage percentage (evidence emails that would match a rule)
+- [ ] **Sampling cap (F6)**: folders with >50 emails sample exactly 50 (most recent by `receivedAt`)
 
 ### 3.7 Static Fixture Data
 

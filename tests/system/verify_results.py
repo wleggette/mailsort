@@ -321,6 +321,19 @@ def verify_bootstrap(db: Database) -> VerificationResult:
     else:
         v.warn("CI2: testcontact@example.com not in contacts (may need config override)")
 
+    # ------------------------------------------------------------------
+    # Hit counts — bootstrap must not record hits (coverage check is read-only)
+    # ------------------------------------------------------------------
+    rules_with_hits = db.execute(
+        "SELECT COUNT(*) FROM rules WHERE hit_count > 0"
+    ).fetchone()[0]
+    v.check(rules_with_hits == 0, f"All rules have hit_count=0 after bootstrap (violations: {rules_with_hits})")
+
+    rules_with_last_hit = db.execute(
+        "SELECT COUNT(*) FROM rules WHERE last_hit_at IS NOT NULL"
+    ).fetchone()[0]
+    v.check(rules_with_last_hit == 0, f"All rules have last_hit_at=NULL after bootstrap (violations: {rules_with_last_hit})")
+
     v.print_report()
     return v
 
@@ -490,6 +503,19 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
         elif "ambiguous-service" in (r["from_address"] or ""):
             v.check(src == "llm" or src is None,
                      f"S6 Ambiguous below threshold: source={src}")
+
+    # ------------------------------------------------------------------
+    # Hit counts — dry run must not record hits
+    # ------------------------------------------------------------------
+    rules_with_hits = db.execute(
+        "SELECT COUNT(*) FROM rules WHERE hit_count > 0"
+    ).fetchone()[0]
+    v.check(rules_with_hits == 0, f"All rules have hit_count=0 after dry run (violations: {rules_with_hits})")
+
+    rules_with_last_hit = db.execute(
+        "SELECT COUNT(*) FROM rules WHERE last_hit_at IS NOT NULL"
+    ).fetchone()[0]
+    v.check(rules_with_last_hit == 0, f"All rules have last_hit_at=NULL after dry run (violations: {rules_with_last_hit})")
 
     v.print_report()
     return v

@@ -98,9 +98,10 @@ def run_bootstrap(
         report.contacts_imported = refresh_contacts(db, jmap, cfg.known_contact_overrides)
         logger.info("Phase 3/4 complete: %d contacts imported", report.contacts_imported)
 
-        # Phase 4: Calculate rule coverage
+        # Phase 4: Calculate rule coverage (read-only — no hit recording)
         logger.info("Phase 4/4: Calculating rule coverage...")
-        _calculate_coverage(db, rule_engine, report, live_folders)
+        readonly_engine = RuleEngine(db, cfg.classification.thresholds, record_hits=False)
+        _calculate_coverage(db, readonly_engine, report, live_folders)
 
         audit.finish_run(
             run_id,
