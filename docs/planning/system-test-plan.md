@@ -723,15 +723,41 @@ Rules created when manual sort evidence accumulates past thresholds.
 
 ## 8. Cross-Cutting Edge Cases
 
-These scenarios span multiple phases and test interactions between components.
+Interactions that span multiple subsystems or phases. Most are exercised by
+the phase-specific tests above; this section provides traceability.
 
-| ID | Scenario | Phases Involved | What It Tests | Tested By |
-|----|----------|----------------|---------------|----------|
-| **X1** | Known contact with rule vs LLM threshold | Bootstrap + Dry Run | Rule wins over LLM; known-contact threshold irrelevant when rule matches | Group E + Inbox gen: C1 (`testfriend@gmail.com`) |
-| **X2** | Split-domain senders: some with rules, some without | Bootstrap + Dry Run | Per-address exact_sender rules route correctly; unruled addresses fall to LLM | Group C + Inbox gen: R5a/R5b/R5c (`@megastore.com`) |
-| **X3** | Thread context overrides LLM | Dry Run + Live Move | Thread sibling match takes priority over LLM classification | Inbox gen: S4 (`rare@oneoff.com` with In-Reply-To) |
-| **X4** | Bootstrap idempotency end-to-end | Bootstrap (×2) | Running bootstrap twice produces identical rules, descriptions, and evidence | Procedural (run bootstrap ×2) |
-| **X5** | Correction → re-classification | Live Move + Learning + Feedback | Corrected email's sender may get different treatment on next run | Phase 6 correction + subsequent run |
+### 8.1 Classification Priority Chain
+
+The pipeline resolves classification via thread → rules → LLM. Each tier
+interacts with data produced by other phases (bootstrap evidence, learning
+corrections, contact imports).
+
+| ID | Scenario | What It Tests | Tested By |
+|----|----------|---------------|-----------|
+| **X1** | Known contact with rule — rule wins over LLM threshold | Rule fires before LLM; known-contact threshold (0.93) is irrelevant when a rule matches | Phase 2/3: C1 (`testfriend@gmail.com`) |
+| **X2** | Split-domain senders: per-address routing | `exact_sender` rules route individual addresses correctly; unruled addresses at the same domain fall to LLM | Phase 2/3: R5a/R5b/R5c (`@megastore.com`) |
+| **X3** | Thread context overrides rule/LLM | Thread sibling match takes priority over all other classification tiers | Phase 2/3: S4 (`rare@oneoff.com` with In-Reply-To) |
+| **X4** | Multiple rules coexist, priority determines which fires | list_id > exact_sender > sender_domain at classification time | Phase 2/3: P1 (`statements@bigbank.com`), P2 (`activities@ymca.org`) |
+
+### 8.2 Lifecycle Interactions
+
+Behaviors that depend on state accumulated across multiple phases.
+
+| ID | Scenario | What It Tests | Tested By |
+|----|----------|---------------|-----------|
+| **X5** | Bootstrap idempotency end-to-end | Running bootstrap twice produces identical rules, descriptions, and evidence | Phase 1: F5 (run bootstrap ×2, verify 0 new rows) |
+| **X6** | Correction → rule deactivation → re-classification by LLM | Corrected email's rule is deactivated; sender falls to LLM on next run | Phase 4: L3 (correction + penalty) + L9 (chase falls to LLM) |
+| **X7** | Known contact below LLM threshold but above normal threshold | Contact email classified by LLM with confidence between 0.80–0.93 — blocked by stricter known-contact threshold | Phase 2: S8 (`testcontact@example.com`, `below_threshold_known_contact`) |
+
+### 8.3 Error Handling & Edge Cases
+
+| ID | Scenario | What It Tests | Tested By |
+|----|----------|---------------|-----------|
+| **X8** | LLM API error — per-email isolation | One email's LLM error doesn't prevent others from being classified and moved | Observed organically in Phase 3 (`shipment-tracking@amazon.com`). *Not reproducible on demand* — covered by unit test (`test_no_classification_logs_skip`) |
+| **X9** | Folder deletion → rule deactivation → unknown_folder skip | Delete a folder after bootstrap; `reconcile_folders` deactivates its rules; emails targeting it get `skip_reason=unknown_folder` | *Deferred to integration test* (`test_deleted_folder_rule_deactivated_on_run`, `test_deleted_folder_email_gets_unknown_folder_skip`) — destructive JMAP operation, better with mocks |
+| **X10** | skip_senders filtering (no audit row) | Email from `skip_senders` is filtered before classification — no audit_log row at all (unlike LLM skip which gets a row) | *Deferred to unit test* (`test_skip_sender_is_filtered`) — requires config change mid-test |
+| **X11** | Inbox snapshot scope vs batch scope | Snapshot covers all inbox emails (up to 500); classification covers only `max_batch_size`. Emails beyond the batch can still be detected as departures | Tested implicitly — snapshot uses 500 limit, batch uses 250. Would need 500+ emails to observe truncation |
+| **X12** | Dry run still runs learning step | Dry run detects corrections from previous live runs and adjusts rule confidence | Tested implicitly — learning step runs in all modes (`orchestrator.py` line 121) |
 
 ---
 

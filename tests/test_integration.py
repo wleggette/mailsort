@@ -721,3 +721,72 @@ def test_bootstrap_create_rules_excludes_deleted_folders(db: Database):
     assert report.rules_created == 0
     rules = db.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
     assert rules == 0
+
+
+# ---------------------------------------------------------------------------
+# X9: Full folder deletion cascade in a single run
+# ---------------------------------------------------------------------------
+
+def test_deleted_folder_cascade_deactivate_and_fallthrough(db: Database, monkeypatch):
+    """Full cascade: active rule → folder disappears → reconcile deactivates → email falls through.
+
+    Tests X9 from the system test plan: a rule is active for a folder that
+    existed at bootstrap time. The folder is then deleted (removed from tree).
+    In a single run:
+      1. reconcile_folders deactivates the rule
+      2. An email that would have matched the rule arrives
+      3. The email falls through to LLM (or no_classification if LLM unavailable)
+      4. The email is NOT moved (no valid target)
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _cfg()
+
+    # Step 1: Create a rule for Orders folder (which exists in _tree())
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES ('exact_sender', 'orders@amazon.com', "
+        "'INBOX/Shopping/Orders', 0.95, 'auto', 1)"
+    )
+    db.commit()
+
+    # Verify rule is active before the run
+    rule_before = db.execute("SELECT active, confidence FROM rules WHERE condition_value = 'orders@amazon.com'").fetchone()
+    assert rule_before["active"] == 1
+    assert rule_before["confidence"] == 0.95
+
+    # Step 2: Build a tree WITHOUT Shopping/Orders — simulates folder deletion
+    tree_without_orders = MailboxTree.build([
+        JMAPMailbox(id="mb-inbox", name="INBOX", role="inbox"),
+        JMAPMailbox(id="mb-banks", name="Banks", parentId="mb-affairs"),
+        JMAPMailbox(id="mb-affairs", name="Affairs", parentId="mb-inbox"),
+        JMAPMailbox(id="mb-travel", name="Travel", parentId="mb-inbox"),
+    ])
+
+    # Step 3: An email from orders@amazon.com arrives in this run
+    amazon_email = _email("e-amazon-cascade", "orders@amazon.com", "Your order shipped")
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.side_effect = [{"e-amazon-cascade"}, ["e-amazon-cascade"]]
+    mock_jmap.get_emails.return_value = [amazon_email]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    run_classification_pass(cfg, db, mock_jmap, tree_without_orders, dry_run=False, trigger="test")
+
+    # Verify Step 1 outcome: rule was deactivated by reconcile_folders
+    rule_after = db.execute("SELECT active FROM rules WHERE condition_value = 'orders@amazon.com'").fetchone()
+    assert rule_after["active"] == 0, "Rule should be deactivated after folder deletion"
+
+    # Verify Step 3 outcome: email was classified but NOT by the rule
+    row = db.execute("SELECT * FROM audit_log WHERE email_id = 'e-amazon-cascade'").fetchone()
+    assert row is not None, "Email should have an audit_log row"
+    assert row["classification_source"] != "rule", (
+        f"Email should NOT be classified by deactivated rule (got source={row['classification_source']})"
+    )
+    assert row["moved"] == 0, "Email should not be moved (no valid target folder)"
+    assert row["skip_reason"] in ("no_classification", "llm_unavailable"), (
+        f"Email should be skipped with no_classification or llm_unavailable (got {row['skip_reason']})"
+    )
