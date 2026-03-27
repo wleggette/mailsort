@@ -297,11 +297,11 @@ is accessible on port 8080 (configurable), the health check on port 8025.
 - [x] Pagination with bookmarkable page numbers
 - [ ] CSV export (deferred)
 
-### Phase 5: Threshold Analysis (`/analyze`)
-- [ ] `web/routes/analyze.py` — query analysis data
-- [ ] `web/templates/analyze.html` — source breakdown, confidence histogram,
-      skipped-then-sorted table, recommendations
-- [ ] Date range picker (query param)
+### Phase 5: Threshold Analysis (`/analyze`) ✅
+- [x] `web/routes/analyze.py` — query analysis data
+- [x] `web/templates/analyze.html` — source breakdown, confidence histogram,
+      skipped-then-sorted table, rule corrections, recommendations
+- [x] Date range picker (7d / 30d / 90d query param)
 
 ### Phase 6: Contacts (`/contacts`) ✅
 - [x] `web/routes/contacts.py` — list with search

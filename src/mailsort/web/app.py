@@ -48,12 +48,14 @@ def create_app(cfg: Config) -> FastAPI:
     from mailsort.web.routes.dashboard import router as dashboard_router
     from mailsort.web.routes.rules import router as rules_router
     from mailsort.web.routes.audit import router as audit_router
+    from mailsort.web.routes.analyze import router as analyze_router
     from mailsort.web.routes.contacts import router as contacts_router
     from mailsort.web.routes.folders import router as folders_router
     from mailsort.web.routes.settings import router as settings_router
     app.include_router(dashboard_router)
     app.include_router(rules_router)
     app.include_router(audit_router)
+    app.include_router(analyze_router)
     app.include_router(contacts_router)
     app.include_router(folders_router)
     app.include_router(settings_router)

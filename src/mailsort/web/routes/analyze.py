@@ -1,0 +1,161 @@
+"""Threshold analysis route — interactive version of `mailsort analyze`."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Request
+
+router = APIRouter()
+
+
+@router.get("/analyze")
+async def analyze(request: Request, days: int = 30):
+    db = request.state.db
+    templates = request.app.state.templates
+    cfg = request.app.state.cfg
+
+    window = f"-{days} days"
+
+    # Base filter: exclude bootstrap runs
+    base = (
+        "FROM audit_log a JOIN runs r ON r.run_id = a.run_id "
+        "WHERE r.trigger != 'bootstrap' AND a.created_at >= datetime('now', ?)"
+    )
+    classify_base = f"{base} AND a.classification_source != 'manual'"
+
+    # Overall counts (exclude manual rows — those are user actions)
+    total = db.execute(f"SELECT COUNT(*) {classify_base}", (window,)).fetchone()[0]
+    moved = db.execute(
+        f"SELECT COUNT(*) {classify_base} AND a.moved = 1", (window,)
+    ).fetchone()[0]
+    skipped = total - moved
+
+    # By source
+    source_rows = db.execute(
+        f"SELECT a.classification_source as source, COUNT(*) as n, "
+        f"SUM(CASE WHEN a.moved = 1 THEN 1 ELSE 0 END) as moved {classify_base} "
+        "GROUP BY a.classification_source ORDER BY n DESC", (window,)
+    ).fetchall()
+
+    sources = []
+    for r in source_rows:
+        pct = r["n"] / total * 100 if total > 0 else 0
+        sources.append({
+            "name": r["source"],
+            "count": r["n"],
+            "moved": r["moved"] or 0,
+            "pct": round(pct, 1),
+            "bar_width": int(pct),
+        })
+
+    # True corrections (manual rows where email was previously moved by mailsort)
+    corrections = db.execute(
+        "SELECT COUNT(DISTINCT a.email_id) FROM audit_log a "
+        "JOIN runs r ON r.run_id = a.run_id "
+        "WHERE r.trigger != 'bootstrap' AND a.classification_source = 'manual' "
+        "  AND a.created_at >= datetime('now', ?) "
+        "  AND a.email_id IN ("
+        "    SELECT email_id FROM audit_log "
+        "    WHERE classification_source != 'manual' AND moved = 1"
+        "  )", (window,)
+    ).fetchone()[0]
+    error_rate = corrections / moved * 100 if moved > 0 else 0.0
+
+    # LLM confidence distribution
+    buckets = [
+        ("< 0.60", "a.confidence < 0.60"),
+        ("0.60–0.69", "a.confidence >= 0.60 AND a.confidence < 0.70"),
+        ("0.70–0.79", "a.confidence >= 0.70 AND a.confidence < 0.80"),
+        ("0.80–0.89", "a.confidence >= 0.80 AND a.confidence < 0.90"),
+        ("0.90–1.00", "a.confidence >= 0.90"),
+    ]
+    llm_base = f"{base} AND a.classification_source = 'llm'"
+    confidence_dist = []
+    for label, condition in buckets:
+        row = db.execute(
+            f"SELECT "
+            f"SUM(CASE WHEN a.moved = 1 THEN 1 ELSE 0 END) as moved, "
+            f"SUM(CASE WHEN a.moved = 0 THEN 1 ELSE 0 END) as skipped "
+            f"{llm_base} AND {condition}", (window,)
+        ).fetchone()
+        m = row["moved"] or 0
+        s = row["skipped"] or 0
+        if m > 0 or s > 0:
+            confidence_dist.append({
+                "label": label,
+                "moved": m,
+                "skipped": s,
+                "total": m + s,
+                "is_threshold": label == "0.80–0.89",
+            })
+
+    # Skipped LLM emails that user later sorted to same folder
+    skipped_then_sorted = db.execute(
+        "SELECT a1.email_id, a1.from_address, a1.subject, "
+        "       a1.target_folder AS llm_folder, a1.confidence, "
+        "       a2.target_folder AS manual_folder "
+        "FROM audit_log a1 "
+        "JOIN runs r1 ON r1.run_id = a1.run_id "
+        "JOIN audit_log a2 ON a1.email_id = a2.email_id "
+        "JOIN runs r2 ON r2.run_id = a2.run_id "
+        "WHERE r1.trigger != 'bootstrap' AND r2.trigger != 'bootstrap' "
+        "  AND a1.classification_source = 'llm' AND a1.moved = 0 "
+        "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
+        "  AND a1.created_at >= datetime('now', ?)", (window,)
+    ).fetchall()
+
+    same_folder = [r for r in skipped_then_sorted if r["llm_folder"] == r["manual_folder"]]
+    avg_conf_same = (
+        sum(r["confidence"] for r in same_folder) / len(same_folder)
+        if same_folder else 0
+    )
+
+    # Rule corrections (rule moved to A, user moved to B)
+    rule_corrections = db.execute(
+        "SELECT a1.email_id, a1.from_address, a1.subject, "
+        "       a1.target_folder AS rule_folder, a1.confidence, a1.rule_id, "
+        "       a2.target_folder AS corrected_folder "
+        "FROM audit_log a1 "
+        "JOIN runs r1 ON r1.run_id = a1.run_id "
+        "JOIN audit_log a2 ON a1.email_id = a2.email_id "
+        "JOIN runs r2 ON r2.run_id = a2.run_id "
+        "WHERE r1.trigger != 'bootstrap' AND r2.trigger != 'bootstrap' "
+        "  AND a1.classification_source = 'rule' AND a1.moved = 1 "
+        "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
+        "  AND a1.target_folder != a2.target_folder "
+        "  AND a1.created_at >= datetime('now', ?)", (window,)
+    ).fetchall()
+
+    # Recommendations
+    llm_threshold = cfg.classification.thresholds.llm_move
+    rule_threshold = cfg.classification.thresholds.rule_move
+    llm_rec = {"status": "ok", "current": llm_threshold, "message": "insufficient data to suggest changes"}
+    if len(same_folder) > 3:
+        suggested = round(avg_conf_same - 0.05, 2)
+        llm_rec = {
+            "status": "warn",
+            "current": llm_threshold,
+            "message": f"consider lowering to {suggested} — {len(same_folder)} emails were correctly classified but blocked by threshold (avg confidence {avg_conf_same:.2f})",
+        }
+
+    rule_rec = {"status": "ok", "current": rule_threshold, "message": f"{len(rule_corrections)} correction(s)"}
+    if len(rule_corrections) > 0:
+        rule_rec["status"] = "warn"
+
+    return templates.TemplateResponse("analyze.html", {
+        "request": request,
+        "days": days,
+        "total": total,
+        "moved": moved,
+        "skipped": skipped,
+        "corrections": corrections,
+        "error_rate": round(error_rate, 1),
+        "sources": sources,
+        "confidence_dist": confidence_dist,
+        "skipped_then_sorted": skipped_then_sorted,
+        "same_folder": same_folder,
+        "avg_conf_same": round(avg_conf_same, 2),
+        "rule_corrections": rule_corrections,
+        "llm_rec": llm_rec,
+        "rule_rec": rule_rec,
+        "nav_active": "analyze",
+    })

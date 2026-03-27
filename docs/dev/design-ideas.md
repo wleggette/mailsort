@@ -151,24 +151,14 @@ calculates the metrics above. The answers will determine which option is right.
 
 ---
 
-## Web UI Threshold Analysis Page (`/analyze`)
+## ~~Web UI Threshold Analysis Page (`/analyze`)~~ — Implemented
 
-**Status:** Designed, not implemented (2026-03-21)
+**Status:** Implemented (2026-03-27)
 
-### Concept
-
-Interactive web version of the `mailsort analyze` CLI command. Would show
-classification source breakdown, move outcomes, LLM confidence histogram with
-current threshold marked, skipped-then-sorted table, and rule correction stats.
-Date range picker for filtering.
-
-Full design in [docs/design/web-ui.md](../design/web-ui.md) Phase 5. The CLI
-version (`mailsort analyze --days N`) is already implemented in `main.py`.
-
-### Why not yet implemented
-
-Lower priority than the core monitoring pages (dashboard, audit log, rules)
-which are all complete. The CLI `analyze` command covers the same data for now.
+Implemented as `web/routes/analyze.py` + `web/templates/analyze.html`.
+Includes classification sources bar chart, LLM confidence distribution table,
+skipped-then-sorted table, rule corrections table, and recommendations.
+Date range picker (7d / 30d / 90d).
 
 ---
 

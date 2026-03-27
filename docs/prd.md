@@ -57,7 +57,6 @@ Mailsort is a self-hosted email classification service that periodically scans r
 - Proactive failure/stall alerting (notify when mailsort stops working or a run fails, without requiring manual dashboard checks)
 - UI for creating/editing subject regex rules manually (current rule create form only supports sender-based types)
 - LLM-suggested regex rules — surface candidate patterns from repeated LLM classifications for human review and approval
-- Web UI threshold analysis page (`/analyze`) — interactive version of the CLI `mailsort analyze` command; designed but not yet built (CLI covers the same data)
 - `List-Unsubscribe` combined rule (domain + has-unsubscribe → folder) — analysis of 2,628 emails found only 1.7% (45 emails from 37 low-volume domains) would benefit; existing `exact_sender` and `sender_domain` rules already cover 58% of the unsub-only gap, and the remaining senders will qualify for `exact_sender` rules as volume accumulates
 - Monitoring stack integration (Grafana/Prometheus metrics export, failure alerting, notifications)
 
