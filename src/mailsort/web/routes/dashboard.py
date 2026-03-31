@@ -37,18 +37,21 @@ async def dashboard(request: Request):
         "SELECT value FROM learner_state WHERE key = 'last_folder_scan'"
     ).fetchone()
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "last_run": last_run,
-        "recent_runs": recent_runs,
-        "stats": {
-            "rules": total_rules,
-            "contacts": total_contacts,
-            "folders": total_folders,
-            "processed": total_processed,
-            "unique_emails": unique_emails,
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={
+            "last_run": last_run,
+            "recent_runs": recent_runs,
+            "stats": {
+                "rules": total_rules,
+                "contacts": total_contacts,
+                "folders": total_folders,
+                "processed": total_processed,
+                "unique_emails": unique_emails,
+            },
+            "last_contact_refresh": last_contact_refresh["value"] if last_contact_refresh else "Never",
+            "last_folder_scan": last_folder_scan["value"] if last_folder_scan else "Never",
+            "nav_active": "dashboard",
         },
-        "last_contact_refresh": last_contact_refresh["value"] if last_contact_refresh else "Never",
-        "last_folder_scan": last_folder_scan["value"] if last_folder_scan else "Never",
-        "nav_active": "dashboard",
-    })
+    )

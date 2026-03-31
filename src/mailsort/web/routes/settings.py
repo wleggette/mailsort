@@ -12,8 +12,11 @@ async def settings_view(request: Request):
     cfg = request.app.state.cfg
     templates = request.app.state.templates
 
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
-        "cfg": cfg,
-        "nav_active": "settings",
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={
+            "cfg": cfg,
+            "nav_active": "settings",
+        },
+    )

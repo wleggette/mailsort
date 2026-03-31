@@ -70,24 +70,27 @@ async def audit_list(
         "SELECT DISTINCT target_folder FROM audit_log ORDER BY target_folder"
     ).fetchall()
 
-    return templates.TemplateResponse("audit/list.html", {
-        "request": request,
-        "rows": rows,
-        "total": total,
-        "page": page,
-        "total_pages": total_pages,
-        "filters": {
-            "source": source,
-            "moved": moved,
-            "folder": folder,
-            "sender": sender,
-            "subject": subject,
-            "days": days,
-            "run_id": run_id,
+    return templates.TemplateResponse(
+        request=request,
+        name="audit/list.html",
+        context={
+            "rows": rows,
+            "total": total,
+            "page": page,
+            "total_pages": total_pages,
+            "filters": {
+                "source": source,
+                "moved": moved,
+                "folder": folder,
+                "sender": sender,
+                "subject": subject,
+                "days": days,
+                "run_id": run_id,
+            },
+            "folders": [r["target_folder"] for r in folders],
+            "nav_active": "audit",
         },
-        "folders": [r["target_folder"] for r in folders],
-        "nav_active": "audit",
-    })
+    )
 
 
 @router.get("/{audit_id}")
@@ -105,9 +108,12 @@ async def audit_detail(request: Request, audit_id: int):
             (row["email_id"],),
         ).fetchall()
 
-    return templates.TemplateResponse("audit/detail.html", {
-        "request": request,
-        "row": row,
-        "email_history": email_history,
-        "nav_active": "audit",
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="audit/detail.html",
+        context={
+            "row": row,
+            "email_history": email_history,
+            "nav_active": "audit",
+        },
+    )

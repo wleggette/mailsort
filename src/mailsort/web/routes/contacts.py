@@ -28,11 +28,14 @@ async def contacts_list(request: Request, q: str = ""):
         "SELECT value FROM learner_state WHERE key = 'last_contacts_refresh'"
     ).fetchone()
 
-    return templates.TemplateResponse("contacts/list.html", {
-        "request": request,
-        "contacts": rows,
-        "total": total,
-        "search": q,
-        "last_refresh": last_refresh["value"] if last_refresh else "Never",
-        "nav_active": "contacts",
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="contacts/list.html",
+        context={
+            "contacts": rows,
+            "total": total,
+            "search": q,
+            "last_refresh": last_refresh["value"] if last_refresh else "Never",
+            "nav_active": "contacts",
+        },
+    )

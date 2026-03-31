@@ -61,10 +61,13 @@ async def folders_list(request: Request):
 
     stale_count = sum(1 for f in folders if f["stale"])
 
-    return templates.TemplateResponse("folders.html", {
-        "request": request,
-        "folders": folders,
-        "exclude_patterns": exclude_patterns,
-        "stale_count": stale_count,
-        "nav_active": "folders",
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="folders.html",
+        context={
+            "folders": folders,
+            "exclude_patterns": exclude_patterns,
+            "stale_count": stale_count,
+            "nav_active": "folders",
+        },
+    )

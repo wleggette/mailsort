@@ -76,26 +76,29 @@ async def rules_list(
         "SELECT DISTINCT target_folder_path FROM rules ORDER BY target_folder_path"
     ).fetchall()
 
-    return templates.TemplateResponse("rules/list.html", {
-        "request": request,
-        "rules": rules,
-        "filter": filter,
-        "counts": {
-            "active": count_active,
-            "inactive": count_inactive,
-            "suggested": count_suggested,
-            "all": count_all,
+    return templates.TemplateResponse(
+        request=request,
+        name="rules/list.html",
+        context={
+            "rules": rules,
+            "filter": filter,
+            "counts": {
+                "active": count_active,
+                "inactive": count_inactive,
+                "suggested": count_suggested,
+                "all": count_all,
+            },
+            "filters": {
+                "type": type,
+                "search": search,
+                "folder": folder,
+                "conf_min": conf_min,
+                "conf_max": conf_max,
+            },
+            "folders": [r["target_folder_path"] for r in folders],
+            "nav_active": "rules",
         },
-        "filters": {
-            "type": type,
-            "search": search,
-            "folder": folder,
-            "conf_min": conf_min,
-            "conf_max": conf_max,
-        },
-        "folders": [r["target_folder_path"] for r in folders],
-        "nav_active": "rules",
-    })
+    )
 
 
 @router.get("/{rule_id}")
@@ -105,12 +108,15 @@ async def rule_detail(request: Request, rule_id: int):
 
     rule = db.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
     if not rule:
-        return templates.TemplateResponse("rules/detail.html", {
-            "request": request,
-            "rule": None,
-            "audit_rows": [],
-            "nav_active": "rules",
-        })
+        return templates.TemplateResponse(
+            request=request,
+            name="rules/detail.html",
+            context={
+                "rule": None,
+                "audit_rows": [],
+                "nav_active": "rules",
+            },
+        )
 
     # Recent audit log entries that matched this rule
     audit_rows = db.execute(
@@ -149,15 +155,17 @@ async def rule_detail(request: Request, rule_id: int):
         total = 0
         coherence = 0
 
-    return templates.TemplateResponse("rules/detail.html", {
-        "request": request,
-        "rule": rule,
-        "audit_rows": audit_rows,
-        "evidence_rows": evidence_rows,
-        "coherence": coherence,
-        "evidence_count": to_target,
-        "evidence_total": total,
-        "nav_active": "rules",
+    return templates.TemplateResponse(
+        request=request,
+        name="rules/detail.html",
+        context={
+            "rule": rule,
+            "audit_rows": audit_rows,
+            "evidence_rows": evidence_rows,
+            "coherence": coherence,
+            "evidence_count": to_target,
+            "evidence_total": total,
+            "nav_active": "rules",
     })
 
 
