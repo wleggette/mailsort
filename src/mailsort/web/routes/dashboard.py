@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Request
 
 router = APIRouter()
@@ -37,6 +39,17 @@ async def dashboard(request: Request):
         "SELECT value FROM learner_state WHERE key = 'last_folder_scan'"
     ).fetchone()
 
+    # Compute last/next sort run times
+    cfg = request.app.state.cfg
+    next_sort_run = "Never"
+    if last_run:
+        try:
+            last_dt = datetime.fromisoformat(last_run["started_at"])
+            next_dt = last_dt + timedelta(minutes=cfg.scheduler.interval_minutes)
+            next_sort_run = next_dt.isoformat(sep=" ", timespec="seconds")
+        except (ValueError, TypeError):
+            next_sort_run = "Unknown"
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -52,6 +65,7 @@ async def dashboard(request: Request):
             },
             "last_contact_refresh": last_contact_refresh["value"] if last_contact_refresh else "Never",
             "last_folder_scan": last_folder_scan["value"] if last_folder_scan else "Never",
+            "next_sort_run": next_sort_run,
             "nav_active": "dashboard",
         },
     )
