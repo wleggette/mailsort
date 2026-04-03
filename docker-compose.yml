@@ -3,6 +3,7 @@ services:
     build: .
     container_name: mailsort
     restart: unless-stopped
+    stop_grace_period: 180s
     volumes:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro

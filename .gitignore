@@ -29,6 +29,7 @@ data/*.db-wal
 data/*.db-journal
 data/*.log
 data/*.log.*
+*.run.lock
 
 # Working notes (ephemeral, not documentation)
 docs/dev/scratch.md

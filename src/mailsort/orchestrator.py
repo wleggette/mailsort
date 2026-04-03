@@ -12,11 +12,14 @@ Implements the Phase 3 pipeline:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
+import os
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from mailsort.audit.learner import Learner, ManualSortCounts
@@ -39,6 +42,35 @@ from mailsort.mover.mover import build_move_decision
 logger = logging.getLogger(__name__)
 
 
+def _acquire_run_lock(db_path: str) -> int | None:
+    """Acquire an exclusive file lock for live runs.
+
+    Returns the file descriptor on success, or None if another live run
+    already holds the lock.  The lock auto-releases when the fd is closed
+    or the process exits (even on SIGKILL).
+    """
+    lock_path = Path(db_path).parent / "mailsort.run.lock"
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        os.fsync(fd)
+        return fd
+    except BlockingIOError:
+        os.close(fd)
+        return None
+
+
+def _release_run_lock(fd: int) -> None:
+    """Release the exclusive run lock."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    except OSError:
+        pass
+
+
 def run_classification_pass(
     cfg: Config,
     db: Database,
@@ -47,11 +79,37 @@ def run_classification_pass(
     *,
     dry_run: bool = False,
     trigger: str = "scheduler",
-) -> str:
+) -> str | None:
     """Execute one full classification-and-move pass.
 
-    Returns the run_id.
+    Returns the run_id, or None if a live run was skipped because another
+    live run already holds the exclusive lock.  Dry runs never acquire
+    the lock and always proceed.
     """
+    lock_fd: int | None = None
+    if not dry_run:
+        lock_fd = _acquire_run_lock(cfg.db_path)
+        if lock_fd is None:
+            logger.warning("Another live run is in progress — skipping this run")
+            return None
+
+    try:
+        return _run_with_lock(cfg, db, jmap, tree, dry_run=dry_run, trigger=trigger)
+    finally:
+        if lock_fd is not None:
+            _release_run_lock(lock_fd)
+
+
+def _run_with_lock(
+    cfg: Config,
+    db: Database,
+    jmap: JMAPClient,
+    tree: MailboxTree,
+    *,
+    dry_run: bool = False,
+    trigger: str = "scheduler",
+) -> str:
+    """Inner run logic, called after the lock is acquired (if needed)."""
     audit = AuditWriter(db)
     run_id = audit.start_run(trigger=trigger)
 

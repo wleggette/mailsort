@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
+import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from mailsort.config import Config, ClassificationConfig, FastmailConfig, SchedulerConfig
 from mailsort.jmap.client import ReadOnlyTokenError
@@ -10,7 +15,7 @@ from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
 from mailsort.jmap.mailbox_tree import MailboxTree
 from mailsort.jmap.models import JMAPEmail, JMAPMailbox
-from mailsort.orchestrator import run_classification_pass
+from mailsort.orchestrator import run_classification_pass, _acquire_run_lock, _release_run_lock
 
 
 def _make_config() -> Config:
@@ -564,3 +569,143 @@ def test_move_response_missing_email_records_not_moved(db: Database, monkeypatch
     run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     assert run_row["emails_moved"] == 1
     assert run_row["status"] == "completed"
+
+
+# ------------------------------------------------------------------
+# Run lock (X19, X20)
+# ------------------------------------------------------------------
+
+def _make_file_config(tmp_path: Path) -> Config:
+    """Config with a real file-based db_path so the lock file can be created."""
+    return Config(
+        fastmail=FastmailConfig(),
+        scheduler=SchedulerConfig(interval_minutes=15, min_age_minutes=240, max_batch_size=100),
+        classification=ClassificationConfig(),
+        fastmail_api_token="test-token",
+        anthropic_api_key="",
+        db_path=str(tmp_path / "test.db"),
+    )
+
+
+def _make_file_db(cfg: Config) -> Database:
+    """Create a real file-based Database with migrations applied."""
+    db = Database(cfg.db_path)
+    db.connect()
+    run_migrations(db)
+    return db
+
+
+def test_live_run_acquires_lock(tmp_path):
+    """X19: Second concurrent live run returns None (skipped) when lock is held."""
+    cfg = _make_file_config(tmp_path)
+    db = _make_file_db(cfg)
+    tree = _make_tree()
+
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.commit()
+
+    # Hold the lock externally to simulate a concurrent live run
+    lock_fd = _acquire_run_lock(cfg.db_path)
+    assert lock_fd is not None
+
+    try:
+        mock_jmap = MagicMock()
+        mock_jmap.query_inbox_emails.return_value = ["email-001"]
+        mock_jmap.get_emails.return_value = [_make_jmap_email()]
+        mock_jmap.get_thread_email_ids.return_value = []
+        mock_jmap.move_emails.return_value = {"email-001": True}
+
+        # Second live run should be skipped
+        result = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+        assert result is None
+
+        # No run row should have been created
+        count = db.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+        assert count == 0
+    finally:
+        _release_run_lock(lock_fd)
+        db.close()
+
+
+def test_dry_run_does_not_acquire_lock(tmp_path, monkeypatch):
+    """X20: dry_run=True does not touch the lock; proceeds even when lock is held."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_file_config(tmp_path)
+    db = _make_file_db(cfg)
+    tree = _make_tree()
+
+    # Hold the lock externally
+    lock_fd = _acquire_run_lock(cfg.db_path)
+    assert lock_fd is not None
+
+    try:
+        mock_jmap = MagicMock()
+        mock_jmap.query_inbox_emails.return_value = []
+        mock_jmap.get_contacts.return_value = []
+        mock_jmap.session_capabilities = set()
+        mock_jmap.is_read_only = False
+
+        # Dry run should succeed despite lock being held
+        result = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
+        assert result is not None
+
+        run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (result,)).fetchone()
+        assert run_row["status"] == "completed"
+    finally:
+        _release_run_lock(lock_fd)
+        db.close()
+
+
+def test_lock_released_after_run_completes(tmp_path, monkeypatch):
+    """After a live run finishes, the lock is released and a new live run can proceed."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_file_config(tmp_path)
+    db = _make_file_db(cfg)
+    tree = _make_tree()
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    try:
+        # First live run
+        r1 = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+        assert r1 is not None
+
+        # Second live run should also succeed (lock was released)
+        r2 = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+        assert r2 is not None
+        assert r1 != r2
+    finally:
+        db.close()
+
+
+def test_lock_released_on_exception(tmp_path, monkeypatch):
+    """If the run raises, the lock is still released (finally block)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_file_config(tmp_path)
+    db = _make_file_db(cfg)
+    tree = _make_tree()
+
+    mock_jmap = MagicMock()
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    try:
+        # Patch _run_with_lock to raise — simulates any internal failure
+        with patch("mailsort.orchestrator._run_with_lock", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError, match="boom"):
+                run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+        # Lock should be released — second run can proceed
+        mock_jmap.query_inbox_emails.return_value = []
+        r2 = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+        assert r2 is not None
+    finally:
+        db.close()

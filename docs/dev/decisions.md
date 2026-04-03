@@ -6,6 +6,35 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-02 — Exclusive file lock for live runs
+
+**Context:** During `docker compose up --build -d`, two container instances
+overlapped for ~90 seconds. Both ran live classification passes against the
+same SQLite database, producing duplicate runs and conflicting audit entries.
+SQLite WAL mode prevented corruption, but the application logic broke.
+
+**Decision:** Live runs acquire an exclusive `fcntl.flock` on
+`data/mailsort.run.lock` (derived from `db_path`). Dry runs, the web UI,
+and CLI read commands never acquire the lock.
+
+**Options considered:**
+1. **Lock in `Database.connect()`** — too broad, blocks web UI and dry runs
+2. **Lock in each caller** — duplicates logic across scheduler/CLI
+3. **SQLite advisory table** — race-prone between two processes
+4. **PID file** — stale after crashes, needs cleanup logic
+5. ✅ **`fcntl.flock` in `run_classification_pass`** — single acquisition
+   point, auto-releases on exit/crash, non-blocking (`LOCK_NB`)
+
+**Scope rule:** Only `run_classification_pass(dry_run=False)` acquires the
+lock. `dry_run=True` always proceeds. This allows read-only observation runs
+to overlap with anything.
+
+**Defense-in-depth:** `docker-compose.yml` also sets `stop_grace_period: 180s`
+so Docker waits up to 3 minutes for the old container to finish before
+starting the new one. The lock is a second layer for abnormal cases.
+
+---
+
 ## 2026-04-02 — Fix false-positive skipped-sort detection in learner
 
 **Context:** System tests revealed that `_detect_skipped_sorts` was creating

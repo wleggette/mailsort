@@ -93,6 +93,10 @@ def _scheduled_run(cfg: Config) -> None:
                 cfg, db, jmap, tree, dry_run=False, trigger="scheduler",
             )
 
+            if run_id is None:
+                logger.warning("Scheduled run skipped — another live run holds the lock")
+                return
+
             row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
             if row:
                 logger.info(

@@ -5,6 +5,27 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-02 — Feat: exclusive run lock for live runs
+
+**What changed:**
+- **feat:** Live runs (`dry_run=False`) now acquire an exclusive file lock
+  (`mailsort.run.lock`) before proceeding. If another live run is already in
+  progress, the second run is skipped immediately (non-blocking). Dry runs,
+  the web UI, and CLI read commands are unaffected — they never acquire the lock.
+- **fix:** `docker-compose.yml` now sets `stop_grace_period: 180s` to give
+  in-flight runs time to finish before Docker force-kills the container during
+  `docker compose up --build`.
+- **refactor:** `run_classification_pass` return type changed from `str` to
+  `str | None` — returns `None` when a live run is skipped due to lock.
+  Callers (`scheduler.py`, `main.py`) handle the `None` case.
+- **test:** 4 unit tests for lock behavior: acquisition blocks second run,
+  dry-run bypasses lock, lock released after completion, lock released on
+  exception.
+- **docs:** System test plan updated with X18–X20 entries (all deferred to
+  unit test).
+
+---
+
 ## 2026-04-02 — Fix: learner false-positive skipped-sort detection
 
 **What changed:**

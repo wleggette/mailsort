@@ -155,6 +155,11 @@ def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
                 cfg, db, jmap, tree, dry_run=dry_run, trigger="cli",
             )
 
+            if run_id is None:
+                click.echo("Another live run is in progress — cannot start a second one.", err=True)
+                ctx.exit(1)
+                return
+
         # Report summary — matches the structured log output
         row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
         if row:
