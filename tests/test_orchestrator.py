@@ -425,3 +425,142 @@ def test_successful_move_has_no_move_failed(db: Database):
     assert run_row["status"] == "completed"
     assert run_row["emails_moved"] == 1
     assert run_row["error_summary"] is None
+
+
+# ------------------------------------------------------------------
+# In-flight race windows (X15, X16, X17)
+# ------------------------------------------------------------------
+
+def test_email_vanishes_between_query_and_fetch(db: Database, monkeypatch):
+    """X15: Email deleted after query_inbox_emails but before get_emails.
+
+    get_emails returns fewer emails than IDs requested. The orchestrator
+    should process only the returned ones — no crash, no orphan audit row.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_config()
+    tree = _make_tree()
+
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.commit()
+
+    mock_jmap = MagicMock()
+    # query returns 2 IDs, but get_emails only returns 1 (email-gone was deleted)
+    mock_jmap.query_inbox_emails.return_value = ["email-001", "email-gone"]
+    mock_jmap.get_emails.return_value = [_make_jmap_email(email_id="email-001")]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+    mock_jmap.move_emails.return_value = {"email-001": True}
+
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    # Only the surviving email gets an audit row
+    rows = db.execute("SELECT email_id FROM audit_log WHERE run_id=?", (run_id,)).fetchall()
+    email_ids = {r["email_id"] for r in rows}
+    assert "email-001" in email_ids
+    assert "email-gone" not in email_ids  # no orphan row
+
+    run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    assert run_row["status"] == "completed"
+    assert run_row["emails_moved"] == 1
+
+
+def test_partial_move_success_records_mixed_outcomes(db: Database, monkeypatch):
+    """X16: move_emails returns {a: True, b: False} — mixed outcomes.
+
+    Audit log correctly records moved=1 for success, moved=0 for failure.
+    emails_moved count reflects only successes.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_config()
+    tree = _make_tree()
+
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'orders@amazon.com', 'INBOX/Shopping/Orders', 0.90, 'bootstrap')"
+    )
+    db.commit()
+
+    email_chase = _make_jmap_email(email_id="e-chase", from_email="noreply@chase.com")
+    email_amazon = _make_jmap_email(email_id="e-amazon", from_email="orders@amazon.com")
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = ["e-chase", "e-amazon"]
+    mock_jmap.get_emails.return_value = [email_chase, email_amazon]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+    # Chase moves successfully, Amazon fails (e.g. deleted mid-flight)
+    mock_jmap.move_emails.return_value = {"e-chase": True, "e-amazon": False}
+
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    chase_row = db.execute("SELECT * FROM audit_log WHERE email_id='e-chase'").fetchone()
+    assert chase_row["moved"] == 1
+
+    amazon_row = db.execute("SELECT * FROM audit_log WHERE email_id='e-amazon'").fetchone()
+    assert amazon_row["moved"] == 0
+
+    run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    assert run_row["emails_moved"] == 1  # only chase succeeded
+    assert run_row["status"] == "completed"  # partial failure is not an error
+
+
+def test_move_response_missing_email_records_not_moved(db: Database, monkeypatch):
+    """X17: move_emails response omits an email entirely.
+
+    Email absent from outcomes dict should be recorded as moved=0 via
+    outcomes.get(email_id, False) default.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_config()
+    tree = _make_tree()
+
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'orders@amazon.com', 'INBOX/Shopping/Orders', 0.90, 'bootstrap')"
+    )
+    db.commit()
+
+    email_chase = _make_jmap_email(email_id="e-chase", from_email="noreply@chase.com")
+    email_amazon = _make_jmap_email(email_id="e-amazon", from_email="orders@amazon.com")
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = ["e-chase", "e-amazon"]
+    mock_jmap.get_emails.return_value = [email_chase, email_amazon]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+    # Response only includes chase — amazon is absent entirely
+    mock_jmap.move_emails.return_value = {"e-chase": True}
+
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    chase_row = db.execute("SELECT * FROM audit_log WHERE email_id='e-chase'").fetchone()
+    assert chase_row["moved"] == 1
+
+    # Amazon is absent from outcomes → defaults to moved=0
+    amazon_row = db.execute("SELECT * FROM audit_log WHERE email_id='e-amazon'").fetchone()
+    assert amazon_row["moved"] == 0
+
+    run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    assert run_row["emails_moved"] == 1
+    assert run_row["status"] == "completed"

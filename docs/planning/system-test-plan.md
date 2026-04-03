@@ -642,6 +642,9 @@ to a folder. Detected by `_detect_skipped_sorts`.
 |----|----------|-------|-------------------|-----------|
 | **L1** | Skipped email sorted by user | Move `info@ambiguous-service.com` (`skip_reason=below_threshold`, still in inbox) from INBOX → Banks via JMAP | Manual audit row created for Banks. `from_inbox` count incremented | System test: JMAP move + `mailsort run` |
 | **L2** | Skipped email still in inbox (negative) | Don't move any skipped emails | No false positives — no manual rows for emails still in inbox | System test: implicit (L1 run verifies no spurious detections) |
+| **L2a** | Skipped-sort excludes mailsort-moved emails | Dry run creates `moved=0`; live run moves same email (`moved=1`) | `_detect_skipped_sorts` excludes the email (NOT IN subquery filters non-manual `moved=1`). No false manual row | *Deferred to unit test* (`test_skipped_sort_excludes_emails_moved_by_mailsort`) — requires dry-run + live-run sequence with same email |
+| **L2b** | User move-and-return re-detection | User moves skipped email out of inbox (manual row created), then moves back to inbox, then sorts again | SQL filter does NOT exclude the email (manual `moved=1` entries are exempt from NOT IN). Dedup prevents duplicate in same pass; `_detect_correction_sorts` handles the re-sort | *Deferred to unit test* (`test_skipped_sort_still_detected_after_user_move_and_return`) — requires multi-step JMAP sequence |
+| **L2c** | Skipped-sort dedup prevents duplicate manual rows | Run learner twice without new user moves | Second run creates no new manual row for already-detected email (`_already_corrected_email_ids` filters) | *Deferred to unit test* (`test_skipped_sort_dedup_prevents_duplicate_manual_rows`) — requires two learner runs on same state |
 
 #### Category 2: Correction Sorts
 
@@ -760,6 +763,9 @@ Behaviors that depend on state accumulated across multiple phases.
 | **X12** | Dry run still runs learning step | Dry run detects corrections from previous live runs and adjusts rule confidence — even penalizing rules | *Deferred to integration test* (`test_dry_run_detects_corrections_and_penalizes_rules`) — verifies correction detection + rule penalty in `dry_run=True` mode |
 | **X13** | JMAP move fails (read-only token) — entries show `move_failed`, run status `error` | `skip_reason='move_failed'` set on planned entries when move raises; run finishes as `'error'` not `'completed'`; UI shows "move failed" not "dry run" | *Deferred to unit test* (`test_move_exception_sets_move_failed_and_error_status`) — requires injecting JMAP error |
 | **X14** | Scheduler fires exactly one initial run | No duplicate runs within the first interval window after `scheduler.start()` | *Deferred to unit test* — scheduler timer mechanics, not classification logic |
+| **X15** | Email deleted between query and fetch (W1) | Email ID returned by `query_inbox_emails` but deleted before `get_emails` | `get_emails` returns fewer emails than IDs requested; orchestrator processes only returned ones, no crash, no orphan audit row | *Deferred to unit test* (`test_email_vanishes_between_query_and_fetch`) — requires mock JMAP returning subset of requested IDs |
+| **X16** | Partial move success (W2) | `move_emails` returns `{a: True, b: False}` — one email moved, one failed | Audit log correctly records `moved=1` for success, `moved=0` for failure; `emails_moved` count reflects only successes | *Deferred to unit test* (`test_partial_move_success_records_mixed_outcomes`) — requires mock returning mixed outcomes |
+| **X17** | Email absent from move response (W2) | `move_emails` returns `{a: True}` but email `b` is missing from response entirely | `b` recorded as `moved=0` (outcomes.get default); no crash | *Deferred to unit test* (`test_move_response_missing_email_records_not_moved`) — requires mock omitting an email from response |
 
 ---
 

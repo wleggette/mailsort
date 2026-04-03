@@ -5,6 +5,31 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-02 — Fix: learner false-positive skipped-sort detection
+
+**What changed:**
+- **fix:** `_detect_skipped_sorts` no longer misidentifies emails that mailsort
+  moved in a later run as user manual sorts. The SQL query now excludes emails
+  with any non-manual `moved=1` audit entry (`classification_source != 'manual'`).
+  Previously, a dry-run `moved=0` entry followed by a live-run move would cause
+  the learner to create a spurious `manual` audit row — which then blocked real
+  correction detection via dedup. The exclusion is scoped to non-manual entries
+  so that a user's own move-and-return-to-inbox cycle doesn't permanently block
+  re-detection.
+- **fix:** `_detect_skipped_sorts` now deduplicates against existing `manual`
+  audit rows (matching `_detect_correction_sorts` behavior). Previously it would
+  re-create the same manual entry every run.
+- **test:** Added unit tests for learner edge cases: mailsort-moved exclusion,
+  user move-and-return re-detection, and dedup of duplicate manual rows
+  (`test_learner.py`: L2a, L2b, L2c).
+- **test:** Added unit tests for in-flight race windows: email vanishes between
+  query and fetch (X15), partial move success (X16), email absent from move
+  response (X17) (`test_orchestrator.py`).
+- **docs:** System test plan updated with L2a–L2c and X15–X17 entries (all
+  deferred to unit test with rationale).
+
+---
+
 ## 2026-04-02 — Fix: move_failed status + scheduler double-runs
 
 **What changed:**

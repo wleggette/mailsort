@@ -99,13 +99,24 @@ class Learner:
         rows = self._db.execute(
             """SELECT DISTINCT email_id FROM audit_log
                WHERE moved = 0
-                 AND created_at >= datetime('now', ?)""",
+                 AND created_at >= datetime('now', ?)
+                 AND email_id NOT IN (
+                     SELECT email_id FROM audit_log
+                      WHERE moved = 1 AND classification_source != 'manual'
+                 )""",
             (lookback,),
         ).fetchall()
         if not rows:
             return 0
 
         skipped_ids = [row["email_id"] for row in rows]
+
+        # Dedup: skip emails that already have a manual audit_log row
+        already_corrected = self._already_corrected_email_ids(skipped_ids)
+        skipped_ids = [eid for eid in skipped_ids if eid not in already_corrected]
+        if not skipped_ids:
+            return 0
+
         found = 0
 
         try:

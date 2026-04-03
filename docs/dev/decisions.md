@@ -6,6 +6,45 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-02 — Fix false-positive skipped-sort detection in learner
+
+**Context:** System tests revealed that `_detect_skipped_sorts` was creating
+spurious `classification_source='manual'` audit entries for emails that mailsort
+itself had moved. This happened because the SQL query only checked for `moved=0`
+entries without excluding emails that had a subsequent `moved=1` entry from a
+live run. The false manual entries then poisoned the dedup check in
+`_detect_correction_sorts`, preventing real user corrections from being detected
+and rule confidence penalties from being applied.
+
+**Root causes:**
+1. The query `WHERE moved = 0` matched dry-run entries even when the same email
+   had a `moved=1` entry from a later live run.
+2. Unlike `_detect_correction_sorts`, `_detect_skipped_sorts` had no dedup check
+   against existing manual audit rows, so it re-created the same entry every run.
+
+**Decision:** Two minimal fixes in `_detect_skipped_sorts`:
+1. Add `AND email_id NOT IN (SELECT email_id FROM audit_log WHERE moved = 1
+   AND classification_source != 'manual')` — excludes emails **mailsort** moved
+   but not emails the **user** moved. A blanket `NOT IN (moved = 1)` would also
+   exclude the learner's own manual entries, blocking re-detection if the user
+   moves an email out, back to inbox, then out again.
+2. Filter through `_already_corrected_email_ids()` before JMAP fetch — matches
+   the dedup pattern already used in `_detect_correction_sorts`.
+
+**Alternatives considered:**
+- Blanket `NOT IN (moved = 1)` — simpler but blocks re-detection after a user's
+  move-and-return cycle (manual entries have `moved=1` too).
+- Scoping the `NOT IN` subquery to the lookback window — rejected because an
+  email moved by mailsort at any time should not be re-detected as a user sort.
+- Adding a `source_run_id` column to distinguish which run created the `moved=0`
+  entry — over-engineered; the `NOT IN` subquery is simpler and sufficient.
+
+**Affected files:** `src/mailsort/audit/learner.py`, `tests/test_learner.py`
+
+**Status:** Implemented and verified (unit tests + full test suite).
+
+---
+
 ## 2026-04-02 — Distinguish "move failed" from "dry run" in audit outcomes
 
 **Context:** When `move_emails` raises `ReadOnlyTokenError` (or any JMAP
