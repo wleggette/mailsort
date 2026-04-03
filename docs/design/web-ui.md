@@ -21,9 +21,10 @@
 
 The landing page. At-a-glance overview of system health.
 
-- **Last run card** — status badge (completed/failed/abandoned), timing, trigger type,
-  emails seen/moved/skipped/failed
-- **Run history** — compact table of the last 20 runs with status, timing, counts
+- **Last run card** — status badge (completed/dry run/failed/abandoned/running),
+  timing, trigger type, emails seen/moved/skipped/failed
+- **Run history** — compact table of the last 20 runs with status, timing, counts.
+  Dry-run rows (explicit or auto-downgraded) show a blue "dry run" badge.
 - **Quick stats row** — total active rules, total contacts, folders tracked,
   emails processed (lifetime), rules auto-created this week
 - **System health** — scheduler status, last contact refresh, last folder scan,

@@ -10,11 +10,17 @@ Each scan is assigned a unique `run_id` at startup. All audit rows created durin
 that scan reference the same `run_id`. This provides per-run reporting, simplifies
 idempotency guarantees, and makes recovery of interrupted runs explicit.
 
+The `runs` table stores the effective `dry_run` flag for each run. If a live
+run detects a read-only JMAP token, it is automatically downgraded to dry-run
+mode — `run_classification_pass` returns a `RunResult` dataclass with
+`read_only_downgrade=True` so callers can display the downgrade.
+
 JMAP move execution is treated as a set of per-email outcomes, not an atomic
 transaction. Mailsort persists planned decisions before calling `Email/set`,
 then reconciles each message into `moved` or `move_failed` based on the JMAP
 response. If the process crashes mid-run, the incomplete run remains visible
-in `runs` and can be reconciled on the next startup.
+in `runs` and can be reconciled on the next startup. Live runs (`dry_run=0`)
+are abandoned unconditionally; dry runs only after `stale_dry_run_minutes`.
 
 ## Run Reporting & Logging
 

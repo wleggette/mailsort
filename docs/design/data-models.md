@@ -220,18 +220,15 @@ migrations in order. Migrations are never skipped or re-applied.
 
 ```python
 MIGRATIONS = [
-    (1, "create_rules_table"),
-    (2, "create_runs_table"),
-    (3, "create_audit_log_table"),
-    (4, "create_contacts_table"),
-    (5, "create_folder_descriptions_table"),
+    (1,  "create_schema_version"),
+    (2,  "create_rules"),
+    (3,  "create_runs"),
+    (4,  "create_audit_log"),
+    (5,  "create_contacts"),
+    (6,  "create_folder_descriptions"),
+    (7,  "create_inbox_snapshot"),       # inbox_snapshot + learner_state tables
+    (8,  "add_audit_received_at"),       # email_received_at column on audit_log
+    (9,  "add_runs_error_status"),       # add 'error' to runs.status CHECK
+    (10, "add_runs_dry_run"),            # dry_run BOOLEAN on runs table
 ]
-
-def run_migrations():
-    current = db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] or 0
-    for version, name in MIGRATIONS:
-        if version > current:
-            apply_migration(version, name)
-            db.execute("INSERT INTO schema_version VALUES (?, datetime('now'))", (version,))
-            logger.info(f"Applied migration {version}: {name}")
 ```

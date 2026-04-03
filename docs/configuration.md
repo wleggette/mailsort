@@ -116,6 +116,7 @@ logging_config:
 | `web_port` | `8080` | Port for the embedded web UI (0 to disable) |
 | `contacts_refresh_hours` | `24` | Hours between Fastmail contact cache refreshes |
 | `folder_scan_interval_hours` | `24` | Hours between Category 4 daily folder scans |
+| `stale_dry_run_minutes` | `60` | Minutes before a stuck dry-run row is abandoned |
 
 ### `classification.thresholds`
 

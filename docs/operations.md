@@ -15,11 +15,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy package source and metadata — src/ must be present before pip install
+# Install dependencies first (cached unless pyproject.toml changes)
 COPY pyproject.toml README.md ./
-COPY src/ ./src/
+RUN mkdir -p src/mailsort && \
+    touch src/mailsort/__init__.py && \
+    pip install --no-cache-dir . && \
+    rm -rf src/mailsort
 
-RUN pip install --no-cache-dir .
+# Copy actual source (only this layer rebuilds on code changes)
+COPY src/ ./src/
+RUN pip install --no-cache-dir --no-deps .
 
 COPY config.yaml ./config.yaml
 RUN mkdir -p /app/data
@@ -30,6 +35,10 @@ HEALTHCHECK --interval=60s --timeout=5s --retries=3 \
 
 CMD ["mailsort", "start"]
 ```
+
+The two-stage `pip install` separates dependency installation (cached) from
+source installation (`--no-deps`, near-instant). Code-only rebuilds skip the
+slow dependency resolution step.
 
 The `start` command runs the scheduler, health check (port 8025), and web UI
 (port 8080) in a single process. See `docs/dev/decisions.md` "Embed web UI in
@@ -43,6 +52,7 @@ services:
     build: .
     container_name: mailsort
     restart: unless-stopped
+    stop_grace_period: 180s
     volumes:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro
@@ -59,6 +69,9 @@ services:
         max-file: "3"
 ```
 
+`stop_grace_period: 180s` gives in-flight runs up to 3 minutes to finish
+before Docker force-kills the container during `docker compose up --build`.
+
 ### .env file (not committed)
 
 ```
@@ -74,43 +87,32 @@ APScheduler may fire a new run while a previous one is still in progress (e.g.,
 if a run takes longer than the scheduler interval). Two simultaneous runs would
 process the same inbox emails and write conflicting audit records.
 
-Two layers of protection:
+Three layers of protection:
 
 1. **APScheduler `max_instances=1`** — prevents the scheduler from launching a
    second instance of the job while one is already running.
-2. **`runs` table lock** — before starting work, insert a row into `runs` with
-   `status='running'`. If a row with `status='running'` already exists, skip.
+2. **`fcntl.flock`** on `data/mailsort.run.lock` — true mutual exclusion within
+   a single kernel. Auto-releases on crash/SIGKILL. Only live runs acquire the
+   lock; dry runs bypass it. Lock is acquired early (before JMAP setup) so a
+   second instance fails fast.
+3. **CLI Docker delegation** — when the local CLI detects a running `mailsort`
+   Docker container, it delegates via `docker exec` to ensure all runs happen
+   inside the same kernel where `flock` works.
 
-```python
-def acquire_run_lock(run_id: str) -> bool:
-    """Attempt to acquire the run lock by inserting a new run. Returns False if already running."""
-    existing = db.execute(
-        "SELECT run_id FROM runs WHERE status = 'running'"
-    ).fetchone()
-    if existing:
-        logger.warning(f"Run {existing['run_id']} still in progress, skipping")
-        return False
-    db.execute(
-        "INSERT INTO runs (run_id, started_at, status, trigger) VALUES (?, datetime('now'), 'running', 'scheduler')",
-        (run_id,)
-    )
-    return True
+### Stale run reconciliation
 
-def finish_run(run_id: str, status: str = "completed", error_summary: str = None):
-    db.execute(
-        "UPDATE runs SET status=?, finished_at=datetime('now'), error_summary=? WHERE run_id=?",
-        (status, error_summary, run_id)
-    )
-```
+On startup, `reconcile_stale_runs` marks leftover `running` rows as
+`abandoned`. Live runs (`dry_run=0`) are abandoned unconditionally (the lock
+guarantees they're stale). Dry runs (`dry_run=1`) are only abandoned after
+`stale_dry_run_minutes` (default 60) to avoid interfering with a legitimately
+running dry run.
 
-On startup, reconcile stale runs — any row with `status='running'` from a
-previous process is marked `abandoned`:
+### Auto-downgrade on read-only token
 
-```python
-def reconcile_stale_runs():
-    """Mark interrupted runs as abandoned on startup."""
-    db.execute("UPDATE runs SET status='abandoned' WHERE status='running'")
-```
+If a live run detects a read-only JMAP token (`jmap.is_read_only`), it
+automatically downgrades to dry-run mode. `run_classification_pass` returns a
+`RunResult` dataclass with `read_only_downgrade=True`. The CLI and scheduler
+display the downgrade to the user.
 
 ---
 
