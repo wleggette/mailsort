@@ -138,10 +138,10 @@
             <a href="/audit?run_id={{ row['run_id'] }}&days={{ filters.days }}" class="hover:text-blue-600">{{ row['run_id'][:8] }}</a>
           </td>
           <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">
-            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600">{{ row['created_at'][:16] }}</a>
+            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600" data-utc="{{ row['created_at'] }}" data-utc-format="short">{{ row['created_at'][:16] }}</a>
           </td>
           <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">
-            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</a>
+            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600" data-utc="{{ row['email_received_at'] or '' }}" data-utc-format="short">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</a>
           </td>
           <td class="px-4 py-2 text-sm font-mono text-gray-700 truncate">
             <a href="/audit?sender={{ row['from_address'] }}&days={{ filters.days }}" class="hover:text-blue-600 hover:underline">{{ row['from_address'] }}</a>

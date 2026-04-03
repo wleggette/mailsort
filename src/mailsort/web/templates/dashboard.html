@@ -53,7 +53,7 @@
       </div>
       <div class="flex items-center justify-between">
         <span class="text-sm text-gray-600">Started</span>
-        <span class="text-sm text-gray-900">{{ last_run['started_at'] }}</span>
+        <span class="text-sm text-gray-900" data-utc="{{ last_run['started_at'] }}">{{ last_run['started_at'] }}</span>
       </div>
       <div class="flex items-center justify-between">
         <span class="text-sm text-gray-600">Emails Seen</span>
@@ -80,15 +80,15 @@
     <div class="space-y-3">
       <div class="flex items-center justify-between">
         <span class="text-sm text-gray-600">Last Contact Refresh</span>
-        <span class="text-sm text-gray-900">{{ last_contact_refresh }}</span>
+        <span class="text-sm text-gray-900" data-utc="{{ last_contact_refresh }}">{{ last_contact_refresh }}</span>
       </div>
       <div class="flex items-center justify-between">
         <span class="text-sm text-gray-600">Last Folder Scan</span>
-        <span class="text-sm text-gray-900">{{ last_folder_scan }}</span>
+        <span class="text-sm text-gray-900" data-utc="{{ last_folder_scan }}">{{ last_folder_scan }}</span>
       </div>
       <div class="flex items-center justify-between">
         <span class="text-sm text-gray-600">Next Scheduled Run</span>
-        <span class="text-sm text-gray-900">{{ next_sort_run }}</span>
+        <span class="text-sm text-gray-900" data-utc="{{ next_sort_run }}">{{ next_sort_run }}</span>
       </div>
     </div>
   </div>
@@ -130,7 +130,7 @@
             {% endif %}
           </td>
           <td class="px-6 py-3 text-sm text-gray-600">{{ run['trigger'] }}</td>
-          <td class="px-6 py-3 text-sm text-gray-600">{{ run['started_at'] }}</td>
+          <td class="px-6 py-3 text-sm text-gray-600" data-utc="{{ run['started_at'] }}" data-utc-format="short">{{ run['started_at'] }}</td>
           <td class="px-6 py-3 text-sm text-right text-gray-900">{{ run['emails_seen'] }}</td>
           <td class="px-6 py-3 text-sm text-right text-gray-900">{{ run['emails_moved'] }}</td>
         </tr>

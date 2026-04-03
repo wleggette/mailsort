@@ -63,11 +63,11 @@
       </div>
       <div class="flex justify-between">
         <span class="text-sm text-gray-600">Created</span>
-        <span class="text-sm text-gray-900">{{ rule['created_at'] }}</span>
+        <span class="text-sm text-gray-900" data-utc="{{ rule['created_at'] }}">{{ rule['created_at'] }}</span>
       </div>
       <div class="flex justify-between">
         <span class="text-sm text-gray-600">Updated</span>
-        <span class="text-sm text-gray-900">{{ rule['updated_at'] }}</span>
+        <span class="text-sm text-gray-900" data-utc="{{ rule['updated_at'] }}">{{ rule['updated_at'] }}</span>
       </div>
     </div>
   </div>
@@ -81,7 +81,7 @@
       </div>
       <div class="flex justify-between">
         <span class="text-sm text-gray-600">Last Hit</span>
-        <span class="text-sm text-gray-900">{{ rule['last_hit_at'] or 'Never' }}</span>
+        <span class="text-sm text-gray-900" data-utc="{{ rule['last_hit_at'] or '' }}">{{ rule['last_hit_at'] or 'Never' }}</span>
       </div>
       <div class="flex justify-between">
         <span class="text-sm text-gray-600">Coherence</span>
@@ -121,7 +121,7 @@
       <tbody class="divide-y divide-gray-200">
         {% for row in evidence_rows %}
         <tr class="hover:bg-gray-50">
-          <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</td>
+          <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap" data-utc="{{ row['email_received_at'] or '' }}" data-utc-format="short">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</td>
           <td class="px-4 py-2 text-sm font-mono text-gray-700 max-w-xs truncate">{{ row['from_address'] }}</td>
           <td class="px-4 py-2 text-sm text-gray-700 max-w-sm truncate">{{ row['subject'] or '(no subject)' }}</td>
           <td class="px-4 py-2 text-sm whitespace-nowrap {{ 'text-green-700 font-medium' if row['target_folder'] == rule['target_folder_path'] else 'text-amber-600' }}">
@@ -176,7 +176,7 @@
       <tbody class="divide-y divide-gray-200">
         {% for row in audit_rows %}
         <tr class="hover:bg-gray-50">
-          <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">{{ row['created_at'][:16] }}</td>
+          <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap" data-utc="{{ row['created_at'] }}" data-utc-format="short">{{ row['created_at'][:16] }}</td>
           <td class="px-4 py-2 text-sm font-mono text-gray-700 max-w-xs truncate">{{ row['from_address'] }}</td>
           <td class="px-4 py-2 text-sm text-gray-700 max-w-sm truncate">{{ row['subject'] or '(no subject)' }}</td>
           <td class="px-4 py-2 text-center">

@@ -52,6 +52,29 @@
       });
     });
   </script>
+  <script>
+    // Convert UTC timestamps to browser-local time
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('[data-utc]').forEach(el => {
+        const raw = el.dataset.utc;
+        if (!raw || raw === 'Never' || raw === 'Unknown') return;
+        try {
+          // Append 'Z' if no timezone indicator — DB stores UTC without suffix
+          const iso = raw.includes('Z') || raw.includes('+') ? raw : raw.replace(' ', 'T') + 'Z';
+          const d = new Date(iso);
+          if (isNaN(d)) return;
+          const fmt = el.dataset.utcFormat || 'datetime';
+          if (fmt === 'date') {
+            el.textContent = d.toLocaleDateString();
+          } else if (fmt === 'short') {
+            el.textContent = d.toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false, timeZoneName:'short'});
+          } else {
+            el.textContent = d.toLocaleString(undefined, {year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false, timeZoneName:'short'});
+          }
+        } catch (e) { /* leave original text */ }
+      });
+    });
+  </script>
 </head>
 <body class="h-full">
   <div class="flex h-full">

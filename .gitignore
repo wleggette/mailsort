@@ -28,6 +28,7 @@ data/*.db-shm
 data/*.db-wal
 data/*.db-journal
 data/*.log
+data/*.log.*
 
 # Working notes (ephemeral, not documentation)
 docs/dev/scratch.md

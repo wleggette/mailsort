@@ -42,7 +42,7 @@
             </span>
           </td>
           <td class="px-4 py-2 text-sm text-right text-gray-900">{{ f.email_count }}</td>
-          <td class="px-4 py-2 text-sm text-gray-500">{{ f.updated_at[:16] if f.updated_at else '—' }}</td>
+          <td class="px-4 py-2 text-sm text-gray-500" data-utc="{{ f.updated_at or '' }}" data-utc-format="short">{{ f.updated_at[:16] if f.updated_at else '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>
