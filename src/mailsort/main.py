@@ -201,7 +201,8 @@ def _do_run_pass(cfg: Config, *, dry_run: bool) -> str:
 
     with Database(cfg.db_path) as db:
         run_migrations(db)
-        AuditWriter(db).reconcile_stale_runs()
+        if not dry_run:
+            AuditWriter(db).reconcile_stale_runs()
         logger.info("Database ready at %s", cfg.db_path)
 
         with JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url) as jmap:
