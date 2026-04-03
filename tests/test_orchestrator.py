@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import fcntl
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -596,42 +594,23 @@ def _make_file_db(cfg: Config) -> Database:
 
 
 def test_live_run_acquires_lock(tmp_path):
-    """X19: Second concurrent live run returns None (skipped) when lock is held."""
+    """X19: Second attempt to acquire the run lock fails when lock is held."""
     cfg = _make_file_config(tmp_path)
-    db = _make_file_db(cfg)
-    tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
-
-    # Hold the lock externally to simulate a concurrent live run
-    lock_fd = _acquire_run_lock(cfg.db_path)
-    assert lock_fd is not None
+    # First acquisition succeeds
+    fd1 = _acquire_run_lock(cfg.db_path)
+    assert fd1 is not None
 
     try:
-        mock_jmap = MagicMock()
-        mock_jmap.query_inbox_emails.return_value = ["email-001"]
-        mock_jmap.get_emails.return_value = [_make_jmap_email()]
-        mock_jmap.get_thread_email_ids.return_value = []
-        mock_jmap.move_emails.return_value = {"email-001": True}
-
-        # Second live run should be skipped
-        result = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
-        assert result is None
-
-        # No run row should have been created
-        count = db.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
-        assert count == 0
+        # Second acquisition fails (non-blocking)
+        fd2 = _acquire_run_lock(cfg.db_path)
+        assert fd2 is None
     finally:
-        _release_run_lock(lock_fd)
-        db.close()
+        _release_run_lock(fd1)
 
 
 def test_dry_run_does_not_acquire_lock(tmp_path, monkeypatch):
-    """X20: dry_run=True does not touch the lock; proceeds even when lock is held."""
+    """X20: dry_run=True proceeds even when the run lock is held."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = _make_file_config(tmp_path)
     db = _make_file_db(cfg)
@@ -659,53 +638,46 @@ def test_dry_run_does_not_acquire_lock(tmp_path, monkeypatch):
         db.close()
 
 
-def test_lock_released_after_run_completes(tmp_path, monkeypatch):
-    """After a live run finishes, the lock is released and a new live run can proceed."""
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+def test_lock_released_after_close(tmp_path):
+    """After releasing the lock, a new acquisition succeeds."""
     cfg = _make_file_config(tmp_path)
-    db = _make_file_db(cfg)
-    tree = _make_tree()
 
-    mock_jmap = MagicMock()
-    mock_jmap.query_inbox_emails.return_value = []
-    mock_jmap.get_contacts.return_value = []
-    mock_jmap.session_capabilities = set()
-    mock_jmap.is_read_only = False
+    fd1 = _acquire_run_lock(cfg.db_path)
+    assert fd1 is not None
+    _release_run_lock(fd1)
 
-    try:
-        # First live run
-        r1 = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
-        assert r1 is not None
-
-        # Second live run should also succeed (lock was released)
-        r2 = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
-        assert r2 is not None
-        assert r1 != r2
-    finally:
-        db.close()
+    # Second acquisition should succeed after release
+    fd2 = _acquire_run_lock(cfg.db_path)
+    assert fd2 is not None
+    _release_run_lock(fd2)
 
 
 def test_lock_released_on_exception(tmp_path, monkeypatch):
-    """If the run raises, the lock is still released (finally block)."""
+    """Lock acquired in caller's finally block is released even when the run raises."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = _make_file_config(tmp_path)
     db = _make_file_db(cfg)
     tree = _make_tree()
 
     mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.side_effect = RuntimeError("boom")
     mock_jmap.get_contacts.return_value = []
     mock_jmap.session_capabilities = set()
     mock_jmap.is_read_only = False
 
-    try:
-        # Patch _run_with_lock to raise — simulates any internal failure
-        with patch("mailsort.orchestrator._run_with_lock", side_effect=RuntimeError("boom")):
-            with pytest.raises(RuntimeError, match="boom"):
-                run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    # Simulate what a caller does: acquire lock, run, release in finally
+    lock_fd = _acquire_run_lock(cfg.db_path)
+    assert lock_fd is not None
 
-        # Lock should be released — second run can proceed
-        mock_jmap.query_inbox_emails.return_value = []
-        r2 = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
-        assert r2 is not None
+    try:
+        try:
+            run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+        finally:
+            _release_run_lock(lock_fd)
+
+        # Lock should be released — second acquisition succeeds
+        fd2 = _acquire_run_lock(cfg.db_path)
+        assert fd2 is not None
+        _release_run_lock(fd2)
     finally:
         db.close()

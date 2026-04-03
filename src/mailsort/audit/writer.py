@@ -64,7 +64,12 @@ class AuditWriter:
             logger.exception("Failed to write finish_run for %s", run_id)
 
     def reconcile_stale_runs(self) -> int:
-        """Mark any leftover 'running' rows as 'abandoned'. Returns count."""
+        """Mark any leftover 'running' rows as 'abandoned'. Returns count.
+
+        With ``flock``-based run locking, a 'running' row that outlives
+        its process is genuinely stale — the kernel released the lock
+        when the process exited.  Safe to abandon unconditionally.
+        """
         cursor = self._db.execute(
             "UPDATE runs SET status='abandoned', finished_at=datetime('now') "
             "WHERE status='running'"

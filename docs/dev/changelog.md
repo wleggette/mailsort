@@ -5,24 +5,28 @@ chronological — newest entries first.
 
 ---
 
-## 2026-04-02 — Feat: exclusive run lock for live runs
+## 2026-04-02 — Feat: prevent concurrent live runs
 
 **What changed:**
-- **feat:** Live runs (`dry_run=False`) now acquire an exclusive file lock
-  (`mailsort.run.lock`) before proceeding. If another live run is already in
-  progress, the second run is skipped immediately (non-blocking). Dry runs,
-  the web UI, and CLI read commands are unaffected — they never acquire the lock.
+- **feat:** Live runs (`dry_run=False`) now acquire an exclusive `flock` on
+  `data/mailsort.run.lock` before proceeding. Lock is acquired early (before
+  JMAP setup) so a second instance fails fast. Dry runs, the web UI, and
+  CLI read commands are unaffected.
+- **feat:** CLI `run` and `dry-run` commands now detect a running `mailsort`
+  Docker container and delegate via `docker exec`. This ensures all runs
+  happen inside the same Linux kernel where `flock` works, solving the
+  Docker Desktop VM boundary problem.
 - **fix:** `docker-compose.yml` now sets `stop_grace_period: 180s` to give
   in-flight runs time to finish before Docker force-kills the container during
   `docker compose up --build`.
-- **refactor:** `run_classification_pass` return type changed from `str` to
-  `str | None` — returns `None` when a live run is skipped due to lock.
-  Callers (`scheduler.py`, `main.py`) handle the `None` case.
-- **test:** 4 unit tests for lock behavior: acquisition blocks second run,
-  dry-run bypasses lock, lock released after completion, lock released on
-  exception.
+- **test:** 4 lock tests (acquire, dry-run bypass, release, exception safety).
+  6 Docker delegation tests (container detection, exec delegation).
 - **docs:** System test plan updated with X18–X20 entries (all deferred to
   unit test).
+
+**Note:** `flock` and SQLite `BEGIN EXCLUSIVE` locks don't propagate across
+Docker Desktop's macOS host ↔ Linux VM boundary. Docker delegation solves
+this by ensuring all runs execute inside the container.
 
 ---
 

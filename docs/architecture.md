@@ -132,8 +132,11 @@ show "calls / depends on". Modules are grouped by layer.
 │  │  classify+move  │ │  evidence,     │ │  Triggers orchestrator  │  │
 │  │  pass. Calls    │ │  rules, desc,  │ │  every N minutes.       │  │
 │  │  learner, then  │ │  contacts.     │ │  max_instances=1        │  │
-│  │  pipeline, then │ │  Uses learner  │ │  + health check :8025   │  │
-│  │  mover.         │ │  for rule eval.│ │  + web UI :8080         │  │
+│  │  pipeline, then │ │  Uses learner  │ │  + flock before JMAP    │  │
+│  │  mover.         │ │  for rule eval.│ │  + health check :8025   │  │
+│  │                 │ │                │ │  + web UI :8080         │  │
+│  │  _acquire_run_  │ │                │ │                         │  │
+│  │  lock / _release│ │                │ │                         │  │
 │  └────────────────┘ └────────────────┘ └─────────────────────────┘  │
 │                                                                     │
 │  ┌────────────────┐ ┌──────────────────────────────────────────┐    │
@@ -145,6 +148,11 @@ show "calls / depends on". Modules are grouped by layer.
 │  │  analyze,       │ │  creation/toggle.                        │    │
 │  │  check-config,  │ │                                          │    │
 │  │  export-rules   │ │                                          │    │
+│  │                 │ │                                          │    │
+│  │  Docker deleg:  │ │                                          │    │
+│  │  run/dry-run →  │ │                                          │    │
+│  │  docker exec if │ │                                          │    │
+│  │  container up   │ │                                          │    │
 │  └────────────────┘ └──────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
 
@@ -253,7 +261,18 @@ Triggered by `mailsort run` (live) or `mailsort dry-run`. The scheduler
 calls the same path with `dry_run=False` on a timer.
 
 ```
-  [Scheduler / CLI]
+  [CLI]
+        │
+        ◇ Docker container running?
+        yes → docker exec mailsort mailsort run/dry-run
+        │     (all runs happen inside the same kernel)
+        no ▼
+  [CLI / Scheduler]
+        │
+        ◇ dry_run?
+        no → acquire flock(data/mailsort.run.lock)
+        │    fail? → "Another live run in progress" → exit 1
+        yes → skip lock
         │
         │  run_classification_pass(dry_run=T/F)
         ▼
@@ -437,5 +456,6 @@ calls the same path with `dry_run=False` on a timer.
 │
 └── data/                        ← Docker volume mount point
     ├── mailsort.db              ← SQLite database (rules + audit log)
+    ├── mailsort.run.lock        ← flock-based exclusive run lock (auto-created)
     └── mailsort.log             ← Application log
 ```

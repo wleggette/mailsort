@@ -22,7 +22,7 @@ from mailsort.db.migrations import run_migrations
 from mailsort.health import start_health_server
 from mailsort.jmap.client import JMAPClient
 from mailsort.jmap.mailbox_tree import MailboxTree
-from mailsort.orchestrator import run_classification_pass
+from mailsort.orchestrator import run_classification_pass, _acquire_run_lock, _release_run_lock
 
 logger = logging.getLogger(__name__)
 
@@ -80,33 +80,39 @@ def _scheduled_run(cfg: Config) -> None:
     """Execute a single classification pass. Called by the scheduler."""
     logger.info("Starting scheduled classification pass")
 
-    with Database(cfg.db_path) as db:
-        run_migrations(db)
-        AuditWriter(db).reconcile_stale_runs()
+    # Acquire the run lock early (before expensive JMAP setup) so a
+    # second instance fails fast instead of doing redundant work.
+    lock_fd = _acquire_run_lock(cfg.db_path)
+    if lock_fd is None:
+        logger.warning("Scheduled run skipped — another live run holds the lock")
+        return
 
-        try:
-            jmap = JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url)
-            mailboxes = jmap.get_all_mailboxes()
-            tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
+    try:
+        with Database(cfg.db_path) as db:
+            run_migrations(db)
+            AuditWriter(db).reconcile_stale_runs()
 
-            run_id = run_classification_pass(
-                cfg, db, jmap, tree, dry_run=False, trigger="scheduler",
-            )
+            try:
+                jmap = JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url)
+                mailboxes = jmap.get_all_mailboxes()
+                tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
 
-            if run_id is None:
-                logger.warning("Scheduled run skipped — another live run holds the lock")
-                return
-
-            row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-            if row:
-                logger.info(
-                    "Scheduled run %s complete: status=%s seen=%s moved=%s",
-                    run_id[:8], row["status"], row["emails_seen"], row["emails_moved"],
+                run_id = run_classification_pass(
+                    cfg, db, jmap, tree, dry_run=False, trigger="scheduler",
                 )
-        except Exception:
-            logger.exception("Scheduled classification pass failed")
-        finally:
-            jmap.close()
+
+                row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                if row:
+                    logger.info(
+                        "Scheduled run %s complete: status=%s seen=%s moved=%s",
+                        run_id[:8], row["status"], row["emails_seen"], row["emails_moved"],
+                    )
+            except Exception:
+                logger.exception("Scheduled classification pass failed")
+            finally:
+                jmap.close()
+    finally:
+        _release_run_lock(lock_fd)
 
 
 def _start_web_server(cfg: Config) -> Optional[Any]:

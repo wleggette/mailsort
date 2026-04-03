@@ -79,37 +79,15 @@ def run_classification_pass(
     *,
     dry_run: bool = False,
     trigger: str = "scheduler",
-) -> str | None:
+) -> str:
     """Execute one full classification-and-move pass.
 
-    Returns the run_id, or None if a live run was skipped because another
-    live run already holds the exclusive lock.  Dry runs never acquire
-    the lock and always proceed.
+    Returns the run_id.
+
+    Callers are responsible for acquiring the run lock (via
+    ``_acquire_run_lock``) before invoking this for live runs.
+    Dry runs do not need a lock.
     """
-    lock_fd: int | None = None
-    if not dry_run:
-        lock_fd = _acquire_run_lock(cfg.db_path)
-        if lock_fd is None:
-            logger.warning("Another live run is in progress — skipping this run")
-            return None
-
-    try:
-        return _run_with_lock(cfg, db, jmap, tree, dry_run=dry_run, trigger=trigger)
-    finally:
-        if lock_fd is not None:
-            _release_run_lock(lock_fd)
-
-
-def _run_with_lock(
-    cfg: Config,
-    db: Database,
-    jmap: JMAPClient,
-    tree: MailboxTree,
-    *,
-    dry_run: bool = False,
-    trigger: str = "scheduler",
-) -> str:
-    """Inner run logic, called after the lock is acquired (if needed)."""
     audit = AuditWriter(db)
     run_id = audit.start_run(trigger=trigger)
 

@@ -30,6 +30,10 @@ data/*.db-journal
 data/*.log
 data/*.log.*
 *.run.lock
+*.lock.db
+*.lock.db-shm
+*.lock.db-wal
+*.lock.db-journal
 
 # Working notes (ephemeral, not documentation)
 docs/dev/scratch.md

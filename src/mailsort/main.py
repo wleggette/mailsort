@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
 from mailsort.jmap.client import JMAPClient
 from mailsort.jmap.mailbox_tree import MailboxTree
-from mailsort.orchestrator import run_classification_pass
+from mailsort.orchestrator import run_classification_pass, _acquire_run_lock, _release_run_lock
 from mailsort.scheduler import start_scheduler
 
 
@@ -121,6 +122,8 @@ def cli(ctx: click.Context, config_path: str) -> None:
 @click.pass_context
 def run(ctx: click.Context) -> None:
     """Run a single classification-and-move pass."""
+    if _maybe_delegate_to_docker(["run"]):
+        return
     _run_pass(ctx, dry_run=False)
 
 
@@ -128,7 +131,43 @@ def run(ctx: click.Context) -> None:
 @click.pass_context
 def dry_run(ctx: click.Context) -> None:
     """Classify emails but don't move anything (decisions are still logged)."""
+    if _maybe_delegate_to_docker(["dry-run"]):
+        return
     _run_pass(ctx, dry_run=True)
+
+
+_DOCKER_CONTAINER_NAME = "mailsort"
+
+
+def _is_docker_container_running() -> bool:
+    """Check if the mailsort Docker container is running."""
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", _DOCKER_CONTAINER_NAME],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _maybe_delegate_to_docker(args: list[str]) -> bool:
+    """If the mailsort Docker container is running, delegate the command to it.
+
+    Returns True if the command was delegated (caller should return early),
+    False if it should run locally.
+    """
+    if not _is_docker_container_running():
+        return False
+
+    click.echo(
+        f"Docker container '{_DOCKER_CONTAINER_NAME}' is running — delegating…",
+        err=True,
+    )
+    result = subprocess.run(
+        ["docker", "exec", _DOCKER_CONTAINER_NAME, "mailsort"] + args,
+    )
+    sys.exit(result.returncode)
 
 
 def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
@@ -136,6 +175,29 @@ def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
     setup_logging(cfg)
     logger = logging.getLogger(__name__)
     mode = "DRY RUN" if dry_run else "LIVE"
+
+    # Acquire the run lock early (before expensive JMAP setup) so a
+    # second live run fails fast instead of hanging during setup.
+    lock_fd = None
+    if not dry_run:
+        lock_fd = _acquire_run_lock(cfg.db_path)
+        if lock_fd is None:
+            click.echo("Another live run is in progress — cannot start a second one.", err=True)
+            ctx.exit(1)
+            return
+
+    try:
+        run_id = _do_run_pass(cfg, dry_run=dry_run)
+    finally:
+        if lock_fd is not None:
+            _release_run_lock(lock_fd)
+
+    _report_run_summary(cfg, run_id, mode=mode, dry_run=dry_run)
+
+
+def _do_run_pass(cfg: Config, *, dry_run: bool) -> str:
+    """Execute the JMAP setup and classification pass. Returns run_id."""
+    logger = logging.getLogger(__name__)
 
     with Database(cfg.db_path) as db:
         run_migrations(db)
@@ -151,55 +213,54 @@ def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
                 tree.inbox_id,
             )
 
-            run_id = run_classification_pass(
+            return run_classification_pass(
                 cfg, db, jmap, tree, dry_run=dry_run, trigger="cli",
             )
 
-            if run_id is None:
-                click.echo("Another live run is in progress — cannot start a second one.", err=True)
-                ctx.exit(1)
-                return
 
-        # Report summary — matches the structured log output
+def _report_run_summary(cfg: Config, run_id: str, *, mode: str, dry_run: bool) -> None:
+    """Print the CLI summary for a completed run."""
+    with Database(cfg.db_path) as db:
         row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        if row:
-            click.echo(f"\n[{mode}] Run {run_id[:8]}… complete:")
-            click.echo(f"  Status:          {row['status']}")
-            if row["error_summary"]:
-                click.echo(f"  Error:           {row['error_summary']}")
-                return
+        if not row:
+            return
 
-            seen = row["emails_seen"] or 0
-            moved = row["emails_moved"] or 0
+        click.echo(f"\n[{mode}] Run {run_id[:8]}… complete:")
+        click.echo(f"  Status:          {row['status']}")
+        if row["error_summary"]:
+            click.echo(f"  Error:           {row['error_summary']}")
+            return
 
-            # Query audit_log for this run's breakdown
-            audit_rows = db.execute(
-                "SELECT classification_source, skip_reason, moved FROM audit_log WHERE run_id = ?",
-                (run_id,),
-            ).fetchall()
+        seen = row["emails_seen"] or 0
+        moved = row["emails_moved"] or 0
 
-            sources: dict[str, int] = {}
-            would_move = 0
-            skip_reasons: dict[str, int] = {}
-            for a in audit_rows:
-                src = a["classification_source"] or "unknown"
-                sources[src] = sources.get(src, 0) + 1
-                if a["skip_reason"]:
-                    r = a["skip_reason"]
-                    skip_reasons[r] = skip_reasons.get(r, 0) + 1
-                else:
-                    would_move += 1
+        audit_rows = db.execute(
+            "SELECT classification_source, skip_reason, moved FROM audit_log WHERE run_id = ?",
+            (run_id,),
+        ).fetchall()
 
-            source_str = ", ".join(f"{s}: {n}" for s, n in sorted(sources.items(), key=lambda x: -x[1]))
+    sources: dict[str, int] = {}
+    would_move = 0
+    skip_reasons: dict[str, int] = {}
+    for a in audit_rows:
+        src = a["classification_source"] or "unknown"
+        sources[src] = sources.get(src, 0) + 1
+        if a["skip_reason"]:
+            r = a["skip_reason"]
+            skip_reasons[r] = skip_reasons.get(r, 0) + 1
+        else:
+            would_move += 1
 
-            click.echo(f"  Emails:          {len(audit_rows)}")
-            if source_str:
-                click.echo(f"  Classification:  {source_str}")
-            move_label = "Moved" if not dry_run else "Would move"
-            click.echo(f"  {move_label + ':':15s}{moved if not dry_run else would_move}")
-            for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
-                label = reason.replace("_", " ").title()
-                click.echo(f"  {label + ':':15s}{count}")
+    source_str = ", ".join(f"{s}: {n}" for s, n in sorted(sources.items(), key=lambda x: -x[1]))
+
+    click.echo(f"  Emails:          {len(audit_rows)}")
+    if source_str:
+        click.echo(f"  Classification:  {source_str}")
+    move_label = "Moved" if not dry_run else "Would move"
+    click.echo(f"  {move_label + ':':15s}{moved if not dry_run else would_move}")
+    for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+        label = reason.replace("_", " ").title()
+        click.echo(f"  {label + ':':15s}{count}")
 
 
 @cli.command()

@@ -6,28 +6,47 @@ chronological — newest entries first.
 
 ---
 
-## 2026-04-02 — Exclusive file lock for live runs
+## 2026-04-02 — Exclusive lock for live runs
 
 **Context:** During `docker compose up --build -d`, two container instances
 overlapped for ~90 seconds. Both ran live classification passes against the
 same SQLite database, producing duplicate runs and conflicting audit entries.
 SQLite WAL mode prevented corruption, but the application logic broke.
 
-**Decision:** Live runs acquire an exclusive `fcntl.flock` on
-`data/mailsort.run.lock` (derived from `db_path`). Dry runs, the web UI,
-and CLI read commands never acquire the lock.
+**Decision:** Two-layer approach:
+
+1. **`fcntl.flock`** on `data/mailsort.run.lock` — true mutual exclusion
+   within a single kernel. Auto-releases on crash/SIGKILL. Callers acquire
+   the lock early (before JMAP setup) and release in `finally`.
+2. **CLI Docker delegation** — when the local CLI detects a running `mailsort`
+   Docker container, it delegates the command via `docker exec` instead of
+   running locally. This ensures all runs happen inside the same Linux kernel
+   where `flock` works.
 
 **Options considered:**
 1. **Lock in `Database.connect()`** — too broad, blocks web UI and dry runs
-2. **Lock in each caller** — duplicates logic across scheduler/CLI
-3. **SQLite advisory table** — race-prone between two processes
-4. **PID file** — stale after crashes, needs cleanup logic
-5. ✅ **`fcntl.flock` in `run_classification_pass`** — single acquisition
-   point, auto-releases on exit/crash, non-blocking (`LOCK_NB`)
+2. **Lock in each caller without shared helper** — duplicates logic, easy to
+   miss a call site
+3. **PID file** — stale after crashes, needs cleanup logic
+4. **`fcntl.flock` alone** — auto-releases on exit, non-blocking. Works
+   perfectly within a single kernel, but `flock` locks are per-kernel and
+   don't propagate across Docker Desktop's VM boundary (macOS host ↔ Linux
+   container).
+5. **SQLite `BEGIN EXCLUSIVE` on a dedicated lock database** — SQLite's file
+   locking also uses per-kernel `fcntl` locks under the hood; same Docker
+   Desktop VM boundary problem.
+6. **Data-level check on the `runs` table** — queries `status='running'` rows.
+   Works across Docker, but if a run crashes without `finish_run`, the stale
+   row blocks all runs for up to 30 minutes (the reconciliation threshold).
+   Operational hazard.
+7. ✅ **`flock` + CLI Docker delegation** — `flock` provides true mutual
+   exclusion; Docker delegation ensures all runs share a kernel. No stale
+   locks, no TOCTOU race, no crash lockout.
 
-**Scope rule:** Only `run_classification_pass(dry_run=False)` acquires the
-lock. `dry_run=True` always proceeds. This allows read-only observation runs
-to overlap with anything.
+**Scope rule:** Only live runs (`dry_run=False`) acquire the lock.
+`dry_run=True` always proceeds. `reconcile_stale_runs` unconditionally
+abandons all `status='running'` rows — with `flock`, any such row from a
+prior process is genuinely stale.
 
 **Defense-in-depth:** `docker-compose.yml` also sets `stop_grace_period: 180s`
 so Docker waits up to 3 minutes for the old container to finish before
