@@ -5,6 +5,26 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-02 — Fix: move_failed status + scheduler double-runs
+
+**What changed:**
+- **fix:** JMAP move failures (e.g. read-only token) now set
+  `skip_reason='move_failed'` on affected audit entries and finish the run with
+  `status='error'`. Previously these showed as "dry run" in the UI and the run
+  completed as `status='completed'` — masking the real problem.
+- **fix:** Removed duplicate initial run on scheduler startup. The manual
+  `_scheduled_run()` call before `scheduler.start()` caused APScheduler to fire
+  a second run immediately (its default `next_run_time=now` caught up). Now
+  APScheduler handles the immediate first run on its own.
+- **feat:** Dashboard "Recent Runs" table now has an "Errors" column showing
+  the count of `move_failed` entries per run, with red highlighting.
+- **feat:** Dashboard and audit list show distinct "error" status badge (red)
+  for runs where moves failed.
+- **schema:** Migration M9 rebuilds the `runs` table to add `'error'` to the
+  status CHECK constraint.
+
+---
+
 ## 2026-03-21 — PRD refinement & List-Unsubscribe analysis
 
 **What changed:**

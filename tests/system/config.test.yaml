@@ -37,3 +37,10 @@ skip_senders: []
 
 # Runtime — test database separate from production
 db_path: "data/test.db"
+
+# Logging
+logging_config:
+  level: DEBUG
+  file: "data/test.log"
+  max_size_mb: 10
+  backup_count: 3

@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from mailsort.config import Config, ClassificationConfig, FastmailConfig, SchedulerConfig
+from mailsort.jmap.client import ReadOnlyTokenError
 from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
 from mailsort.jmap.mailbox_tree import MailboxTree
@@ -353,3 +354,74 @@ def test_run_output_numbers_all_add_up(db: Database, monkeypatch):
     assert would_move == 2
     assert left_in_inbox == 1
     assert would_move + left_in_inbox == 3  # = eligible count
+
+
+# ------------------------------------------------------------------
+# JMAP move exception → move_failed + run status='error'
+# ------------------------------------------------------------------
+
+def test_move_exception_sets_move_failed_and_error_status(db: Database):
+    """When move_emails raises an exception, planned entries get
+    skip_reason='move_failed' and the run finishes with status='error'."""
+    cfg = _make_config()
+    tree = _make_tree()
+
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.commit()
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = ["email-001"]
+    mock_jmap.get_emails.return_value = [_make_jmap_email()]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.move_emails.side_effect = ReadOnlyTokenError("move emails")
+
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    # Audit entry should have skip_reason='move_failed'
+    row = db.execute("SELECT * FROM audit_log WHERE email_id='email-001'").fetchone()
+    assert row is not None
+    assert row["moved"] == 0
+    assert row["skip_reason"] == "move_failed"
+
+    # Run should finish as 'error', not 'completed' or 'failed'
+    run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    assert run_row["status"] == "error"
+    assert run_row["emails_moved"] == 0
+    assert run_row["error_summary"] is not None
+    assert "read-only" in run_row["error_summary"].lower()
+
+
+def test_successful_move_has_no_move_failed(db: Database):
+    """When move_emails succeeds, no entries have skip_reason='move_failed'
+    and the run finishes with status='completed'."""
+    cfg = _make_config()
+    tree = _make_tree()
+
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.commit()
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = ["email-001"]
+    mock_jmap.get_emails.return_value = [_make_jmap_email()]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.move_emails.return_value = {"email-001": True}
+
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    # No move_failed entries
+    count = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE skip_reason='move_failed'"
+    ).fetchone()[0]
+    assert count == 0
+
+    # Run should be 'completed'
+    run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    assert run_row["status"] == "completed"
+    assert run_row["emails_moved"] == 1
+    assert run_row["error_summary"] is None

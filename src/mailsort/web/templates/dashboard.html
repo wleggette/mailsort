@@ -110,6 +110,7 @@
           <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Started</th>
           <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Seen</th>
           <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Moved</th>
+          <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Errors</th>
         </tr>
       </thead>
       <tbody class="bg-white divide-y divide-gray-200">
@@ -121,6 +122,8 @@
           <td class="px-6 py-3">
             {% if run['status'] == 'completed' %}
               <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">completed</span>
+            {% elif run['status'] == 'error' %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">error</span>
             {% elif run['status'] == 'failed' %}
               <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">failed</span>
             {% elif run['status'] == 'abandoned' %}
@@ -133,6 +136,7 @@
           <td class="px-6 py-3 text-sm text-gray-600" data-utc="{{ run['started_at'] }}" data-utc-format="short">{{ run['started_at'] }}</td>
           <td class="px-6 py-3 text-sm text-right text-gray-900">{{ run['emails_seen'] }}</td>
           <td class="px-6 py-3 text-sm text-right text-gray-900">{{ run['emails_moved'] }}</td>
+          <td class="px-6 py-3 text-sm text-right {{ 'text-red-600 font-medium' if error_counts.get(run['run_id'], 0) else 'text-gray-400' }}">{{ error_counts.get(run['run_id'], 0) or '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>

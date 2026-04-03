@@ -110,9 +110,13 @@ def test_jmap_move_crash_still_logs_decisions(db: Database):
     assert row["target_folder"] == "INBOX/Affairs/Banks"
     assert row["moved"] == 0  # move was not confirmed
 
-    # Run should be completed (the move error is non-fatal)
+    # Run should be 'error' (move failure is non-fatal but recorded)
     run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-    assert run_row["status"] == "completed"
+    assert run_row["status"] == "error"
+    assert run_row["error_summary"] is not None
+
+    # Planned entries should have skip_reason='move_failed'
+    assert row["skip_reason"] == "move_failed"
 
 
 # ------------------------------------------------------------------

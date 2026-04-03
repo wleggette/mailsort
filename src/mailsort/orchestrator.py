@@ -56,8 +56,14 @@ def run_classification_pass(
     run_id = audit.start_run(trigger=trigger)
 
     try:
-        seen, moved = _execute_run(cfg, db, jmap, tree, audit, run_id, dry_run=dry_run)
-        audit.finish_run(run_id, status="completed", emails_seen=seen, emails_moved=moved)
+        seen, moved, move_error = _execute_run(cfg, db, jmap, tree, audit, run_id, dry_run=dry_run)
+        if move_error:
+            audit.finish_run(
+                run_id, status="error", emails_seen=seen,
+                emails_moved=moved, error_summary=move_error,
+            )
+        else:
+            audit.finish_run(run_id, status="completed", emails_seen=seen, emails_moved=moved)
     except Exception as e:
         logger.exception("Run %s failed", run_id)
         audit.finish_run(run_id, status="failed", error_summary=str(e)[:500])
@@ -75,8 +81,8 @@ def _execute_run(
     run_id: str,
     *,
     dry_run: bool = False,
-) -> tuple[int, int]:
-    """Inner run logic. Returns (emails_seen, emails_moved)."""
+) -> tuple[int, int, str | None]:
+    """Inner run logic. Returns (emails_seen, emails_moved, move_error)."""
     run_start = time.monotonic()
     mode = "DRY RUN" if dry_run else "live"
     short_id = run_id[:8]
@@ -185,7 +191,7 @@ def _execute_run(
     if not inbox_ids:
         elapsed = time.monotonic() - run_start
         logger.info("── Run %s completed (%.1fs) — nothing to process ──", short_id, elapsed)
-        return 0, 0
+        return 0, 0, None
 
     # ------------------------------------------------------------------
     # 2. Fetch and extract features
@@ -316,6 +322,7 @@ def _execute_run(
     # 5. Execute moves
     # ------------------------------------------------------------------
     outcomes: dict[str, bool] = {}
+    move_error: str | None = None
     try:
         if planned and not dry_run:
             moves = [
@@ -339,8 +346,11 @@ def _execute_run(
         # Log each skip reason on its own line
         for reason, count in skip_reasons.most_common():
             logger.info("  %-16s %d", reason.replace("_", " ").title() + ":", count)
-    except Exception:
+    except Exception as exc:
         logger.exception("JMAP move_emails failed — decisions will still be logged")
+        move_error = str(exc)[:500]
+        for d in planned:
+            d.skip_reason = "move_failed"
     finally:
         audit.log_decisions(run_id, decisions, outcomes)
 
@@ -348,7 +358,7 @@ def _execute_run(
     elapsed = time.monotonic() - run_start
     logger.info("── Run %s completed (%.1fs) ──", short_id, elapsed)
 
-    return len(eligible), emails_moved
+    return len(eligible), emails_moved, move_error
 
 
 def _load_folder_descriptions(cfg: Config, db: Database, valid_paths: set[str]) -> str:

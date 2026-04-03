@@ -6,6 +6,78 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-02 — Distinguish "move failed" from "dry run" in audit outcomes
+
+**Context:** When `move_emails` raises `ReadOnlyTokenError` (or any JMAP
+error), the orchestrator catches the exception, logs decisions with
+`moved=0` and `skip_reason=NULL`, and finishes the run with
+`status='completed'`. The UI template's fallthrough logic shows these
+entries as "dry run" — misleading, since the intent was to move.
+
+**Options considered:**
+1. **Per-entry `skip_reason='move_error'`** — accurate per row, but no
+   run-level visibility.
+2. **Run-level error indicator only** — banner on dashboard, but individual
+   entries still look like dry runs.
+3. **Both A + B** — per-entry skip_reason AND run-level error status.
+4. **Distinct `move_failed` status** — set `skip_reason='move_failed'` on
+   entries whose moves were attempted but failed (API error or per-email
+   failure), set run status to `'error'` (not `'failed'` — the run itself
+   completed, but moves didn't land), and add an "Errors" column to the
+   dashboard run table.
+
+**Decision:** Option 4 — per-entry `skip_reason='move_failed'` plus
+run-level `status='error'` with an errors count column.
+
+**Rationale:**
+- "dry run" should only appear when `dry_run=True` was explicitly passed.
+- "move_failed" is a distinct semantic: classification succeeded, move
+  didn't. Users need to see this to diagnose token/permission issues.
+- Run status `'error'` (vs `'failed'`) distinguishes "moves didn't work"
+  from "run crashed before completing" (which stays `'failed'`).
+- An errors column in the run table gives at-a-glance visibility without
+  needing to drill into individual entries.
+
+**Affected code:** `orchestrator.py` (catch move errors, set skip_reason),
+`audit/writer.py` (finish_run with `'error'` status), `dashboard.html`
+(errors column, error badge), `audit/list.html` ("move failed" outcome
+badge).
+
+---
+
+## 2026-04-02 — Remove manual immediate run from scheduler startup
+
+**Context:** `start_scheduler` adds an APScheduler interval job, then calls
+`_scheduled_run()` manually before `scheduler.start()`. APScheduler's
+interval trigger defaults `next_run_time` to `now` (time of `add_job`). The
+manual call takes ~3 minutes; when `scheduler.start()` fires, APScheduler
+sees the first fire time is in the past and immediately executes the job —
+producing a duplicate run ~3 minutes after the manual one.
+
+**Options considered:**
+1. **Remove manual call, let APScheduler handle it** — APScheduler already
+   fires at `next_run_time=now` when `scheduler.start()` is called.
+   Simplest fix.
+2. **Keep manual call, push APScheduler's first fire to `now + interval`**
+   via `next_run_time` parameter. More code, same result.
+
+**Decision:** Option 1, refined — remove the manual `_scheduled_run()` call
+(lines 66–70 of scheduler.py) and add `next_run_time=datetime.now(timezone.utc)`
+to `add_job()` so APScheduler fires the first run immediately on `start()`.
+
+**Rationale:**
+- APScheduler's interval trigger defaults `next_run_time` to `now + interval`,
+  NOT `now`. The manual call existed because without it, the first run would be
+  delayed by a full interval. But having both created duplicates.
+- Explicit `next_run_time=now` gives immediate-on-start behavior with no
+  duplicate. APScheduler then schedules subsequent runs at `now + interval`.
+- `max_instances=1` already prevents overlap if the first run is slow.
+
+**Affected code:** `scheduler.py` (remove lines 66–70, add `next_run_time`
+to `add_job`).
+
+---
+
 ## 2026-03-26 — Embed web UI in scheduler process
 
 **Context:** `mailsort start` runs the scheduler + health check in a single

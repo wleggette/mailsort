@@ -132,6 +132,29 @@ _M8_AUDIT_RECEIVED_AT = """
 ALTER TABLE audit_log ADD COLUMN email_received_at TEXT;
 """
 
+_M9_RUNS_ERROR_STATUS = """
+-- Rebuild runs table to add 'error' to the status CHECK constraint.
+-- SQLite does not support ALTER COLUMN, so we recreate the table.
+-- PRAGMA foreign_keys=OFF is required because inbox_snapshot has a FK to runs.
+PRAGMA foreign_keys=OFF;
+DROP TABLE IF EXISTS runs_new;
+CREATE TABLE runs_new (
+    run_id        TEXT PRIMARY KEY,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    status        TEXT NOT NULL
+                      CHECK(status IN ('running','completed','failed','abandoned','error')),
+    trigger       TEXT NOT NULL DEFAULT 'scheduler',
+    emails_seen   INTEGER NOT NULL DEFAULT 0,
+    emails_moved  INTEGER NOT NULL DEFAULT 0,
+    error_summary TEXT
+);
+INSERT INTO runs_new SELECT * FROM runs;
+DROP TABLE runs;
+ALTER TABLE runs_new RENAME TO runs;
+PRAGMA foreign_keys=ON;
+"""
+
 _MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "create_schema_version",      _M1_SCHEMA_VERSION),
     (2, "create_rules",               _M2_RULES),
@@ -141,6 +164,7 @@ _MIGRATIONS: list[tuple[int, str, str]] = [
     (6, "create_folder_descriptions", _M6_FOLDER_DESCRIPTIONS),
     (7, "create_inbox_snapshot",      _M7_INBOX_SNAPSHOT),
     (8, "add_audit_received_at",      _M8_AUDIT_RECEIVED_AT),
+    (9, "add_runs_error_status",      _M9_RUNS_ERROR_STATUS),
 ]
 
 # ---------------------------------------------------------------------------

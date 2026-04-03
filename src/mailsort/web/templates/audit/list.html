@@ -172,6 +172,8 @@
           <td class="px-4 py-2 whitespace-nowrap">
             {% if row['moved'] %}
               <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">moved</span>
+            {% elif row['skip_reason'] == 'move_failed' %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">move failed</span>
             {% elif row['skip_reason'] %}
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">{{ row['skip_reason'].replace('_', ' ') }}</span>
             {% else %}

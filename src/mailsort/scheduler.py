@@ -10,6 +10,7 @@ import logging
 import signal
 import sys
 import threading
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -41,6 +42,7 @@ def start_scheduler(cfg: Config) -> None:
         kwargs={"cfg": cfg},
         id="mailsort_classification",
         name="Mailsort classification pass",
+        next_run_time=datetime.now(timezone.utc),
     )
 
     # Graceful shutdown on SIGTERM (Docker stop) and SIGINT (Ctrl+C)
@@ -62,12 +64,6 @@ def start_scheduler(cfg: Config) -> None:
         "Scheduler started: running every %d minutes",
         cfg.scheduler.interval_minutes,
     )
-
-    # Run once immediately on startup, then on interval
-    try:
-        _scheduled_run(cfg=cfg)
-    except Exception:
-        logger.exception("Initial run failed, scheduler will retry on next interval")
 
     try:
         scheduler.start()

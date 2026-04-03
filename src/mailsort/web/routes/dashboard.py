@@ -24,6 +24,19 @@ async def dashboard(request: Request):
         "SELECT * FROM runs ORDER BY started_at DESC LIMIT 20"
     ).fetchall()
 
+    # Error counts per run (move_failed entries)
+    error_counts = {}
+    if recent_runs:
+        run_ids = [r['run_id'] for r in recent_runs]
+        placeholders = ','.join('?' * len(run_ids))
+        error_rows = db.execute(
+            f"SELECT run_id, COUNT(*) as cnt FROM audit_log "
+            f"WHERE run_id IN ({placeholders}) AND skip_reason='move_failed' "
+            f"GROUP BY run_id",
+            run_ids,
+        ).fetchall()
+        error_counts = {r['run_id']: r['cnt'] for r in error_rows}
+
     # Quick stats
     total_rules = db.execute("SELECT COUNT(*) FROM rules WHERE active = 1").fetchone()[0]
     total_contacts = db.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
@@ -66,6 +79,7 @@ async def dashboard(request: Request):
             "last_contact_refresh": last_contact_refresh["value"] if last_contact_refresh else "Never",
             "last_folder_scan": last_folder_scan["value"] if last_folder_scan else "Never",
             "next_sort_run": next_sort_run,
+            "error_counts": error_counts,
             "nav_active": "dashboard",
         },
     )

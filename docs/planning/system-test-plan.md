@@ -617,6 +617,7 @@ Live run re-processes inbox emails and actually moves eligible ones via JMAP
 - [ ] **audit_log updated**: `moved=1` for moved emails in this run
 - [ ] **Age gate works**: previously-too-new email now moved after waiting
 - [ ] **JMAP state consistent**: `Email/get` confirms new `mailboxIds` for moved emails
+- [ ] **No move_failed entries**: all moved emails have `skip_reason IS NULL` (confirms move pipeline succeeded cleanly)
 
 ---
 
@@ -757,6 +758,8 @@ Behaviors that depend on state accumulated across multiple phases.
 | **X10** | skip_senders filtering (no audit row) | Email from `skip_senders` is filtered before classification — no audit_log row at all (unlike LLM skip which gets a row) | *Deferred to unit test* (`test_skip_sender_is_filtered`) — requires config change mid-test |
 | **X11** | Inbox snapshot scope vs batch scope | Snapshot covers all inbox emails (up to 500); classification covers only `max_batch_size`. Emails beyond the batch can still be detected as departures | *Deferred to integration test* (`test_snapshot_captures_beyond_batch_for_departure_detection`) — uses `max_batch_size=3` to test with 5 emails |
 | **X12** | Dry run still runs learning step | Dry run detects corrections from previous live runs and adjusts rule confidence — even penalizing rules | *Deferred to integration test* (`test_dry_run_detects_corrections_and_penalizes_rules`) — verifies correction detection + rule penalty in `dry_run=True` mode |
+| **X13** | JMAP move fails (read-only token) — entries show `move_failed`, run status `error` | `skip_reason='move_failed'` set on planned entries when move raises; run finishes as `'error'` not `'completed'`; UI shows "move failed" not "dry run" | *Deferred to unit test* (`test_move_exception_sets_move_failed_and_error_status`) — requires injecting JMAP error |
+| **X14** | Scheduler fires exactly one initial run | No duplicate runs within the first interval window after `scheduler.start()` | *Deferred to unit test* — scheduler timer mechanics, not classification logic |
 
 ---
 
@@ -789,3 +792,6 @@ Behaviors that depend on state accumulated across multiple phases.
 - **Clock skew**: dynamic `receivedAt` uses UTC and the `too_new` check uses
   UTC, so clock skew between local and Fastmail shouldn't matter
 - **Cost**: each run uses ~10-20 LLM calls at Haiku pricing (~$0.01 total)
+- **Duplicate runs**: if the scheduler fires the initial run twice (manual call +
+  APScheduler catchup), test results may include duplicate audit entries. Fixed by
+  removing the manual `_scheduled_run` call; verified by unit test
