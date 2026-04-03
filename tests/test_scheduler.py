@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from mailsort.config import Config, ClassificationConfig, FastmailConfig, SchedulerConfig
+from mailsort.orchestrator import RunResult
 from mailsort.scheduler import _scheduled_run
 
 
@@ -36,7 +37,7 @@ def test_scheduled_run_calls_orchestrator(
     mock_tree = MagicMock()
     mock_tree_cls.build.return_value = mock_tree
 
-    mock_run_pass.return_value = "run-123"
+    mock_run_pass.return_value = RunResult(run_id="run-123", dry_run=False, read_only_downgrade=False)
     # Mock the DB query for the summary log
     mock_db_instance = MagicMock()
     mock_db_instance.execute.return_value.fetchone.return_value = {

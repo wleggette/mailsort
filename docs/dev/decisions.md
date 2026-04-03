@@ -6,6 +6,34 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-03 — Auto-downgrade to dry run on read-only token
+
+**Context:** Users may configure a read-only JMAP API token (intentionally or
+by accident). Without detection, every email in a live run would attempt a
+move, fail with `ReadOnlyTokenError`, and be logged as `move_failed` — noisy
+and wasteful.
+
+**Decision:** Check `jmap.is_read_only` at the start of
+`run_classification_pass`. If the token is read-only and `dry_run=False`,
+automatically switch to dry-run mode. Return a `RunResult` dataclass so
+callers can display the downgrade to the user.
+
+**Options considered:**
+1. **Fail fast with an error** — rejects the run entirely. But the
+   classification output (audit log, rule hits) is still valuable for
+   debugging and setup. Losing it would be wasteful.
+2. **Warn and proceed with live mode** — every email hits `move_failed`.
+   Generates noise in audit log and error summaries.
+3. ✅ **Auto-downgrade to dry run** — preserves all classification output,
+   avoids move errors, and clearly signals the read-only state to the user.
+   No data loss, no wasted JMAP calls.
+
+**Scope:** The check runs once per `run_classification_pass` call, before any
+audit or classification work. Explicit `dry_run=True` is never flagged as a
+downgrade (`read_only_downgrade=False`).
+
+---
+
 ## 2026-04-02 — Exclusive lock for live runs
 
 **Context:** During `docker compose up --build -d`, two container instances

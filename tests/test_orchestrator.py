@@ -13,7 +13,7 @@ from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
 from mailsort.jmap.mailbox_tree import MailboxTree
 from mailsort.jmap.models import JMAPEmail, JMAPMailbox
-from mailsort.orchestrator import run_classification_pass, _acquire_run_lock, _release_run_lock
+from mailsort.orchestrator import run_classification_pass, RunResult, _acquire_run_lock, _release_run_lock
 
 
 def _make_config() -> Config:
@@ -77,7 +77,7 @@ def test_dry_run_logs_but_does_not_move(db: Database):
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
     mock_jmap.get_thread_email_ids.return_value = []
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test").run_id
 
     # move_emails should NOT have been called
     mock_jmap.move_emails.assert_not_called()
@@ -122,8 +122,9 @@ def test_live_run_moves_and_logs(db: Database):
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
     mock_jmap.get_thread_email_ids.return_value = []
     mock_jmap.move_emails.return_value = {"email-001": True}
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     # move_emails should have been called with (email_id, folder_id, current_mailbox_ids)
     mock_jmap.move_emails.assert_called_once()
@@ -174,6 +175,7 @@ def test_move_emails_called_with_keyword_tag(db: Database):
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
     mock_jmap.get_thread_email_ids.return_value = []
     mock_jmap.move_emails.return_value = {"email-001": True}
+    mock_jmap.is_read_only = False
 
     run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
 
@@ -191,8 +193,9 @@ def test_no_emails_completes_cleanly(db: Database):
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = []
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     assert run_row["status"] == "completed"
@@ -212,8 +215,9 @@ def test_skip_sender_is_filtered(db: Database):
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     # No audit rows — filtered before classification
     count = db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
@@ -242,7 +246,7 @@ def test_no_classification_logs_skip(db: Database, monkeypatch):
     mock_jmap.session_capabilities = set()
     mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     row = db.execute("SELECT * FROM audit_log WHERE email_id='email-001'").fetchone()
     assert row is not None
@@ -269,8 +273,9 @@ def test_move_failure_recorded(db: Database):
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
     mock_jmap.get_thread_email_ids.return_value = []
     mock_jmap.move_emails.return_value = {"email-001": False}  # move failed
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     row = db.execute("SELECT * FROM audit_log WHERE email_id='email-001'").fetchone()
     assert row["moved"] == 0
@@ -325,7 +330,7 @@ def test_run_output_numbers_all_add_up(db: Database, monkeypatch):
     mock_jmap.session_capabilities = set()
     mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test").run_id
 
     # Verify run summary
     run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
@@ -380,8 +385,9 @@ def test_move_exception_sets_move_failed_and_error_status(db: Database):
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
     mock_jmap.get_thread_email_ids.return_value = []
     mock_jmap.move_emails.side_effect = ReadOnlyTokenError("move emails")
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     # Audit entry should have skip_reason='move_failed'
     row = db.execute("SELECT * FROM audit_log WHERE email_id='email-001'").fetchone()
@@ -414,8 +420,9 @@ def test_successful_move_has_no_move_failed(db: Database):
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
     mock_jmap.get_thread_email_ids.return_value = []
     mock_jmap.move_emails.return_value = {"email-001": True}
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     # No move_failed entries
     count = db.execute(
@@ -461,7 +468,7 @@ def test_email_vanishes_between_query_and_fetch(db: Database, monkeypatch):
     mock_jmap.is_read_only = False
     mock_jmap.move_emails.return_value = {"email-001": True}
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     # Only the surviving email gets an audit row
     rows = db.execute("SELECT email_id FROM audit_log WHERE run_id=?", (run_id,)).fetchall()
@@ -508,7 +515,7 @@ def test_partial_move_success_records_mixed_outcomes(db: Database, monkeypatch):
     # Chase moves successfully, Amazon fails (e.g. deleted mid-flight)
     mock_jmap.move_emails.return_value = {"e-chase": True, "e-amazon": False}
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     chase_row = db.execute("SELECT * FROM audit_log WHERE email_id='e-chase'").fetchone()
     assert chase_row["moved"] == 1
@@ -555,7 +562,7 @@ def test_move_response_missing_email_records_not_moved(db: Database, monkeypatch
     # Response only includes chase — amazon is absent entirely
     mock_jmap.move_emails.return_value = {"e-chase": True}
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     chase_row = db.execute("SELECT * FROM audit_log WHERE email_id='e-chase'").fetchone()
     assert chase_row["moved"] == 1
@@ -631,7 +638,7 @@ def test_dry_run_does_not_acquire_lock(tmp_path, monkeypatch):
         result = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
         assert result is not None
 
-        run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (result,)).fetchone()
+        run_row = db.execute("SELECT * FROM runs WHERE run_id=?", (result.run_id,)).fetchone()
         assert run_row["status"] == "completed"
     finally:
         _release_run_lock(lock_fd)
@@ -681,3 +688,95 @@ def test_lock_released_on_exception(tmp_path, monkeypatch):
         _release_run_lock(fd2)
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------
+# Auto-downgrade to dry-run on read-only token
+# ------------------------------------------------------------------
+
+
+def test_read_only_token_auto_downgrades_to_dry_run(test_config, db, monkeypatch):
+    """Read-only token + dry_run=False → auto-downgrade, no move_emails call."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    tree = _make_tree()
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = True
+
+    result = run_classification_pass(test_config, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    assert isinstance(result, RunResult)
+    assert result.read_only_downgrade is True
+    assert result.dry_run is True
+    mock_jmap.move_emails.assert_not_called()
+
+    row = db.execute("SELECT * FROM runs WHERE run_id=?", (result.run_id,)).fetchone()
+    assert row["status"] == "completed"
+
+
+def test_writable_token_runs_live_normally(test_config, db, monkeypatch):
+    """Writable token + dry_run=False → live run, no downgrade."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    tree = _make_tree()
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    result = run_classification_pass(test_config, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    assert isinstance(result, RunResult)
+    assert result.read_only_downgrade is False
+    assert result.dry_run is False
+
+
+def test_explicit_dry_run_not_flagged_as_downgrade(test_config, db, monkeypatch):
+    """Explicit dry_run=True → dry_run=True but read_only_downgrade=False."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    tree = _make_tree()
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = True  # read-only, but explicit dry-run
+
+    result = run_classification_pass(test_config, db, mock_jmap, tree, dry_run=True, trigger="test")
+
+    assert isinstance(result, RunResult)
+    assert result.dry_run is True
+    assert result.read_only_downgrade is False
+
+
+def test_read_only_downgrade_skips_record_hits(test_config, db, monkeypatch):
+    """Auto-downgraded run uses record_hits=False (rule hit_count unchanged)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    tree = _make_tree()
+
+    # Insert a rule that would match
+    db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
+    )
+    db.commit()
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.return_value = ["email-001"]
+    mock_jmap.get_emails.return_value = [_make_jmap_email()]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = True
+
+    result = run_classification_pass(test_config, db, mock_jmap, tree, dry_run=False, trigger="test")
+
+    assert result.read_only_downgrade is True
+    mock_jmap.move_emails.assert_not_called()
+
+    # hit_count should not be incremented (record_hits=False for dry runs)
+    rule = db.execute("SELECT hit_count FROM rules WHERE condition_value='noreply@chase.com'").fetchone()
+    assert rule["hit_count"] == 0

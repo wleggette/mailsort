@@ -260,40 +260,8 @@ token also works but the header property may fail on some token configurations).
 
 ---
 
-## Dry-Run Aware Stale Run Reconciliation
+## ~~Dry-Run Aware Stale Run Reconciliation~~
 
-**Status:** Deferred (2026-04-03)
-
-### Problem
-
-`reconcile_stale_runs` abandons all `status='running'` rows unconditionally.
-This is correct for live runs (protected by `flock` — if we hold the lock,
-any other `running` row is from a dead process). But dry runs don't hold the
-lock, so:
-
-- **Two overlapping dry runs:** The second's reconciliation abandons the
-  first's in-progress row.
-- **Live run during a dry run:** The live run's reconciliation abandons the
-  dry run's in-progress row.
-
-Current workaround: dry runs skip `reconcile_stale_runs` entirely. This
-prevents dry-vs-dry conflicts but a live run can still abandon an in-progress
-dry run's row.
-
-### Proposed fix
-
-Add a `dry_run BOOLEAN DEFAULT 0` column to the `runs` table (schema
-migration). Then:
-
-- `start_run` accepts and stores the `dry_run` flag
-- `reconcile_stale_runs` only abandons rows where `dry_run=0` (live runs
-  protected by flock are genuinely stale if we hold the lock)
-- Stale dry-run rows are harmless (no moves happened) and can be cleaned up
-  by an age-based sweep if desired
-
-### Why deferred
-
-The practical impact is low — dry runs completing during a live run will show
-as "abandoned" instead of "completed" in the dashboard, but no data is lost
-and no moves are affected. The current workaround (skip reconciliation in
-dry runs) covers the most common case (overlapping dry runs).
+**Status:** Implemented (2026-04-03) — M10 migration added `dry_run` column
+to `runs` table. `reconcile_stale_runs` now only abandons `dry_run=0` rows.
+Dashboard shows "dry run" badge for dry-run runs.

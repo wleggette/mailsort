@@ -17,7 +17,7 @@ from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
 from mailsort.jmap.client import JMAPClient
 from mailsort.jmap.mailbox_tree import MailboxTree
-from mailsort.orchestrator import run_classification_pass, _acquire_run_lock, _release_run_lock
+from mailsort.orchestrator import run_classification_pass, RunResult, _acquire_run_lock, _release_run_lock
 from mailsort.scheduler import start_scheduler
 
 
@@ -187,22 +187,28 @@ def _run_pass(ctx: click.Context, *, dry_run: bool) -> None:
             return
 
     try:
-        run_id = _do_run_pass(cfg, dry_run=dry_run)
+        result = _do_run_pass(cfg, dry_run=dry_run)
     finally:
         if lock_fd is not None:
             _release_run_lock(lock_fd)
 
-    _report_run_summary(cfg, run_id, mode=mode, dry_run=dry_run)
+    if result.read_only_downgrade:
+        mode = "DRY RUN — read-only token"
+    elif result.dry_run != dry_run:
+        mode = "DRY RUN"
+    _report_run_summary(cfg, result.run_id, mode=mode, dry_run=result.dry_run)
 
 
-def _do_run_pass(cfg: Config, *, dry_run: bool) -> str:
-    """Execute the JMAP setup and classification pass. Returns run_id."""
+def _do_run_pass(cfg: Config, *, dry_run: bool) -> RunResult:
+    """Execute the JMAP setup and classification pass. Returns RunResult."""
     logger = logging.getLogger(__name__)
 
     with Database(cfg.db_path) as db:
         run_migrations(db)
         if not dry_run:
-            AuditWriter(db).reconcile_stale_runs()
+            AuditWriter(db).reconcile_stale_runs(
+                stale_dry_run_minutes=cfg.scheduler.stale_dry_run_minutes,
+            )
         logger.info("Database ready at %s", cfg.db_path)
 
         with JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url) as jmap:

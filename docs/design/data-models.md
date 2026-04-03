@@ -36,11 +36,12 @@ CREATE TABLE runs (
     run_id        TEXT PRIMARY KEY,
     started_at    TEXT NOT NULL,
     finished_at   TEXT,
-    status        TEXT NOT NULL CHECK(status IN ('running','completed','failed','abandoned')),
+    status        TEXT NOT NULL CHECK(status IN ('running','completed','failed','abandoned','error')),
     trigger       TEXT NOT NULL DEFAULT 'scheduler',
     emails_seen   INTEGER NOT NULL DEFAULT 0,
     emails_moved  INTEGER NOT NULL DEFAULT 0,
-    error_summary TEXT
+    error_summary TEXT,
+    dry_run       BOOLEAN NOT NULL DEFAULT 0
 );
 ```
 

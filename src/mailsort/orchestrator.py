@@ -18,6 +18,7 @@ import logging
 import os
 import time
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -40,6 +41,15 @@ from mailsort.jmap.models import MoveDecision
 from mailsort.mover.mover import build_move_decision
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RunResult:
+    """Result of a classification pass."""
+
+    run_id: str
+    dry_run: bool  # effective mode (may differ from requested)
+    read_only_downgrade: bool  # True if auto-downgraded due to read-only token
 
 
 def _acquire_run_lock(db_path: str) -> int | None:
@@ -79,20 +89,31 @@ def run_classification_pass(
     *,
     dry_run: bool = False,
     trigger: str = "scheduler",
-) -> str:
+) -> RunResult:
     """Execute one full classification-and-move pass.
 
-    Returns the run_id.
+    Returns a :class:`RunResult` with the run_id and effective mode.
+    If the JMAP token is read-only and ``dry_run=False``, the run is
+    automatically downgraded to dry-run mode.
 
     Callers are responsible for acquiring the run lock (via
     ``_acquire_run_lock``) before invoking this for live runs.
     Dry runs do not need a lock.
     """
+    read_only_downgrade = False
+    effective_dry_run = dry_run
+    if not dry_run and jmap.is_read_only:
+        logger.warning("JMAP token is read-only — auto-downgrading to dry-run mode")
+        effective_dry_run = True
+        read_only_downgrade = True
+
     audit = AuditWriter(db)
-    run_id = audit.start_run(trigger=trigger)
+    run_id = audit.start_run(trigger=trigger, dry_run=effective_dry_run)
 
     try:
-        seen, moved, move_error = _execute_run(cfg, db, jmap, tree, audit, run_id, dry_run=dry_run)
+        seen, moved, move_error = _execute_run(
+            cfg, db, jmap, tree, audit, run_id, dry_run=effective_dry_run,
+        )
         if move_error:
             audit.finish_run(
                 run_id, status="error", emails_seen=seen,
@@ -105,7 +126,11 @@ def run_classification_pass(
         audit.finish_run(run_id, status="failed", error_summary=str(e)[:500])
         raise
 
-    return run_id
+    return RunResult(
+        run_id=run_id,
+        dry_run=effective_dry_run,
+        read_only_downgrade=read_only_downgrade,
+    )
 
 
 def _execute_run(

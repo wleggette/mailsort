@@ -155,6 +155,10 @@ ALTER TABLE runs_new RENAME TO runs;
 PRAGMA foreign_keys=ON;
 """
 
+_M10_RUNS_DRY_RUN = """
+ALTER TABLE runs ADD COLUMN dry_run BOOLEAN NOT NULL DEFAULT 0;
+"""
+
 _MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "create_schema_version",      _M1_SCHEMA_VERSION),
     (2, "create_rules",               _M2_RULES),
@@ -165,6 +169,7 @@ _MIGRATIONS: list[tuple[int, str, str]] = [
     (7, "create_inbox_snapshot",      _M7_INBOX_SNAPSHOT),
     (8, "add_audit_received_at",      _M8_AUDIT_RECEIVED_AT),
     (9, "add_runs_error_status",      _M9_RUNS_ERROR_STATUS),
+    (10, "add_runs_dry_run",           _M10_RUNS_DRY_RUN),
 ]
 
 # ---------------------------------------------------------------------------

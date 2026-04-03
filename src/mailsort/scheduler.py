@@ -90,22 +90,30 @@ def _scheduled_run(cfg: Config) -> None:
     try:
         with Database(cfg.db_path) as db:
             run_migrations(db)
-            AuditWriter(db).reconcile_stale_runs()
+            AuditWriter(db).reconcile_stale_runs(
+                stale_dry_run_minutes=cfg.scheduler.stale_dry_run_minutes,
+            )
 
             try:
                 jmap = JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url)
                 mailboxes = jmap.get_all_mailboxes()
                 tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
 
-                run_id = run_classification_pass(
+                result = run_classification_pass(
                     cfg, db, jmap, tree, dry_run=False, trigger="scheduler",
                 )
 
-                row = db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                if result.read_only_downgrade:
+                    logger.warning(
+                        "Run %s auto-downgraded to dry-run (read-only token)",
+                        result.run_id[:8],
+                    )
+
+                row = db.execute("SELECT * FROM runs WHERE run_id=?", (result.run_id,)).fetchone()
                 if row:
                     logger.info(
                         "Scheduled run %s complete: status=%s seen=%s moved=%s",
-                        run_id[:8], row["status"], row["emails_seen"], row["emails_moved"],
+                        result.run_id[:8], row["status"], row["emails_seen"], row["emails_moved"],
                     )
             except Exception:
                 logger.exception("Scheduled classification pass failed")

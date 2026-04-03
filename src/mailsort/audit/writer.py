@@ -21,16 +21,16 @@ class AuditWriter:
     # Run lifecycle
     # ------------------------------------------------------------------
 
-    def start_run(self, trigger: str = "scheduler") -> str:
+    def start_run(self, trigger: str = "scheduler", dry_run: bool = False) -> str:
         """Insert a new run row and return its run_id."""
         run_id = str(uuid.uuid4())
         self._db.execute(
-            "INSERT INTO runs (run_id, started_at, status, trigger) "
-            "VALUES (?, datetime('now'), 'running', ?)",
-            (run_id, trigger),
+            "INSERT INTO runs (run_id, started_at, status, trigger, dry_run) "
+            "VALUES (?, datetime('now'), 'running', ?, ?)",
+            (run_id, trigger, dry_run),
         )
         self._db.commit()
-        logger.info("Started run %s (trigger=%s)", run_id, trigger)
+        logger.info("Started run %s (trigger=%s, dry_run=%s)", run_id, trigger, dry_run)
         return run_id
 
     def finish_run(
@@ -63,16 +63,25 @@ class AuditWriter:
         except Exception:
             logger.exception("Failed to write finish_run for %s", run_id)
 
-    def reconcile_stale_runs(self) -> int:
-        """Mark any leftover 'running' rows as 'abandoned'. Returns count.
+    def reconcile_stale_runs(self, stale_dry_run_minutes: int = 60) -> int:
+        """Mark leftover 'running' rows as 'abandoned'. Returns count.
 
-        With ``flock``-based run locking, a 'running' row that outlives
+        With ``flock``-based run locking, a live 'running' row that outlives
         its process is genuinely stale — the kernel released the lock
-        when the process exited.  Safe to abandon unconditionally.
+        when the process exited.  Live runs (``dry_run=0``) are abandoned
+        unconditionally.
+
+        Dry-run rows don't hold a lock and may overlap, so they are only
+        abandoned after ``stale_dry_run_minutes`` (default 60) to avoid
+        interfering with a legitimately running dry run.
         """
         cursor = self._db.execute(
             "UPDATE runs SET status='abandoned', finished_at=datetime('now') "
-            "WHERE status='running'"
+            "WHERE status='running' AND ("
+            "  dry_run = 0"
+            "  OR (dry_run = 1 AND started_at < datetime('now', ?))"
+            ")",
+            (f"-{stale_dry_run_minutes} minutes",),
         )
         self._db.commit()
         count = cursor.rowcount

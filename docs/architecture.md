@@ -275,6 +275,11 @@ calls the same path with `dry_run=False` on a timer.
         yes → skip lock
         │
         │  run_classification_pass(dry_run=T/F)
+        │
+        ◇ dry_run=F and jmap.is_read_only?
+        yes → auto-downgrade to dry_run=T
+        │     (RunResult.read_only_downgrade=True)
+        no → proceed as requested
         ▼
   ┌─ Step 1: Pre-work ────────────────────────────────┐
   │  (pre: start_run() → run_id)                      │

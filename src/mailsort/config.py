@@ -23,6 +23,7 @@ class SchedulerConfig(BaseModel):
     web_port: int = 8080              # Port for embedded web UI (0 = disabled)
     contacts_refresh_hours: int = 24
     folder_scan_interval_hours: int = 24
+    stale_dry_run_minutes: int = 60   # Abandon dry-run rows stuck 'running' after this many minutes
 
 
 class ThresholdsConfig(BaseModel):

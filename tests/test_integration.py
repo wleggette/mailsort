@@ -114,7 +114,7 @@ def test_pass1_classify_and_move(db: Database, monkeypatch):
         "e-amazon": True,
     }
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     # --- Verify move_emails was called with the right emails ---
     mock_jmap.move_emails.assert_called_once()
@@ -187,7 +187,7 @@ def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypat
     mock_jmap.is_read_only = False
     mock_jmap.move_emails.return_value = {"e-chase": True}
 
-    run1_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run1_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     # Confirm rule confidence is still original
     rule_row = db.execute(
@@ -217,7 +217,7 @@ def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypat
     mock_jmap2.session_capabilities = set()
     mock_jmap2.is_read_only = False
 
-    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=False, trigger="test")
+    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=False, trigger="test").run_id
 
     # --- Verify rule was penalized ---
     rule_row = db.execute(
@@ -245,7 +245,7 @@ def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypat
     mock_jmap3.session_capabilities = set()
     mock_jmap3.is_read_only = False
 
-    run3_id = run_classification_pass(cfg, db, mock_jmap3, tree, dry_run=False, trigger="test")
+    run3_id = run_classification_pass(cfg, db, mock_jmap3, tree, dry_run=False, trigger="test").run_id
 
     rule_row = db.execute(
         "SELECT confidence FROM rules WHERE id = ?",
@@ -368,7 +368,7 @@ def test_partial_move_failure(db: Database, monkeypatch):
         "e-amazon": False,  # JMAP failed to move this one
     }
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     rows = {
         r["email_id"]: dict(r)
@@ -404,7 +404,7 @@ def test_unread_email_classified_but_not_moved(db: Database, monkeypatch):
     mock_jmap.session_capabilities = set()
     mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     mock_jmap.move_emails.assert_not_called()
 
@@ -436,7 +436,7 @@ def test_flagged_email_classified_but_not_moved(db: Database, monkeypatch):
     mock_jmap.session_capabilities = set()
     mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     mock_jmap.move_emails.assert_not_called()
 
@@ -468,7 +468,7 @@ def test_too_new_email_classified_but_not_moved(db: Database, monkeypatch):
     mock_jmap.session_capabilities = set()
     mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     mock_jmap.move_emails.assert_not_called()
 
@@ -502,7 +502,7 @@ def test_old_read_email_is_moved(db: Database, monkeypatch):
     mock_jmap.is_read_only = False
     mock_jmap.move_emails.return_value = {"e-ok": True}
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     mock_jmap.move_emails.assert_called_once()
 
@@ -541,7 +541,7 @@ def test_mixed_eligibility_in_single_run(db: Database, monkeypatch):
     mock_jmap.is_read_only = False
     mock_jmap.move_emails.return_value = {"e-ok": True}
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     rows = {
         r["email_id"]: dict(r)
@@ -634,7 +634,7 @@ def test_deleted_folder_email_gets_unknown_folder_skip(db: Database, monkeypatch
     mock_jmap.session_capabilities = set()
     mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
     # The rule should have been deactivated by reconcile_folders
     rule = db.execute(
@@ -836,7 +836,7 @@ def test_snapshot_captures_beyond_batch_for_departure_detection(db: Database, mo
     mock_jmap1.session_capabilities = set()
     mock_jmap1.is_read_only = False
 
-    run1_id = run_classification_pass(cfg, db, mock_jmap1, tree, dry_run=False, trigger="test")
+    run1_id = run_classification_pass(cfg, db, mock_jmap1, tree, dry_run=False, trigger="test").run_id
 
     # Verify: snapshot has all 5, but only 3 were classified
     snapshot_count = db.execute("SELECT COUNT(*) FROM inbox_snapshot WHERE run_id = ?", (run1_id,)).fetchone()[0]
@@ -879,7 +879,7 @@ def test_snapshot_captures_beyond_batch_for_departure_detection(db: Database, mo
     mock_jmap2.session_capabilities = set()
     mock_jmap2.is_read_only = False
 
-    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=False, trigger="test")
+    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=False, trigger="test").run_id
 
     # Verify: departure detected for email D
     manual_d = db.execute(
@@ -946,7 +946,7 @@ def test_dry_run_detects_corrections_and_penalizes_rules(db: Database, monkeypat
     mock_jmap2.is_read_only = False
 
     # --- Pass 2 (DRY RUN): should still detect correction and penalize ---
-    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=True, trigger="test")
+    run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=True, trigger="test").run_id
 
     # Verify: rule was penalized even though this was a dry run
     rule_row = db.execute(

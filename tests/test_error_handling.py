@@ -101,8 +101,9 @@ def test_jmap_move_crash_still_logs_decisions(db: Database):
     mock_jmap.get_emails.return_value = [_make_jmap_email()]
     mock_jmap.get_thread_email_ids.return_value = []
     mock_jmap.move_emails.side_effect = ConnectionError("Network down")
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     # Decisions should still be in audit_log
     row = db.execute("SELECT * FROM audit_log WHERE email_id='email-001'").fetchone()
@@ -142,6 +143,7 @@ def test_classification_error_isolates_to_single_email(db: Database):
     mock_jmap.get_emails.return_value = [email_bad, email_good]
     mock_jmap.get_thread_email_ids.return_value = []
     mock_jmap.move_emails.return_value = {"email-good": True}
+    mock_jmap.is_read_only = False
 
     # Patch the pipeline's classify to throw on the first email only.
     # This tests the orchestrator's per-email try/except.
@@ -156,7 +158,7 @@ def test_classification_error_isolates_to_single_email(db: Database):
         return original_classify(self, features)
 
     with patch.object(ClassificationPipeline, "classify", classify_with_crash):
-        run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+        run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     # The bad email should be logged as skipped (classification_error)
     bad_row = db.execute("SELECT * FROM audit_log WHERE email_id='email-bad'").fetchone()
@@ -281,8 +283,9 @@ def test_jmap_query_failure_completes_with_zero(db: Database):
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.side_effect = ConnectionError("JMAP unreachable")
+    mock_jmap.is_read_only = False
 
-    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test")
+    run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     # The run should complete (graceful degradation) with 0 emails
     row = db.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()

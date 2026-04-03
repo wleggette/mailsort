@@ -10,6 +10,7 @@ scheduler:
   min_age_minutes: 240          # Minimum email age before moving (default 4 hours)
   max_batch_size: 100
   contacts_refresh_hours: 24   # How often to re-fetch contacts from Fastmail
+  # stale_dry_run_minutes: 60  # Abandon dry-run rows stuck 'running' after this many minutes
 
 # Classification
 classification:

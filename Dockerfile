@@ -2,11 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Copy package source and metadata — src/ must be present before pip install
+# Install dependencies first (cached unless pyproject.toml changes)
 COPY pyproject.toml README.md ./
-COPY src/ ./src/
+RUN mkdir -p src/mailsort && \
+    touch src/mailsort/__init__.py && \
+    pip install --no-cache-dir . && \
+    rm -rf src/mailsort
 
-RUN pip install --no-cache-dir .
+# Copy actual source (only this layer rebuilds on code changes)
+COPY src/ ./src/
+RUN pip install --no-cache-dir --no-deps .
 
 COPY config.yaml ./config.yaml
 RUN mkdir -p /app/data

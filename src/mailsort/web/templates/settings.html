@@ -4,7 +4,7 @@
 {% block content %}
 <div class="mb-6">
   <h1 class="text-2xl font-semibold text-gray-900">Settings</h1>
-  <p class="text-sm text-gray-500 mt-1">Current configuration (read-only — edit config.yaml to change)</p>
+  <p class="text-sm text-gray-500 mt-1">Current configuration — edit config.yaml to change</p>
 </div>
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -20,6 +20,32 @@
         <span class="text-sm text-gray-600">API Token</span>
         <span class="text-sm font-mono text-gray-500">{{ cfg.fastmail_api_token[:8] if cfg.fastmail_api_token else '(not set)' }}…</span>
       </div>
+      {% if jmap_info %}
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Account ID</span>
+        <span class="text-sm font-mono text-gray-900">{{ jmap_info.account_id }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Capabilities</span>
+        <span class="text-sm text-gray-900">{{ jmap_info.capabilities }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Contacts</span>
+        <span class="text-sm text-gray-900">{{ 'available' if jmap_info.contacts else 'not available' }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Permissions</span>
+        {% if jmap_info.is_read_only %}
+          <span class="text-sm text-amber-600 font-medium">READ-ONLY (dry-run only)</span>
+        {% else %}
+          <span class="text-sm text-green-700 font-medium">READ-WRITE</span>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="mt-2 p-2 bg-gray-50 rounded">
+        <span class="text-xs text-gray-400">JMAP session unavailable</span>
+      </div>
+      {% endif %}
     </div>
   </div>
 

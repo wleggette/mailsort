@@ -5,6 +5,33 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-03 — Feat: auto-downgrade to dry run on read-only token
+
+**What changed:**
+- **feat:** `run_classification_pass` now checks `jmap.is_read_only` before
+  executing a live run. If the JMAP token lacks write permissions,
+  the run is automatically downgraded to dry-run mode instead of
+  failing with `move_failed` errors on every email.
+- **feat:** New `RunResult` dataclass returned by `run_classification_pass`
+  carries `run_id`, effective `dry_run` flag, and `read_only_downgrade`
+  indicator.
+- **feat:** CLI displays `[DRY RUN — read-only token]` in the summary
+  when auto-downgraded. Scheduler logs a warning with the run ID.
+- **schema:** M10 migration adds `dry_run BOOLEAN NOT NULL DEFAULT 0` to
+  `runs` table. `start_run` stores the effective dry-run mode.
+- **fix:** `reconcile_stale_runs` now only abandons live runs (`dry_run=0`).
+  Dry-run rows are left alone since they don't hold a lock.
+- **ui:** Dashboard shows blue "dry run" badge instead of green "completed"
+  for dry-run runs (both explicit and auto-downgraded).
+- **ui:** Settings page Fastmail card now shows Account ID, Capabilities,
+  Contacts availability, and Permissions (READ-ONLY / READ-WRITE).
+  Removed "(read-only)" from page subtitle.
+- **test:** 4 auto-downgrade tests (downgrade triggers, writable proceeds,
+  explicit dry-run not flagged, record_hits skipped on downgrade).
+  All existing tests updated for `RunResult` return type.
+
+---
+
 ## 2026-04-02 — Feat: prevent concurrent live runs
 
 **What changed:**
