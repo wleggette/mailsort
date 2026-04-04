@@ -265,3 +265,116 @@ token also works but the header property may fail on some token configurations).
 **Status:** Implemented (2026-04-03) — M10 migration added `dry_run` column
 to `runs` table. `reconcile_stale_runs` now only abandons `dry_run=0` rows.
 Dashboard shows "dry run" badge for dry-run runs.
+---
+
+## Coherence Drift on Active Rules
+
+**Status:** Needs implementation (2026-04-04)
+
+### Problem
+
+Rules are auto-created only when coherence ≥ 80% (`auto_rule_domain_coherence`), but
+coherence is never re-evaluated after creation. At classification time, the rule engine
+checks only the rule's stored `confidence` value — not live coherence.
+
+Over time, as new emails from a sender arrive and get sorted to different folders (by
+LLM, thread context, or manual moves), live coherence can drift well below the creation
+threshold. The rule continues to fire because its stored confidence remains high.
+
+**Observed example:** Rule 8 (`exact_sender` for `yzhuang1@gmail.com`) has 16% live
+coherence but is still actively moving mail, because its stored confidence still exceeds
+the `rule_move` threshold (0.85).
+
+Existing safeguards do not cover this case:
+
+- **`_penalize_rule`** only fires on explicit user corrections to a rule's move.
+- **`adjust_rule_confidence`** only decays rules that haven't been hit in 90 days. A
+  rule that keeps matching is never touched.
+
+### Alternatives Considered
+
+1. **Check coherence at classification time.** Before applying a rule match, query the
+   audit_log to compute live coherence and skip the rule if it's below threshold.
+   - Pro: always correct, no stale decisions.
+   - Con: adds a DB query per rule per email per cycle. Couples classification latency
+     to audit_log size. Breaks the clean separation between the rule engine (fast lookup)
+     and the learning layer (periodic analysis).
+
+2. **Periodic coherence audit (chosen).** Extend the learning step to re-check live
+   coherence for all active rules every cycle. Penalize or deactivate rules whose
+   coherence has dropped.
+   - Pro: fits existing architecture (`adjust_rule_confidence` pattern), no classification
+     slowdown, keeps rule engine as a simple confidence-threshold lookup.
+   - Con: rules can be stale for up to one cycle (5 min). Acceptable given the
+     non-real-time nature of email sorting.
+
+3. **Event-driven re-evaluation.** Recompute coherence for affected rules whenever a new
+   audit_log entry is written (i.e., after every sort or manual move).
+   - Pro: always up to date.
+   - Con: significantly more complex. Every audit_log write would need to identify and
+     re-score all rules that could be affected. Over-engineered for the problem.
+
+### Approach
+
+Add a new method (e.g. `audit_rule_coherence()`) to the `Learner` class that runs every
+cycle in the orchestrator's learning step, alongside `adjust_rule_confidence`.
+
+Logic per active rule:
+
+1. Compute live coherence from audit_log: `(emails matching condition → target folder) /
+   (all emails matching condition that were moved)`.
+2. Use a **lookback window** (e.g. 30 days) so recent behavior is weighted over ancient
+   history.
+3. Apply a **minimum sample size** (e.g. ≥ 3 emails in the window) to avoid reacting to
+   noise.
+4. Three tiers:
+   - **Coherence ≥ 80%** → healthy, no action.
+   - **Coherence < 80% but ≥ 50%** → apply a confidence penalty (e.g. same as
+     `correction_penalty`, 0.15). Rule weakens gradually rather than flipping off from
+     one bad email.
+   - **Coherence < 50%** → deactivate the rule outright.
+5. Confidence penalties accumulate across cycles. Once confidence drops below `rule_move`
+   (0.85), the rule stops firing at classification time even before explicit
+   deactivation.
+
+### Open / Unanswered Questions
+
+- **Lookback window duration.** 30 days is a starting guess. Too short and a temporary
+  burst of unusual emails kills good rules. Too long and the system is slow to react.
+  Should this be configurable?
+
+- **Manual rules.** Should rules with `source = 'manual'` be exempt from
+  auto-deactivation? The user explicitly created them, so deactivating silently may be
+  surprising. Alternatively, flag them in the UI rather than deactivating.
+
+- **Hysteresis / oscillation.** If coherence hovers around 80%, a rule could be penalized
+  one cycle and recover the next. Options: (a) hysteresis band — deactivate at 80%,
+  require 85% to reactivate, (b) let confidence penalties accumulate naturally as a
+  damping mechanism, (c) require coherence to be below threshold for N consecutive
+  cycles before acting.
+
+- **Recovery path.** If a deactivated rule's coherence later improves (e.g. the user
+  starts sorting that sender consistently again), should the system automatically
+  reactivate it, or leave it for the user / a new auto-create cycle?
+
+- **All-time vs. windowed coherence.** The rule detail page (`rules.py`) computes
+  coherence over all-time data. Should the audit use the same calculation for
+  consistency, or is windowed better for responsiveness? Should the UI show both?
+
+- **Interaction with `adjust_rule_confidence`.** The existing staleness decay and the new
+  coherence audit both modify confidence. Should they be merged into a single method, or
+  kept separate with clearly defined responsibilities (staleness vs. coherence)?
+
+- **Interaction with correction penalty tuning (above).** Both this feature and the
+  correction penalty issue affect rule confidence. The solutions should be designed
+  together to avoid compounding penalties that kill rules too aggressively.
+
+### Implementation Plan
+
+| Step | File | Change |
+|------|------|--------|
+| 1 | `config.py` | Add optional settings: `coherence_lookback_days` (default 30), `coherence_deactivation_floor` (default 0.50) |
+| 2 | `learner.py` | New method `audit_rule_coherence()` implementing the logic above |
+| 3 | `orchestrator.py` | Call `audit_rule_coherence()` in the learning step after `adjust_rule_confidence()` |
+| 4 | `test_learner.py` | Tests: coherence above threshold (no-op), gradual penalty, deactivation below floor, minimum sample guard, lookback window filtering |
+| 5 | UI (optional) | Show a warning badge on rules whose live coherence is below threshold but are still active |
