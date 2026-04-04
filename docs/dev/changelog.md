@@ -5,6 +5,33 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-03 — Fix: system test age gate timing + Docker intercept
+
+**What changed:**
+- **fix:** Age gate test no longer relies on a fixture email loaded at setup
+  time (whose `received_at` was either always-too-new or already-old-enough
+  by the time the age gate phase ran). Instead, `phase_age_gate` injects a
+  fresh email with `received_at=now` right before step 1, guaranteeing it's
+  too_new initially and eligible after the min_age wait.
+- **fix:** E4 fixture email (`BofA too new`) reverted to `now + 5min` —
+  always too_new, used only by dry-run and too-new-blocked verification.
+- **fix:** `verify_age_gate` now matches "age gate" in subject (the freshly
+  injected email) instead of "too new" (the always-blocked fixture).
+- **fix:** `verify_too_new_blocked` now checks both the E4 fixture and the
+  age-gate email are blocked at step 1.
+
+**Root causes identified:**
+1. Running Docker container (`mailsort`) intercepted all CLI commands,
+   writing run records to the container's DB instead of `data/test.db`.
+2. Stale test emails from prior runs corrupted bootstrap coherence.
+3. E4's `received_at = now + 5min` could never pass the age gate within
+   the test's 65-second wait window.
+
+**Files:** `generate_inbox_emails.py`, `run_system_test.py`,
+`verify_results.py`
+
+---
+
 ## 2026-04-03 — Feat: auto-downgrade to dry run on read-only token
 
 **What changed:**

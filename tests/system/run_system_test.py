@@ -233,13 +233,20 @@ def phase_dry_run(config: str) -> tuple[bool, str]:
         db.close()
 
 
-def phase_age_gate(config: str) -> tuple[bool, str]:
-    """Phase 4: Verify age gate blocks too-new emails, then verify they move after waiting."""
+def phase_age_gate(config: str, to_email: str = "") -> tuple[bool, str]:
+    """Phase 4: Verify age gate blocks too-new emails, then verify they move after waiting.
+
+    Injects a fresh "age gate" email with received_at=now right before step 1.
+    This avoids timing issues with fixture emails loaded minutes earlier at setup.
+    """
     print("\n" + "=" * 60)
     print("Phase 4: Age Gate Test")
     print("=" * 60)
 
     import yaml
+    from datetime import datetime, timezone
+    from tests.system.load_fixtures import JMAPLoader, build_rfc5322
+
     with open(config) as f:
         cfg = yaml.safe_load(f)
     min_age = cfg.get("scheduler", {}).get("min_age_minutes", 1)
@@ -249,8 +256,47 @@ def phase_age_gate(config: str) -> tuple[bool, str]:
     from mailsort.db.migrations import run_migrations
     from tests.system.verify_results import verify_too_new_blocked, verify_age_gate
 
+    # --- Step 0: Inject a fresh age-gate email (received_at = now) ---
+    token = os.environ.get("FASTMAIL_API_TOKEN", "")
+    session_url = cfg.get("fastmail", {}).get("session_url", "https://api.fastmail.com/jmap/session")
+    loader = JMAPLoader(token, session_url)
+    if not to_email:
+        to_email = loader.account_email
+
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y%m%d%H%M")
+    received_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    rfc5322 = build_rfc5322(
+        from_name="Bank of America",
+        from_email="alerts@bankofamerica.com",
+        to_email=to_email,
+        subject=f"[TEST] Age gate BoA alert {ts}",
+        body="Your account balance has changed.",
+        received_at=received_at,
+    )
+    # Resolve inbox ID
+    mailboxes = loader.get_mailboxes()
+    inbox_id = None
+    for mid, mbox in mailboxes.items():
+        if mbox.get("role") == "inbox":
+            inbox_id = mid
+            break
+    if not inbox_id:
+        print("  ERROR: Could not find inbox mailbox")
+        return False, ""
+
+    blob_id = loader.upload_blob(rfc5322)
+    email_id = loader.import_email(
+        blob_id,
+        inbox_id,
+        keywords={"$seen": True, "$mailsort-test": True},
+        received_at=received_at,
+    )
+    print(f"  Injected age-gate email (received_at={received_at}, id={email_id})")
+
     # --- Step 1: Run live BEFORE the age window expires ---
-    print("\n  Step 1: Running live pass (emails should be too new)...")
+    print("\n  Step 1: Running live pass (age-gate email should be too new)...")
     result = run_mailsort("run", config)
     if result.returncode != 0:
         print("  ERROR: Pre-timer live run failed")
@@ -600,7 +646,7 @@ def main():
         print("\nDRY RUN VERIFICATION FAILED — continuing anyway")
 
     # Phase 4: Age Gate Test
-    age_ok, live_run_id = phase_age_gate(args.config)
+    age_ok, live_run_id = phase_age_gate(args.config, to_email=args.to_email or "")
     if not age_ok:
         print("\nAGE GATE TEST FAILED — continuing anyway")
 

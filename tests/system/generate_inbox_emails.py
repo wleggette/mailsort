@@ -56,16 +56,18 @@ def generate_inbox_emails() -> list[dict]:
             "description": "E3: Rule match, flagged — classified but not moved",
         },
 
-        # E4: Rule match (BoA), read, too new — classified but not moved
+        # E4: Rule match (BoA), read, too new — classified but NEVER moved
+        # receivedAt is 5min in the future — always under min_age_minutes.
+        # The age-gate transition test uses a separate email loaded at step time.
         {
             "from_email": "alerts@bankofamerica.com",
             "from_name": "Bank of America",
             "subject": f"[TEST] BofA too new {ts}",
             "body": "A new transaction was posted to your account.",
             "keywords": {"$seen": True},
-            "received_at": (now + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),  # 5min in future — always too new
+            "received_at": (now + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "expected_outcome": "too_new",
-            "description": "E4: Rule match, too new — receivedAt is 5min in future, always under min_age_minutes",
+            "description": "E4: Rule match, always too new — receivedAt is 5min in future",
         },
 
         # E5: Unread + flagged + new — unread takes priority

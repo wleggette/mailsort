@@ -603,10 +603,20 @@ Live run re-processes inbox emails and actually moves eligible ones via JMAP
 
 ### 5.1 Age Gate Test
 
-1. During dry run, one email was created with `receivedAt = now` → skip_reason=too_new
-2. Wait for `min_age_minutes` (1 minute) to elapse
-3. Run live: `mailsort run --config config.test.yaml`
-4. Verify the previously-too-new email is now classified and moved
+Two emails test the age gate:
+
+- **E4** (`BofA too new`): `receivedAt = now + 5min` — always too_new across
+  all phases. Used by dry-run and too-new-blocked verification.
+- **Age gate email**: Injected fresh by `phase_age_gate` with
+  `receivedAt = now` right before step 1. Transitions from too_new → eligible.
+
+Steps:
+
+1. `phase_age_gate` injects a fresh email (`alerts@bankofamerica.com`,
+   `receivedAt = now`) into the inbox
+2. Run live → both E4 and the age-gate email have `skip_reason=too_new`
+3. Wait for `min_age_minutes` (1 minute) + 5s buffer
+4. Run live → age-gate email is now eligible and moved; E4 remains too_new
 5. Verify unread/flagged emails remain in INBOX
 
 ### 5.2 Live Move Verification Checklist

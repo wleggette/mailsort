@@ -561,7 +561,12 @@ def verify_live_run(db: Database, run_id: str) -> VerificationResult:
 
 
 def verify_too_new_blocked(db: Database, run_id: str) -> VerificationResult:
-    """Verify that too-new emails were classified but NOT moved (skip_reason=too_new)."""
+    """Verify that too-new emails were classified but NOT moved (skip_reason=too_new).
+
+    Checks both the fixture E4 email ("too new" in subject) and the freshly-
+    injected age-gate email ("age gate" in subject).  Both should be blocked
+    as too_new at step 1 time.
+    """
     v = VerificationResult()
     print(f"\n=== Verifying Too-New Blocked ({run_id[:8]}) ===")
 
@@ -570,8 +575,10 @@ def verify_too_new_blocked(db: Database, run_id: str) -> VerificationResult:
     ).fetchall()
 
     found_too_new = False
+    found_age_gate = False
     for r in rows:
         subject = r["subject"] or ""
+        # E4: always-too-new fixture email
         if "too new" in subject.lower():
             found_too_new = True
             v.check(
@@ -582,15 +589,31 @@ def verify_too_new_blocked(db: Database, run_id: str) -> VerificationResult:
                 not r["moved"],
                 f"Too-new email was NOT moved (moved={r['moved']}, subject={subject[:50]})",
             )
+        # Age-gate email: injected fresh with received_at=now
+        if "age gate" in subject.lower():
+            found_age_gate = True
+            v.check(
+                r["skip_reason"] == "too_new",
+                f"Age-gate email blocked (skip_reason={r['skip_reason']!r}, subject={subject[:50]})",
+            )
+            v.check(
+                not r["moved"],
+                f"Age-gate email was NOT moved (moved={r['moved']}, subject={subject[:50]})",
+            )
 
     v.check(found_too_new, "At least one too-new email found in run")
+    v.check(found_age_gate, "Age-gate email found in run")
 
     v.print_report()
     return v
 
 
 def verify_age_gate(db: Database, run_id: str) -> VerificationResult:
-    """Verify previously-too-new email was moved after waiting."""
+    """Verify age-gate email was moved after waiting.
+
+    The age-gate email is injected fresh by phase_age_gate with received_at=now.
+    It has "age gate" in its subject (distinct from E4's "too new" subject).
+    """
     v = VerificationResult()
     print(f"\n=== Verifying Age Gate ({run_id[:8]}) ===")
 
@@ -598,21 +621,21 @@ def verify_age_gate(db: Database, run_id: str) -> VerificationResult:
         "SELECT * FROM audit_log WHERE run_id = ?", (run_id,)
     ).fetchall()
 
-    found_too_new_subject = False
+    found_age_gate = False
     for r in rows:
         subject = r["subject"] or ""
-        if "too new" in subject.lower():
-            found_too_new_subject = True
+        if "age gate" in subject.lower():
+            found_age_gate = True
             v.check(
                 r["skip_reason"] != "too_new",
-                f"Previously too-new email is now eligible (skip_reason={r['skip_reason']!r})",
+                f"Age-gate email is now eligible (skip_reason={r['skip_reason']!r})",
             )
             v.check(
                 bool(r["moved"]),
-                f"Previously too-new email was moved (moved={r['moved']})",
+                f"Age-gate email was moved (moved={r['moved']})",
             )
 
-    v.check(found_too_new_subject, "Too-new email appeared in post-timer run")
+    v.check(found_age_gate, "Age-gate email appeared in post-timer run")
 
     v.print_report()
     return v
