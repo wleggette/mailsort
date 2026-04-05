@@ -104,8 +104,9 @@ and rule confidence penalties from being applied.
    but not emails the **user** moved. A blanket `NOT IN (moved = 1)` would also
    exclude the learner's own manual entries, blocking re-detection if the user
    moves an email out, back to inbox, then out again.
-2. Filter through `_already_corrected_email_ids()` before JMAP fetch — matches
-   the dedup pattern already used in `_detect_correction_sorts`.
+2. Filter through `_already_corrected_email_ids()` (now `_already_handled_email_ids()`)
+   before JMAP fetch — matches the dedup pattern already used in
+   `_detect_correction_sorts`.
 
 **Alternatives considered:**
 - Blanket `NOT IN (moved = 1)` — simpler but blocks re-detection after a user's
@@ -331,15 +332,17 @@ the highest-priority rule, or all eligible rules?
 ## 2026-03-21 — Dry runs do not record rule hit_count
 
 **Context:** During `mailsort dry-run`, rules still match emails (for
-classification logging), but should the `hit_count` and `last_hit_at`
-columns be updated?
+classification logging), but should the `hit_count` column be updated?
+(Originally also applied to `last_hit_at`, now renamed to `last_relevant_at`
+and updated by `compute_rule_confidence()` rather than rule hit recording.)
 
 **Decision:** No — dry runs skip hit recording.
 
 **Rationale:**
 - `hit_count` is used in the web UI to show rule activity.
-- `last_hit_at` is used by confidence decay (rules not hit in 90+ days lose
-  confidence). A dry run resetting this clock would prevent legitimate decay.
+- `last_relevant_at` is updated by `compute_rule_confidence()` from audit_log
+  data, not by rule hit recording. Dry runs still run learning/confidence
+  computation, so `last_relevant_at` is updated regardless.
 - Dry runs should be read-only from the rules perspective — observe but don't
   mutate.
 

@@ -109,9 +109,9 @@ show "calls / depends on". Modules are grouped by layer.
 │  │  Auto-rule generation:                                       │   │
 │  │    Create all eligible: list_id + sender_domain + exact      │   │
 │  │                                                              │   │
-│  │  Confidence adjustment:                                      │   │
-│  │    Correction penalty: −0.15 per correction                  │   │
-│  │    Staleness decay: −0.10 after 90 days without a hit        │   │
+│  │  Computed confidence (per cycle):                             │   │
+│  │    confidence = base × coherence × staleness − corrections   │   │
+│  │    Deactivation when confidence < 0.50                       │   │
 │  └───────────────────────────┬──────────────────────────────────┘   │
 │                              │                                      │
 │  ┌───────────────────────────▼──────────────────────────────────┐   │
@@ -291,6 +291,9 @@ calls the same path with `dry_run=False` on a timer.
   │    → log as manual + maybe_create_rule()          │
   │  • scan_folders_for_unknown_sorts (Cat 4, daily)  │
   │    → log as manual + maybe_create_rule()          │
+  │  • compute_rule_confidence() — recompute          │
+  │    confidence for all active auto rules from       │
+  │    live coherence, staleness, and corrections     │
   │  • refresh_contacts (if stale, daily)             │
   │  • generate_descriptions (new folders only)       │
   └───────────────────────┬───────────────────────────┘

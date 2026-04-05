@@ -13,9 +13,10 @@ CREATE TABLE rules (
     condition_value TEXT NOT NULL,    -- The match value (email, domain, regex, etc.)
     target_folder_path TEXT NOT NULL, -- e.g., "INBOX/Affairs/Banks"
     target_folder_id TEXT,           -- JMAP mailbox ID (resolved at runtime)
-    confidence REAL DEFAULT 1.0,     -- 0.0 to 1.0
-    hit_count INTEGER DEFAULT 0,     -- Times this rule has matched (live runs only)
-    last_hit_at TEXT,                -- ISO timestamp (live runs only)
+    confidence REAL DEFAULT 1.0,     -- 0.0 to 1.0 (computed each cycle from live state)
+    hit_count INTEGER DEFAULT 0,     -- Times this rule has matched (live runs only; display only)
+    last_relevant_at TEXT,           -- Most recent email matching condition sorted to target folder
+                                     -- (by rule, LLM, or user); used for staleness factor
     source TEXT NOT NULL DEFAULT 'auto'
         CHECK(source IN ('auto','manual','bootstrap','llm_suggested')),
     created_at TEXT NOT NULL,
@@ -61,7 +62,7 @@ CREATE TABLE audit_log (
     target_folder           TEXT NOT NULL,
     confidence              REAL NOT NULL,
     classification_source   TEXT NOT NULL
-                                CHECK(classification_source IN ('thread','rule','llm','manual')),
+                                CHECK(classification_source IN ('thread','rule','llm','manual','correction')),
     rule_id                 INTEGER,
     llm_reasoning           TEXT,
     moved                   BOOLEAN NOT NULL,
@@ -230,5 +231,7 @@ MIGRATIONS = [
     (8,  "add_audit_received_at"),       # email_received_at column on audit_log
     (9,  "add_runs_error_status"),       # add 'error' to runs.status CHECK
     (10, "add_runs_dry_run"),            # dry_run BOOLEAN on runs table
+    (11, "computed_confidence"),          # last_hit_at → last_relevant_at,
+                                         # 'correction' added to audit_log classification_source CHECK
 ]
 ```

@@ -54,6 +54,22 @@ classification:
     # - "spouse@example.com"
   llm_skip_domains:                 # Never send emails from these domains to the LLM
     # - "bank.example.com"
+  correction_penalty: 0.05          # Confidence reduction per net user correction (3 stops any rule)
+  learner_lookback_days: 7          # Days back to check for skipped/corrected emails
+  coherence_lookback_days: 30       # Window for coherence and correction counting
+  coherence_min_sample: 3           # Min emails in window before coherence adjusts confidence
+  staleness_threshold_days: 365     # Days since last_relevant_at before staleness decay starts
+  staleness_decay_days: 365         # Duration of linear decay from 1.0 to floor
+  staleness_floor: 0.6              # Minimum staleness factor
+  deactivation_threshold: 0.50      # Confidence below which a rule is set to active=0
+  base_confidence:                  # Base confidence formula params (computed on the fly each cycle)
+    list_id: 0.95
+    exact_sender_floor: 0.80
+    exact_sender_cap: 0.95
+    exact_sender_per_evidence: 0.03
+    sender_domain_floor: 0.75
+    sender_domain_cap: 0.90
+    sender_domain_per_evidence: 0.02
 
 # Folder descriptions — OPTIONAL manual overrides only.
 # Bootstrap auto-generates descriptions for all folders by scanning their contents.
@@ -145,8 +161,30 @@ logging_config:
 | `llm_use_preview` | `true` | Send email preview to LLM |
 | `llm_allow_known_contacts` | `true` | Allow LLM for known contacts |
 | `llm_suggest_rule_after_n` | `5` | Suggest regex rule after N consistent LLM classifications |
-| `correction_penalty` | `0.15` | Confidence reduction per user correction |
+| `correction_penalty` | `0.05` | Confidence reduction per net user correction (3 stops any rule) |
 | `learner_lookback_days` | `7` | How many days back to check for skipped/corrected emails |
+| `coherence_lookback_days` | `30` | Window (days) for coherence and correction counting |
+| `coherence_min_sample` | `3` | Minimum emails in window before coherence adjusts confidence |
+| `staleness_threshold_days` | `365` | Days since `last_relevant_at` before staleness decay starts |
+| `staleness_decay_days` | `365` | Duration of linear decay from 1.0 to floor |
+| `staleness_floor` | `0.6` | Minimum staleness factor |
+| `deactivation_threshold` | `0.50` | Confidence below which a rule is set to `active=0` |
+
+### `classification.base_confidence`
+
+Parameters for the base confidence formula, computed on the fly each cycle from
+all-time evidence count in `audit_log`. Caps quickly (~5–8 emails depending on
+rule type), so at scale the coherence and staleness factors dominate.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `list_id` | `0.95` | Fixed base confidence for list_id rules |
+| `exact_sender_floor` | `0.80` | Starting confidence for exact_sender with minimum evidence |
+| `exact_sender_cap` | `0.95` | Maximum confidence for exact_sender regardless of evidence count |
+| `exact_sender_per_evidence` | `0.03` | Confidence increase per additional email for exact_sender |
+| `sender_domain_floor` | `0.75` | Starting confidence for sender_domain with minimum evidence |
+| `sender_domain_cap` | `0.90` | Maximum confidence for sender_domain regardless of evidence count |
+| `sender_domain_per_evidence` | `0.02` | Confidence increase per additional email for sender_domain |
 
 ### `logging_config`
 

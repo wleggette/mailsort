@@ -62,7 +62,7 @@ Single audit log entry with full context.
 
 All classification rules with management capabilities.
 
-- **Table** with columns: type, value, folder, confidence, source, hits, last hit, active
+- **Table** with columns: type, value, folder, confidence, source, hits, last relevant, active
 - **Filter tabs**: All / Active / Inactive / Suggested
 - **Sort** by any column (click header)
 - **Search** by value or folder
@@ -77,10 +77,28 @@ All classification rules with management capabilities.
 
 Single rule with full history.
 
-- Rule metadata: type, value, folder, confidence, source, created, updated
-- Hit history: count, last hit
-- Audit log entries that matched this rule (recent 50)
-- Coherence stats: current n and coherence % for this rule's condition
+- **Details card** — type, value, folder, confidence, source, active status,
+  created/updated timestamps. Confidence stays here (the final computed value).
+- **Performance card** — broken into **All Time** and **Last 30 Days** columns:
+
+  | Metric | All Time | Last 30 Days | Notes |
+  |--------|----------|-------------|-------|
+  | **Hit count** | Total hits | Hits in window | Display only (not used in formula) |
+  | **Last relevant at** | Timestamp | — | Most recent email matching condition sorted to target folder |
+  | **Evidence** | N emails to target / M total | — | All-time only (base confidence caps quickly; windowed breakdown not useful) |
+  | **Coherence** | % (all-time) | % (windowed) | Windowed value is what the formula uses; all-time gives trend |
+  | **Corrections** | N against − M confirming = K net | N against − M confirming = K net | Windowed value feeds the formula; all-time shows lifetime pattern |
+
+  Color coding for coherence: green ≥80%, amber ≥50%, red <50%.
+  Color coding for net corrections: green = 0, amber = 1–2, red ≥ 3.
+
+- **Manual rule warning** — if `source='manual'` and windowed coherence is below
+  `auto_rule_domain_coherence` (default 0.80), show an amber warning badge:
+  "Coherence below threshold — consider reviewing this rule."
+- **Evidence Emails** — all emails matching the rule's condition across all
+  folders, with folder column color-coded (green = target, amber = other).
+  Includes `classification_source` badge (rule/llm/manual/correction/thread).
+- **Audit log entries** that matched this rule (recent 50)
 
 ### 6. Threshold Analysis (`/analyze`)
 

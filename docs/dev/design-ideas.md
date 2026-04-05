@@ -314,9 +314,10 @@ the classification hot path.
 
 **Components:**
 
-- **`base_confidence`** — set once at rule creation from rule type and evidence count.
-  Never changes. Stored in a new `base_confidence` column (or computed from evidence
-  count at query time). All values are configurable via `BaseConfidenceConfig`.
+- **`base_confidence`** — **computed on the fly** each cycle from rule type and all-time
+  evidence count in `audit_log`. Not stored in a column. The `BaseConfidenceConfig`
+  formula caps quickly (~5–8 emails), so at scale coherence and staleness dominate.
+  Uses a LIMIT on the evidence query to avoid full table scans.
   - `list_id`: `base_confidence.list_id` (default 0.95)
   - `exact_sender`: `min(cap, floor + evidence_count × per_evidence)`
     where defaults are floor=0.80, cap=0.95, per_evidence=0.03
@@ -341,9 +342,15 @@ the classification hot path.
   lookback window, minus manual sorts *to* the rule's target folder for the same
   condition (sender/domain/list-id) in the same window. Floored at 0.
   - A "correction" = user relocated an email that this rule moved to a different non-inbox
-    folder (Category 2 detection).
+    folder (Category 2 detection). Recorded as `classification_source='correction'` with
+    `rule_id` set to the **firing rule** (from the original audit_log row).
+  - **Single-rule correction:** only the rule that actually fired gets a correction row.
+    Broader rules (e.g., sender_domain when exact_sender fired) are not explicitly
+    penalized — coherence handles the cascade naturally as the relocated email shows up
+    in the coherence calculation for broader rules.
   - A "confirming sort" = user manually sorted an email matching this rule's condition to
-    the rule's target folder.
+    the rule's target folder (`classification_source='manual'`, matched by
+    `from_address`/`from_domain`/`list_id` + `target_folder`).
   - `net_corrections = max(0, corrections_away − confirming_manual_sorts)`
 
 - **`correction_penalty`** — fixed per-correction amount (default 0.05, configurable).
@@ -389,17 +396,17 @@ For rules that *are* deactivated (confidence below `deactivation_threshold`,
 ```python
 existing = find_rule_any_status(type, value)  # active=0 or active=1
 if existing:
-    reactivate_rule(existing, new_base_confidence)  # reactivate + reset base
+    reactivate_rule(existing, confidence=computed_from_BaseConfidenceConfig)
 else:
-    create_rule(...)
+    create_rule(..., confidence=computed_from_BaseConfidenceConfig)
 ```
 
-No duplicate rows. One row per type+condition. Reactivation resets `base_confidence` from
-current evidence.
+No duplicate rows. One row per type+condition. Reactivation sets `confidence` from the
+`BaseConfidenceConfig` formula using current evidence count (no `base_confidence` column).
 
 > **System test coverage:** Verify that (a) `maybe_create_rule` finds inactive rules and
-> reactivates them instead of creating duplicates, (b) reactivation resets
-> `base_confidence` from current evidence, (c) after reactivation, the confidence formula
+> reactivates them instead of creating duplicates, (b) reactivation sets `confidence` from
+> `BaseConfidenceConfig` formula, (c) after reactivation, the confidence formula
 > runs normally on the reactivated rule, (d) only one row exists per type+condition.
 
 #### Manual Rules
@@ -733,17 +740,17 @@ old `last_hit_at` model, the rule would remain stuck in a dead zone because it c
 #### Replaces: `_penalize_rule`
 
 The current `_penalize_rule` method (called from `_detect_correction_sorts`) applies a
-one-time −0.15 penalty per correction and deactivates when confidence drops below
-threshold. This is replaced by the `net_corrections_in_window` component of the computed
-formula. The detection logic in `_detect_correction_sorts` stays — it still records
-manual audit_log rows — but instead of directly modifying rule confidence, corrections
-are counted by the confidence computation.
+one-time penalty per correction and deactivates when confidence drops below threshold.
+This is replaced by the `net_corrections_in_window` component of the computed formula.
+The detection logic in `_detect_correction_sorts` stays — but instead of directly
+modifying rule confidence via `_penalize_rule`, corrections are recorded as
+`classification_source='correction'` with `rule_id` = the firing rule, and counted
+by `compute_rule_confidence()` each cycle.
 
-Implementation note: corrections need to be identifiable in audit_log. Currently,
-Category 2 corrections are logged as `classification_source='manual'`. To distinguish
-"user sorted from inbox" (Cat 1/3/4) from "user corrected a mailsort move" (Cat 2), a
-flag or separate source value may be needed (e.g. `classification_source='correction'`
-or a `corrects_rule_id` column).
+**Decided:** Category 2 corrections use `classification_source='correction'` with the
+existing `rule_id` column (set to the rule that fired). Single-rule correction;
+coherence handles cascade to broader rules. See `docs/design/learning.md` §Correction
+Identification.
 
 #### Replaces: `adjust_rule_confidence`
 
@@ -757,7 +764,7 @@ A new method on `Learner` that runs every cycle in the learning step. Replaces b
 `_penalize_rule` and `adjust_rule_confidence`. For each active auto rule (`source != 
 'manual'`):
 
-1. Query `base_confidence` (stored on rule).
+1. Compute `base_confidence` on the fly from all-time evidence count (not stored).
 2. Compute `coherence_factor` from audit_log within the lookback window.
 3. Compute `staleness_factor` from `last_relevant_at` (derived from coherence query).
 4. Count `net_corrections` in the lookback window.
@@ -778,8 +785,8 @@ A new method on `Learner` that runs every cycle in the learning step. Replaces b
 
 `find_existing_rule` should search for rules in **any** status (active or inactive), not
 just `active=1`. If an inactive rule exists for the same type+condition, reactivate it
-with a fresh `base_confidence` computed from current evidence rather than creating a
-duplicate. One row per type+condition in the database.
+with `confidence` set from the `BaseConfidenceConfig` formula using current evidence
+count (no `base_confidence` column). One row per type+condition in the database.
 
 ### Configurable Parameters
 
@@ -824,16 +831,17 @@ duplicate. One row per type+condition in the database.
 
 | Column | Action |
 |--------|--------|
-| `base_confidence` | Add (backfill from current `confidence`) |
 | `last_relevant_at` | Add (backfill from `last_hit_at`) |
 | `last_hit_at` | Drop |
+
+**Note:** `base_confidence` is computed on the fly — no column needed.
 
 ### Implementation Plan
 
 | Step | File | Change |
 |------|------|--------|
 | 1 | `config.py` | Add configurable parameters above to `ClassificationConfig` |
-| 2 | `db/migrations.py` | Add `base_confidence` column to `rules` table (backfill from `confidence`). Replace `last_hit_at` with `last_relevant_at` column (backfill from `last_hit_at` values). |
+| 2 | `db/migrations.py` | Replace `last_hit_at` with `last_relevant_at` column (backfill from `last_hit_at` values). Add `'correction'` to audit_log `classification_source` CHECK. |
 | 3 | `learner.py` | New method `compute_rule_confidence()` implementing the formula; update `last_relevant_at` from `MAX(moved_at)` in the coherence query |
 | 4 | `learner.py` | Remove `_penalize_rule` direct confidence writes; keep correction detection |
 | 5 | `learner.py` | Replace `adjust_rule_confidence` with staleness factor in the new method |
@@ -842,7 +850,7 @@ duplicate. One row per type+condition in the database.
 | 8 | `orchestrator.py` | Replace `adjust_rule_confidence()` call with `compute_rule_confidence()` |
 | 9 | `audit/learner.py` | Add correction identification (distinguish Cat 2 from Cat 1/3/4 in audit_log) |
 | 10 | `test_learner.py` | Tests: coherence above/below threshold, staleness curve, correction penalty, net correction recovery (sort-back), correction aging, low-evidence double hit, minimum sample guard, manual rule exemption, staleness dead zone recovery via `last_relevant_at` |
-| 11 | Web UI | Rule detail page: show all-time + windowed coherence, `last_relevant_at`. Warning badge on manual rules with low coherence. |
+| 11 | Web UI | Rule detail: performance card split into All Time / Last 30 Days columns. Show hit count (both), last_relevant_at, evidence (all-time only), coherence (both), corrections (N against − M confirming = K net, both). Warning badge on manual rules with low windowed coherence. Confidence stays in details card. See `docs/design/web-ui.md` §5. |
 
 ---
 

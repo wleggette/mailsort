@@ -90,7 +90,21 @@ classification:
     rule_move: 0.85
     llm_move: 0.80
     llm_move_known_contact: 0.93
-  correction_penalty: 0.15
+  correction_penalty: 0.05
+  coherence_lookback_days: 30
+  coherence_min_sample: 3
+  staleness_threshold_days: 365
+  staleness_decay_days: 365
+  staleness_floor: 0.6
+  deactivation_threshold: 0.50
+  base_confidence:
+    list_id: 0.95
+    exact_sender_floor: 0.80
+    exact_sender_cap: 0.95
+    exact_sender_per_evidence: 0.03
+    sender_domain_floor: 0.75
+    sender_domain_cap: 0.90
+    sender_domain_per_evidence: 0.02
 
 folder_description_overrides:
   "Affairs/Banks": "Bank statements, fraud alerts, and financial notifications"
@@ -100,6 +114,11 @@ folder_description_overrides:
 known_contact_overrides:
   "testcontact@example.com":
     relationship: "friend"
+
+manual_rules:
+  - rule_type: exact_sender
+    condition_value: "admin@lincolnelementary.org"
+    target_folder_path: "Children"
 
 exclude_folder_patterns: []
 skip_senders: []
@@ -305,9 +324,10 @@ and coherence requirements.
 
 | ID | Scenario | Expected Confidence | What It Tests | Tested By |
 |----|----------|-------------------|---------------|----------|
-| **CA1** | Confidence by rule type | `list_id`: 0.95, `sender_domain`: min(0.90, 0.75 + n×0.02), `exact_sender`: min(0.95, 0.80 + n×0.03) | Confidence matches formula for rule type | All rules from Groups A–J |
+| **CA1** | Confidence by rule type (from `BaseConfidenceConfig`) | `list_id`: 0.95, `sender_domain`: min(0.90, 0.75 + n×0.02), `exact_sender`: min(0.95, 0.80 + n×0.03) | `confidence` matches formula for rule type and evidence count | All rules from Groups A–J |
 | **CA2** | Rule type stored | `rule_type` column matches: `list_id`, `sender_domain`, or `exact_sender` | Correct rule type recorded | All rules from Groups A–J |
 | **CA3** | Target folder stored | `target_folder` matches the dominant folder from evidence | Correct target | All rules from Groups A–J |
+| **CA4** | Initial confidence matches `BaseConfidenceConfig` formula | All rules have `confidence` matching the formula for their type and evidence count | `BaseConfidenceConfig` applied correctly at creation time | All rules from Groups A–J |
 
 ### 3.5 Contact Import Scenarios
 
@@ -331,8 +351,8 @@ After bootstrap completes, verify:
 - [ ] **Rules created**: expected rules exist in `rules` table with `active=1`
 - [ ] **Rules NOT created**: conditions below threshold or coherence produce no rule
 - [ ] **All eligible rules created**: each rule type that meets its thresholds is created independently (e.g., both `list_id` and `exact_sender` for the same sender)
-- [ ] **Confidence values**: rule confidence matches the formula for each rule type (CA1–CA3)
-- [ ] **Hit counts unchanged**: all rules have `hit_count=0` and `last_hit_at IS NULL` after bootstrap (coverage check is read-only, must not record hits)
+- [ ] **Confidence values**: rule confidence matches the `BaseConfidenceConfig` formula for each rule type (CA1–CA4)
+- [ ] **Hit counts unchanged**: all rules have `hit_count=0` and `last_relevant_at IS NULL` after bootstrap (coverage check is read-only, must not record hits)
 - [ ] **Contacts imported**: `contacts` table populated from Fastmail + config overrides
 - [ ] **Coverage report**: bootstrap prints coverage percentage (evidence emails that would match a rule)
 - [ ] **Sampling cap (F6)**: folders with >50 emails sample exactly 50 (most recent by `receivedAt`)
@@ -551,7 +571,7 @@ The no-LLM dry run temporarily unsets `ANTHROPIC_API_KEY` and runs
 ### 4.4 Dry Run Verification Checklist
 
 - [ ] **Run record created**: `runs` table has a row with `status='completed'` and `emails_moved=0` for the dry-run `run_id`
-- [ ] **Hit counts unchanged**: all rules have `hit_count=0` and `last_hit_at IS NULL` after dry run (dry run does not record hits)
+- [ ] **Hit counts unchanged**: all rules have `hit_count=0` and `last_relevant_at IS NULL` after dry run (dry run does not record hits; `last_relevant_at` is updated by `compute_rule_confidence()` only on live runs)
 - [ ] **Audit log populated**: every inbox email has an `audit_log` row for each dry-run pass (query by `run_id`)
 - [ ] **Classification sources correct**: rule, thread, llm, or none as expected
 - [ ] **Skip reasons correct**: unread, flagged, too_new where expected
@@ -589,6 +609,8 @@ at runtime.
 | R5c: Megastore per-address | `alerts@megastore.com` | `$seen` | 5h ago | moved → Banks (exact_sender) |
 | P1: exact_sender over sender_domain | `statements@bigbank.com` | `$seen` | 5h ago | moved → Banks (exact_sender, not sender_domain) |
 | P2: list_id over exact_sender | `activities@ymca.org` (List-Id: `<updates.ymca.org>`) | `$seen` | 5h ago | moved → Children (list_id, not exact_sender) |
+| L3a-1: Chase correction target #2 | `noreply@chase.com` | `$seen` | 5h ago | moved → Banks (rule) — corrected in Phase 4 for L3a |
+| L3a-2: Chase correction target #3 | `noreply@chase.com` | `$seen` | 5h ago | moved → Banks (rule) — corrected in Phase 4 for L3a |
 
 The generator uses `datetime.now(timezone.utc)` to produce `receivedAt`
 timestamps relative to the current time, ensuring `too_new` scenarios work
@@ -633,13 +655,14 @@ Steps:
 
 ## 6. Phase 4: Learning & Feedback
 
-Tests manual-sort detection (4 categories), correction penalty, dedup logic,
-and behavioral impact of rule deactivation.
+Tests manual-sort detection (4 categories), computed confidence model behavior,
+dedup logic, and behavioral impact of confidence changes on classification.
 
-> **Note on current thresholds:** With `correction_penalty=0.15` and
-> `rule_move=0.85`, every auto-created rule is deactivated after a single
-> correction (max starting confidence is 0.95; 0.95 − 0.15 = 0.80 < 0.85).
-> See `docs/dev/design-ideas.md` "Correction Penalty Tuning" for analysis.
+> **Computed confidence model:** Rule confidence is recomputed each cycle from
+> live state: `confidence = max(0, base × coherence × staleness − net_corrections × 0.05)`.
+> With `correction_penalty=0.05`, three corrections stop any rule. A single
+> correction reduces confidence but the rule stays active and continues firing
+> until confidence drops below `rule_move` (0.85).
 
 ### 6.1 Learning Scenarios
 
@@ -652,21 +675,25 @@ to a folder. Detected by `_detect_skipped_sorts`.
 |----|----------|-------|-------------------|-----------|
 | **L1** | Skipped email sorted by user | Move `info@ambiguous-service.com` (`skip_reason=below_threshold`, still in inbox) from INBOX → Banks via JMAP | Manual audit row created for Banks. `from_inbox` count incremented | System test: JMAP move + `mailsort run` |
 | **L2** | Skipped email still in inbox (negative) | Don't move any skipped emails | No false positives — no manual rows for emails still in inbox | System test: implicit (L1 run verifies no spurious detections) |
-| **L2a** | Skipped-sort excludes mailsort-moved emails | Dry run creates `moved=0`; live run moves same email (`moved=1`) | `_detect_skipped_sorts` excludes the email (NOT IN subquery filters non-manual `moved=1`). No false manual row | *Deferred to unit test* (`test_skipped_sort_excludes_emails_moved_by_mailsort`) — requires dry-run + live-run sequence with same email |
-| **L2b** | User move-and-return re-detection | User moves skipped email out of inbox (manual row created), then moves back to inbox, then sorts again | SQL filter does NOT exclude the email (manual `moved=1` entries are exempt from NOT IN). Dedup prevents duplicate in same pass; `_detect_correction_sorts` handles the re-sort | *Deferred to unit test* (`test_skipped_sort_still_detected_after_user_move_and_return`) — requires multi-step JMAP sequence |
-| **L2c** | Skipped-sort dedup prevents duplicate manual rows | Run learner twice without new user moves | Second run creates no new manual row for already-detected email (`_already_corrected_email_ids` filters) | *Deferred to unit test* (`test_skipped_sort_dedup_prevents_duplicate_manual_rows`) — requires two learner runs on same state |
+| **L2a** | Skipped-sort excludes mailsort-moved emails | Dry run (Phase 2) creates `moved=0` for chase email; live run (Phase 3) moves same email (`moved=1`) | `_detect_skipped_sorts` excludes the email (NOT IN subquery filters non-manual `moved=1`). No false manual row for emails mailsort successfully moved | System test: verified in Phase 4 learning pass — check no manual rows for rule-moved emails |
+| **L2b** | User move-and-return re-detection | User moves skipped email out of inbox (manual row created), then moves back to inbox, then sorts again | `_already_handled_email_ids` allows re-detection because no newer rule move exists after the manual row — but if the email re-enters inbox and is re-skipped, a new skipped row (newer than the manual row) makes it eligible again | *Deferred to unit test* (`test_skipped_sort_still_detected_after_user_move_and_return`) — requires multi-step JMAP sequence |
+| **L2c** | Skipped-sort dedup prevents duplicate manual rows | Run `mailsort run` twice without new user moves (step 4 in execution sequence — same run that tests L6) | Second run creates no new manual row for L1's email (`_already_handled_email_ids` filters — most recent manual row is newer than any rule move). Count of manual rows for `ambiguous-service.com` = 1 | System test: second `mailsort run` (same run as L6) |
 
 #### Category 2: Correction Sorts
 
 Emails mailsort moved that the user relocated to a different folder.
-Detected by `_detect_correction_sorts`. Penalizes originating rule.
+Detected by `_detect_correction_sorts`. Corrections feed into the computed
+confidence model as `net_corrections_in_window`.
 
 | ID | Scenario | Setup | Expected Behavior | Tested By |
 |----|----------|-------|-------------------|-----------|
-| **L3** | Rule-based correction + penalty | Move `noreply@chase.com` (rule-moved, conf=0.95) from Banks → Stores via JMAP | Manual audit row for Stores. Chase rule penalized: 0.95 → 0.80. Rule deactivated (0.80 < 0.85) | System test: JMAP move + `mailsort run` |
+| **L3** | Single correction — rule still fires | Move `noreply@chase.com` (rule-moved, conf≈0.95) from Banks → Stores via JMAP | Correction audit row for Stores (`classification_source='correction'`, `rule_id`=chase rule). After `compute_rule_confidence()`: confidence ≈ 0.95 × coherence × 1.0 − 0.05 ≈ 0.88 (1 net correction). **Still above `rule_move` (0.85)** — rule continues to fire. Broader rules (sender_domain) not explicitly penalized — coherence handles cascade | System test: JMAP move + `mailsort run` |
+| **L3a** | 3 corrections — rule stops firing | After L3 (1 correction), move 2 more rule-moved chase emails (L3a-1, L3a-2) from Banks → Children and Stores via JMAP. Run `mailsort run` | 3 total correction rows for chase rule. Confidence ≈ 0.95 × coherence × 1.0 − 0.15 ≈ 0.78. **Below `rule_move` (0.85)** — rule stops firing, falls to LLM. Rule stays `active=1` (0.78 > `deactivation_threshold` 0.50). This is the "3 strikes stops firing" boundary | System test: 2 additional JMAP moves + `mailsort run` (step 6–8 in execution sequence) |
+| **L3b** | Corrections + low coherence → deactivation | Rule with coherence ≈ 0.55 (emails split across folders) AND 2 net corrections | Confidence ≈ 0.95 × 0.55 × 1.0 − 2×0.05 = 0.5225 − 0.10 = 0.42. **Below `deactivation_threshold` (0.50)** — rule set to `active=0`. Neither factor alone would deactivate, but combined they cross the threshold | *Deferred to unit test* (`test_corrections_plus_low_coherence_deactivates`) — requires precise coherence setup |
 | **L4** | Inbox return ignored (negative) | Move `alerts@megastore.com` (rule-moved) from Banks → INBOX via JMAP | **NOT** treated as correction (`new_path != "INBOX"` check). No manual row. Rule confidence unchanged | System test: JMAP move + `mailsort run` |
-| **L5** | LLM-based correction, no rule penalty | Move `returns@megastore.com` (LLM-moved, `rule_id=NULL`) from Stores → Banks via JMAP | Manual audit row for Banks. `_penalize_rule(None)` exits early — no rule penalized | System test: JMAP move + `mailsort run` |
-| **L6** | Dedup — same correction not double-counted | Run `mailsort run` again without new JMAP moves (after L3) | `_already_corrected_email_ids` filters chase email. No new manual row. Chase rule confidence still 0.80 | System test: second `mailsort run` |
+| **L5** | LLM-based correction, no rule correction | Move `returns@megastore.com` (LLM-moved, `rule_id=NULL`) from Stores → Banks via JMAP | Manual audit row for Banks. No rule to attribute correction to — `net_corrections` unaffected for all rules | System test: JMAP move + `mailsort run` |
+| **L6** | Dedup — same correction not double-counted | Run `mailsort run` again without new JMAP moves (after L3) | `_already_handled_email_ids` filters chase email (most recent correction is newer than most recent rule move). No new correction row. `compute_rule_confidence()` is idempotent — same correction count, same confidence | System test: second `mailsort run` |
+| **L6a** | Re-correction after new rule move | After L3 (chase corrected to Stores), move chase email back to INBOX. Next cycle, rule moves it to Banks again. User moves it to Stores again | Second correction row created (`_already_handled_email_ids` allows it — new rule move is newer than previous correction). `compute_rule_confidence()` now counts 2 corrections. Confidence drops further (2 × 0.05 = 0.10 penalty) | *Deferred to unit test* (`test_re_correction_after_new_rule_move`) — requires multi-step move sequence |
 
 #### Category 3: Inbox Departures
 
@@ -687,15 +714,29 @@ per `folder_scan_interval_hours` (24h default).
 |----|----------|-------|-------------------|-----------|
 | **L8** | Folder scan finds unknown email | Place email directly in a folder (not via mailsort) | Scan detects it, creates manual audit row | *Deferred to unit test* (`test_folder_scan_finds_unknown_emails`) — 24h interval makes it impractical in system test |
 
-#### Confidence Penalty & Feedback Loop
+#### Computed Confidence Model Behavior
 
-Rule confidence adjustments after corrections and staleness.
+Rule confidence is recomputed each cycle from live state. These scenarios test
+the interaction of corrections, coherence, staleness, and deactivation.
 
 | ID | Scenario | Setup | Expected Behavior | Tested By |
 |----|----------|-------|-------------------|-----------|
-| **L9** | Deactivated rule stops matching | After L3 deactivates chase rule, run `mailsort run` again | Chase emails classified by LLM (not rule). `classification_source='llm'`, `rule_id=NULL` | System test: second `mailsort run` (same run as L6) |
-| **L10** | Penalty boundary (conf exactly at threshold) | Rule with confidence=1.0 corrected → 0.85. Strict `<` comparison → rule stays active | Rule stays active (0.85 is not < 0.85) | *Deferred to unit test* (`test_correction_penalizes_originating_rule`) — no auto-created rule reaches 1.0 |
-| **L11** | Staleness decay (90+ days without hit) | Rule with `last_hit_at` > 90 days ago | Confidence reduced by 0.10. Floor at 0.50 | *Deferred to unit test* (`test_confidence_decay_on_stale_rules`) — requires manipulating timestamps |
+| **L9** | Low-confidence rule stops firing | After L3, chase rule confidence ≈ 0.88 — still above `rule_move` (0.85). If additional corrections bring it below 0.85 (see L3a), the rule stays `active=1` but doesn't fire | Chase emails classified by LLM (`classification_source='llm'`, `rule_id=NULL`). Rule stays `active=1` — confidence is between `deactivation_threshold` (0.50) and `rule_move` (0.85). This is the "confidence gate" zone: alive but dormant | *Deferred to unit test* (`test_low_confidence_rule_stops_firing`) — requires rule with confidence in the 0.50–0.85 range at classification time |
+| **L10** | `rule_move` boundary (0.85) | Rule with confidence at exactly 0.85 | Confidence ≥ 0.85 → rule fires. Confidence at 0.8499 → rule does NOT fire (strict `<` for firing, `>=` for gate). Tests the `rule_move` threshold | *Deferred to unit test* (`test_rule_move_boundary`) |
+| **L10a** | `deactivation_threshold` boundary (0.50) | Rule with confidence at exactly 0.50 | Confidence ≥ 0.50 → rule stays `active=1`. Confidence at 0.4999 → `active=0`. Strict `<` comparison for deactivation | *Deferred to unit test* (`test_deactivation_threshold_boundary`) |
+| **L10b** | Confidence floor at 0 | Rule with extreme corrections and low coherence | `max(0, ...)` prevents negative confidence. Value is exactly 0.0, not negative. Rule deactivated | *Deferred to unit test* (`test_confidence_floor_at_zero`) |
+| **L11** | Staleness factor (365+ days since `last_relevant_at`) | Rule with `last_relevant_at` > 365 days ago | Staleness factor decays from 1.0 toward floor (0.6) over 365 days past threshold. Confidence = `base × coherence × staleness`. At 730 days: `staleness ≈ 0.6` | *Deferred to unit test* (`test_staleness_factor_decay`) — requires manipulating timestamps |
+| **L13** | Coherence drift → confidence drop | Rule with emails splitting across two folders in lookback window | `coherence_factor < 1.0`. Confidence drops proportionally. If coherence later recovers, confidence recovers | *Deferred to unit test* (`test_coherence_drift_reduces_confidence`) |
+| **L13a** | Coherence alone → deactivation | Rule with coherence ≈ 0.50 (no corrections, no staleness) | Confidence = 0.95 × 0.50 × 1.0 − 0 = 0.475 < 0.50 → **deactivated by coherence alone**. No corrections needed. Tests that coherence < ~0.53 deactivates any rule | *Deferred to unit test* (`test_coherence_alone_deactivates`) — requires precise coherence setup |
+| **L14** | Correction sort-back recovery (net corrections) | After L3a (3 corrections), move chase L3a-1 email from Children back to Banks via JMAP (confirming sort). Run `mailsort run` | Confirming sort detected (`classification_source='manual'`, `from_address=noreply@chase.com`, `target_folder=Banks`). `net_corrections = max(0, 3 − 1) = 2`. Confidence partially recovers: ≈ 0.95 × coherence − 0.10 ≈ 0.83. Still below `rule_move` but higher than L3a | System test: JMAP move + `mailsort run` (step 9–11 in execution sequence) |
+| **L14a** | Recovery → rule resumes firing | Rule at 0.78 (below `rule_move`). Corrections age out of 30d window (or confirming sorts cancel them) | Confidence recovers above 0.85. **Rule resumes firing** — next classification uses rule, not LLM. Tests the bidirectional nature: confidence can go back up | *Deferred to unit test* (`test_recovery_rule_resumes_firing`) — requires two compute cycles with changing inputs |
+| **L15** | Correction aging (30d window) | Correction older than `coherence_lookback_days` (30d) | Correction falls outside window. `net_corrections = 0`. Confidence recovers | *Deferred to unit test* (`test_correction_aging_outside_window`) |
+| **L16** | Staleness dead zone recovery via `last_relevant_at` | Stale rule that can't fire (below confidence gate), but user manually sorts matching email to target folder | `last_relevant_at` updated from audit_log (user sort counts). Staleness resets to 1.0. Confidence recovers. Rule may resume firing if other factors are healthy | *Deferred to unit test* (`test_staleness_recovery_via_last_relevant_at`) |
+| **L17** | Manual rule exemption from computed confidence | Test config includes `manual_rules` entry for `admin@lincolnelementary.org` → Children. Bootstrap creates this rule with `source='manual'`. After all runs (with corrections and confidence recomputation) | `source='manual'` rule is skipped by `compute_rule_confidence()`. Confidence = 1.0 (unchanged from creation) regardless of coherence, staleness, or corrections affecting other rules | System test: verify manual rule confidence unchanged after all Phase 4 runs |
+| **L18** | Deactivation at threshold (0.50) | Rule with very low coherence and corrections | Confidence drops below 0.50 → `active=0`. Rule no longer considered at classification time | *Deferred to unit test* (`test_deactivation_at_threshold`) |
+| **L18a** | Full deactivation → reactivation cycle | Rule deactivated (L18). New evidence: user manually sorts 3+ emails matching the condition to the target folder | `maybe_create_rule` finds inactive rule via `find_rule_any_status`. Reactivates with confidence from `BaseConfidenceConfig`. `compute_rule_confidence` runs — if corrections aged out and coherence recovered, rule stays active and **resumes firing**. Tests the complete lifecycle: fire → deactivate → reactivate → fire | *Deferred to unit test* (`test_deactivation_reactivation_cycle`) — requires multi-step state manipulation |
+| **L19** | Minimum sample guard (coherence_factor=1.0 when <3 emails) | Rule with <3 emails in lookback window | `coherence_factor = 1.0` (benefit of the doubt). Confidence not penalized by sparse data. New rule with 2 emails in window gets full `base × 1.0 × staleness` confidence | *Deferred to unit test* (`test_minimum_sample_guard`) |
+| **L19a** | `last_relevant_at` NULL for new rule | Brand new rule (just created by `maybe_create_rule`) | `last_relevant_at` is NULL. `_compute_staleness` returns 1.0 (no staleness penalty). `compute_rule_confidence` doesn't crash and produces a valid confidence | *Deferred to unit test* (`test_new_rule_null_last_relevant_at`) |
 
 #### Auto-Rule Generation from Learning
 
@@ -707,30 +748,86 @@ Rules created when manual sort evidence accumulates past thresholds.
 
 ### 6.2 Test Execution Sequence
 
+**Batch 1 — single correction + skipped sort:**
+
 1. **JMAP moves** (simulate user actions):
-   - L3: `noreply@chase.com` Banks → Stores
-   - L4: `alerts@megastore.com` Banks → INBOX
-   - L5: `returns@megastore.com` Stores → Banks
-   - L1: `info@ambiguous-service.com` INBOX → Banks
+   - L3: `noreply@chase.com` (E1, rule-moved) Banks → Stores
+   - L4: `alerts@megastore.com` (R5c, rule-moved) Banks → INBOX
+   - L5: `returns@megastore.com` (R5a, LLM-moved) Stores → Banks
+   - L1: `info@ambiguous-service.com` (S6, skipped in inbox) INBOX → Banks
 2. **Run `mailsort run`** — learning step detects moves
-3. **Verify L1, L3, L4, L5** — audit rows, rule confidence, rule active status
-4. **Run `mailsort run` again** (no new moves) — tests L6 dedup + L9 behavioral impact
-5. **Verify L6, L9** — no double-counting, deactivated rule stops matching
+3. **Verify L1, L2a, L3, L4, L5** — audit rows, rule confidence, rule active status. L2a: no false manual rows for rule-moved emails that weren't corrected
+
+**Dedup pass:**
+
+4. **Run `mailsort run` again** (no new moves) — tests L6 dedup + L2c dedup
+5. **Verify L6, L2c** — no double-counting corrections, no duplicate manual rows for L1
+
+**Batch 2 — two more corrections ("3 strikes"):**
+
+6. **JMAP moves** (2 more chase corrections):
+   - L3a: `noreply@chase.com` (L3a-1, rule-moved) Banks → Children
+   - L3a: `noreply@chase.com` (L3a-2, rule-moved) Banks → Stores
+7. **Run `mailsort run`** — detects 2 more corrections for chase rule
+8. **Verify L3a** — 3 total corrections, chase confidence ≈ 0.78, below `rule_move`, stays `active=1`
+
+**Sort-back recovery:**
+
+9. **JMAP move** (confirming sort):
+   - L14: `noreply@chase.com` (L3a-1, previously corrected to Children) Children → Banks
+10. **Run `mailsort run`** — detects confirming sort
+11. **Verify L14** — net corrections = 2 (3 corrections − 1 confirming), confidence partially recovers
+
+**Manual rule exemption (verified across all runs):**
+
+12. **Verify L17** — manual rule for `admin@lincolnelementary.org` → Children has `confidence=1.0` and `source='manual'` unchanged after all runs
 
 ### 6.3 Learning Verification Checklist
 
+**Batch 1 verification (steps 2–3):**
+
 - [ ] **L1**: manual audit row for `ambiguous-service.com` → Banks
-- [ ] **L3**: manual audit row for `chase.com` → Stores
-- [ ] **L3**: chase rule confidence = 0.80 (was 0.95, penalized by 0.15)
-- [ ] **L3**: chase rule `active=0` (0.80 < 0.85 threshold)
+- [ ] **L2a**: NO false manual rows for rule-moved emails (chase E1 has `moved=1` from live run; NOT reported as skipped sort)
+- [ ] **L3**: correction audit row for `chase.com` → Stores (`classification_source='correction'`, `rule_id`=chase rule)
+- [ ] **L3**: chase rule confidence ≈ 0.88 (computed: `0.95 × coherence × 1.0 − 0.05`; exact value depends on coherence_factor from audit_log)
+- [ ] **L3**: chase rule **still above `rule_move` (0.85)** — single correction does NOT stop firing
+- [ ] **L3**: chase rule `active=1` (confidence > `deactivation_threshold` 0.50)
 - [ ] **L4**: NO manual row for `megastore alerts` inbox return
 - [ ] **L4**: megastore alerts rule confidence unchanged, still active
 - [ ] **L5**: manual audit row for `megastore returns` → Banks
-- [ ] **L5**: no rules changed confidence (except chase from L3)
-- [ ] **L6**: no new manual rows for chase on second run (dedup)
-- [ ] **L6**: chase rule confidence still 0.80 (no double penalty)
-- [ ] **L9**: chase emails classified by LLM (`classification_source='llm'`)
-- [ ] **L9**: chase emails have `rule_id=NULL` (deactivated rule not matched)
+- [ ] **L5**: no rules changed confidence (except chase from L3 — LLM-moved emails have no rule to attribute corrections to)
+
+**Dedup verification (steps 4–5):**
+
+- [ ] **L6**: no new correction rows for chase on second run (`_already_handled_email_ids` — most recent correction newer than most recent rule move)
+- [ ] **L6**: chase rule confidence unchanged from L3 (`compute_rule_confidence()` is idempotent — same inputs, same result)
+- [ ] **L2c**: no duplicate manual rows for `ambiguous-service.com` — exactly 1 manual row total
+
+**Batch 2 verification (steps 7–8):**
+
+- [ ] **L3a**: 3 total correction rows for chase rule (`classification_source='correction'`, `rule_id`=chase rule)
+- [ ] **L3a**: chase confidence ≈ 0.78 (3 × 0.05 = 0.15 penalty). **Below `rule_move` (0.85)** — rule stops firing
+- [ ] **L3a**: chase rule stays `active=1` (0.78 > `deactivation_threshold` 0.50)
+
+**Sort-back verification (steps 10–11):**
+
+- [ ] **L14**: confirming sort audit row for `noreply@chase.com` → Banks (`classification_source='manual'`)
+- [ ] **L14**: chase net corrections = 2 (3 corrections − 1 confirming). Confidence partially recovers (higher than L3a value)
+
+**Manual rule exemption (step 12):**
+
+- [ ] **L17**: manual rule for `admin@lincolnelementary.org` → Children: `confidence=1.0`, `source='manual'`, unchanged after all runs
+
+**Deferred to unit test:**
+
+- [ ] **L3b** *(unit test)*: corrections + low coherence → confidence < 0.50 → **deactivated** (`active=0`)
+- [ ] **L6a** *(unit test)*: re-correction creates second correction row after new rule move
+- [ ] **L9** *(unit test)*: rule with confidence in 0.50–0.85 range → LLM classifies (not rule), rule stays `active=1`
+- [ ] **L10** *(unit test)*: rule at exactly 0.85 fires; at 0.8499 does not
+- [ ] **L10a** *(unit test)*: rule at exactly 0.50 stays active; at 0.4999 deactivated
+- [ ] **L13a** *(unit test)*: coherence ≈ 0.50 alone → confidence 0.475 → deactivated (no corrections needed)
+- [ ] **L14a** *(unit test)*: corrections age out → confidence recovers above 0.85 → rule **resumes firing**
+- [ ] **L18a** *(unit test)*: deactivated rule reactivated by `maybe_create_rule` → fires again after confidence computation
 
 ---
 
@@ -759,7 +856,7 @@ Behaviors that depend on state accumulated across multiple phases.
 | ID | Scenario | What It Tests | Tested By |
 |----|----------|---------------|-----------|
 | **X5** | Bootstrap idempotency end-to-end | Running bootstrap twice produces identical rules, descriptions, and evidence | Phase 1: F5 (run bootstrap ×2, verify 0 new rows) |
-| **X6** | Correction → rule deactivation → re-classification by LLM | Corrected email's rule is deactivated; sender falls to LLM on next run | Phase 4: L3 (correction + penalty) + L9 (chase falls to LLM) |
+| **X6** | Correction → low confidence → re-classification by LLM | Corrected email's rule loses confidence via computed model; if confidence drops below `rule_move`, sender falls to LLM on next run. Rule stays `active=1` | Phase 4: L3 (correction + computed confidence) + L9 (chase falls to LLM) |
 | **X7** | Known contact below LLM threshold but above normal threshold | Contact email classified by LLM with confidence between 0.80–0.93 — blocked by stricter known-contact threshold | Phase 2: S8 (`testcontact@example.com`, `below_threshold_known_contact`) |
 
 ### 8.3 Error Handling & Edge Cases
@@ -770,7 +867,7 @@ Behaviors that depend on state accumulated across multiple phases.
 | **X9** | Folder deletion → rule deactivation → unknown_folder skip | Delete a folder after bootstrap; `reconcile_folders` deactivates its rules; emails targeting it get `skip_reason=unknown_folder` | *Deferred to integration test* (`test_deleted_folder_rule_deactivated_on_run`, `test_deleted_folder_email_gets_unknown_folder_skip`) — destructive JMAP operation, better with mocks |
 | **X10** | skip_senders filtering (no audit row) | Email from `skip_senders` is filtered before classification — no audit_log row at all (unlike LLM skip which gets a row) | *Deferred to unit test* (`test_skip_sender_is_filtered`) — requires config change mid-test |
 | **X11** | Inbox snapshot scope vs batch scope | Snapshot covers all inbox emails (up to 500); classification covers only `max_batch_size`. Emails beyond the batch can still be detected as departures | *Deferred to integration test* (`test_snapshot_captures_beyond_batch_for_departure_detection`) — uses `max_batch_size=3` to test with 5 emails |
-| **X12** | Dry run still runs learning step | Dry run detects corrections from previous live runs and adjusts rule confidence — even penalizing rules | *Deferred to integration test* (`test_dry_run_detects_corrections_and_penalizes_rules`) — verifies correction detection + rule penalty in `dry_run=True` mode |
+| **X12** | Dry run still runs learning step | Dry run detects corrections from previous live runs and runs `compute_rule_confidence()` — recomputing confidence from live state | *Deferred to integration test* (`test_dry_run_detects_corrections_and_computes_confidence`) — verifies correction detection + computed confidence in `dry_run=True` mode |
 | **X13** | JMAP move fails (read-only token) — entries show `move_failed`, run status `error` | `skip_reason='move_failed'` set on planned entries when move raises; run finishes as `'error'` not `'completed'`; UI shows "move failed" not "dry run" | *Deferred to unit test* (`test_move_exception_sets_move_failed_and_error_status`) — requires injecting JMAP error |
 | **X14** | Scheduler fires exactly one initial run | No duplicate runs within the first interval window after `scheduler.start()` | *Deferred to unit test* — scheduler timer mechanics, not classification logic |
 | **X15** | Email deleted between query and fetch (W1) | Email ID returned by `query_inbox_emails` but deleted before `get_emails` | `get_emails` returns fewer emails than IDs requested; orchestrator processes only returned ones, no crash, no orphan audit row | *Deferred to unit test* (`test_email_vanishes_between_query_and_fetch`) — requires mock JMAP returning subset of requested IDs |
@@ -779,6 +876,7 @@ Behaviors that depend on state accumulated across multiple phases.
 | **X18** | Read-only token auto-downgrades to dry run | `mailsort run` with read-only JMAP token | Run completes as dry run (no `move_failed` errors, no wasted move attempts). `RunResult.read_only_downgrade=True`. CLI output indicates "read-only" downgrade | *Deferred to unit test* (`test_read_only_token_auto_downgrades_to_dry_run`) — requires mock `is_read_only`. **Observable in system test** when token is read-only: Phase 3 dry-run should show downgrade warning in logs, not `move_failed` |
 | **X19** | Concurrent live run prevented by lock | Two `mailsort run` invocations on the same database | Second run returns immediately with "another live run in progress" warning; no duplicate audit entries | *Deferred to unit test* (`test_live_run_acquires_lock`) — requires spawning concurrent processes on same DB |
 | **X20** | Dry run bypasses lock | `mailsort dry-run` while a live run holds the lock | Dry run proceeds normally, no blocking | *Deferred to unit test* (`test_dry_run_does_not_acquire_lock`) — requires concurrent process orchestration |
+| **X21** | Correction dedup allows re-correction after new rule move | Rule moves email to Banks → user corrects to Stores → email returns to inbox → rule moves to Banks again → user corrects to Stores again | Second correction row created (dedup sees new rule move is newer than previous correction). Two corrections counted by `compute_rule_confidence()`. Tests the `_already_handled_email_ids` fix for move-correct-move-correct cycles | *Deferred to unit test* (`test_re_correction_after_new_rule_move`) — requires multi-step audit_log sequence |
 
 ---
 

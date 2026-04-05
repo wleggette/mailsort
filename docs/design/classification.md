@@ -194,10 +194,17 @@ def classify_by_rules(email_features: EmailFeatures) -> Optional[Classification]
 
 **Dry-run behaviour:** During `mailsort dry-run`, rule matching still runs
 normally (the classification result is logged to `audit_log`) but
-`hit_count` and `last_hit_at` are **not** updated. This prevents dry runs
-from inflating hit statistics or resetting the staleness clock used by
-confidence decay. The `RuleEngine` accepts a `record_hits` flag
-(default `True`) that the orchestrator sets to `False` for dry runs.
+`hit_count` is **not** updated. This prevents dry runs from inflating hit
+statistics. The `RuleEngine` accepts a `record_hits` flag (default `True`)
+that the orchestrator sets to `False` for dry runs. Note: `last_relevant_at`
+is maintained by `compute_rule_confidence()` from audit_log data, not by
+the rule engine directly.
+
+**Computed confidence:** Rule confidence is no longer static — it is
+recomputed each cycle by `compute_rule_confidence()` in the learning step
+from live coherence, staleness, and correction data. The rule engine reads
+the stored `confidence` value at classification time as before. See
+[learning.md](learning.md#computed-confidence-model) for details.
 
 ---
 
