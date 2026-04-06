@@ -5,6 +5,27 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-05 — Feat: auto-bootstrap on first scheduler start
+
+**What changed:**
+- **feat:** The scheduler (`mailsort start`) now automatically runs bootstrap on
+  the first tick if no completed bootstrap run exists. Classification is skipped
+  that tick and starts on the next interval. This means `docker compose up` just
+  works — no separate `mailsort bootstrap` step needed.
+- **design:** Only `status='completed'` bootstrap runs satisfy the check. Failed,
+  abandoned, or stuck `'running'` bootstraps trigger a retry on the next tick.
+  `reconcile_stale_runs` handles stuck rows (marks them `'abandoned'`).
+- **design:** Auto-bootstrap runs under the same `flock` as classification,
+  preventing concurrent bootstrap + classification or duplicate bootstraps.
+
+**Files modified:**
+- `src/mailsort/scheduler.py` — `_needs_bootstrap()`, `_run_auto_bootstrap()`,
+  auto-bootstrap check in `_scheduled_run()`
+- `tests/test_scheduler.py` — 11 new tests (6 for `_needs_bootstrap`, 3 for
+  `_run_auto_bootstrap`, 2 for `_scheduled_run` integration)
+
+---
+
 ## 2026-04-05 — Feat: folder description regeneration (`mailsort describe`)
 
 **What changed:**

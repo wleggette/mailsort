@@ -16,6 +16,7 @@ from typing import Any, Optional
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from mailsort.audit.writer import AuditWriter
+from mailsort.bootstrap import run_bootstrap
 from mailsort.config import Config
 from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
@@ -76,6 +77,41 @@ def start_scheduler(cfg: Config) -> None:
             health_server.shutdown()
 
 
+def _needs_bootstrap(db: Database) -> bool:
+    """Return True if no completed bootstrap run exists."""
+    row = db.execute(
+        "SELECT 1 FROM runs WHERE trigger='bootstrap' AND status='completed' LIMIT 1"
+    ).fetchone()
+    return row is None
+
+
+def _run_auto_bootstrap(
+    cfg: Config, db: Database, jmap: JMAPClient, tree: MailboxTree,
+) -> bool:
+    """Run bootstrap if no completed bootstrap exists.
+
+    Returns True if bootstrap was attempted (caller should skip classification
+    this tick), False if bootstrap was not needed.
+    """
+    if not _needs_bootstrap(db):
+        return False
+
+    logger.info("No completed bootstrap found — running auto-bootstrap")
+    report = run_bootstrap(cfg, db, jmap, tree)
+
+    if report.errors:
+        logger.warning(
+            "Auto-bootstrap finished with %d error(s) — will retry next tick",
+            len(report.errors),
+        )
+    else:
+        logger.info(
+            "Auto-bootstrap complete: %d folders, %d rules, %d descriptions",
+            report.folders_scanned, report.rules_created, report.descriptions_generated,
+        )
+    return True
+
+
 def _scheduled_run(cfg: Config) -> None:
     """Execute a single classification pass. Called by the scheduler."""
     logger.info("Starting scheduled classification pass")
@@ -98,6 +134,11 @@ def _scheduled_run(cfg: Config) -> None:
                 jmap = JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url)
                 mailboxes = jmap.get_all_mailboxes()
                 tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
+
+                # Auto-bootstrap on first start: if no completed bootstrap
+                # exists, run it now and skip classification this tick.
+                if _run_auto_bootstrap(cfg, db, jmap, tree):
+                    return
 
                 result = run_classification_pass(
                     cfg, db, jmap, tree, dry_run=False, trigger="scheduler",

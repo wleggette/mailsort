@@ -44,6 +44,12 @@ The `start` command runs the scheduler, health check (port 8025), and web UI
 (port 8080) in a single process. See `docs/dev/decisions.md` "Embed web UI in
 scheduler process" for rationale.
 
+On first start (no completed bootstrap in the database), the scheduler
+automatically runs `run_bootstrap` on the first tick before any classification.
+Classification begins on the next scheduled tick. If bootstrap fails or the
+process is killed, the next tick retries. See `_run_auto_bootstrap` in
+`scheduler.py`.
+
 ### docker-compose.yml
 
 ```yaml

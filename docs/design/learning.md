@@ -592,6 +592,13 @@ contacts, and folder descriptions all use upsert/dedup logic. This means you
 can re-bootstrap after adding new folders or to pick up recent mail without
 corrupting existing data.
 
+**Auto-bootstrap:** The scheduler automatically runs bootstrap on the first tick
+if no completed bootstrap exists in the `runs` table (`_run_auto_bootstrap` in
+`scheduler.py`). Classification is skipped that tick and starts on the next
+interval. Failed or killed bootstraps are retried on the next tick
+(`reconcile_stale_runs` marks stuck rows as `'abandoned'`). This means
+`docker compose up` works without a separate `mailsort bootstrap` step.
+
 Bootstrap does not use a separate, looser rule-creation strategy. Historical
 emails are treated as evidence inputs to the same candidate evaluation logic
 used during live learning. All eligible rules are created — a sender with a

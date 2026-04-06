@@ -178,8 +178,10 @@ show "calls / depends on". Modules are grouped by layer.
 
 ## Bootstrap Sequence
 
-One-time initialization run via `mailsort bootstrap`. Seeds the database
-with evidence, rules, descriptions, and contacts from existing folders.
+One-time initialization run via `mailsort bootstrap` (or automatically on the
+first scheduler tick if no completed bootstrap exists — see `_run_auto_bootstrap`
+in `scheduler.py`). Seeds the database with evidence, rules, descriptions, and
+contacts from existing folders.
 
 ```
 ┌─ Phase 1: Collect Evidence (per folder) ─────────────────────────────┐
@@ -276,6 +278,12 @@ calls the same path with `dry_run=False` on a timer.
         no → acquire flock(data/mailsort.run.lock)
         │    fail? → "Another live run in progress" → exit 1
         yes → skip lock
+        │
+        │  (scheduler only) reconcile_stale_runs
+        │  (scheduler only) _run_auto_bootstrap:
+        │    ◇ completed bootstrap in runs table?
+        │    no → run_bootstrap() → return (classify next tick)
+        │    yes → proceed to classification
         │
         │  run_classification_pass(dry_run=T/F)
         │
