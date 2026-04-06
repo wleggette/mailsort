@@ -330,9 +330,9 @@ def verify_bootstrap(db: Database) -> VerificationResult:
     v.check(rules_with_hits == 0, f"All rules have hit_count=0 after bootstrap (violations: {rules_with_hits})")
 
     rules_with_last_hit = db.execute(
-        "SELECT COUNT(*) FROM rules WHERE last_hit_at IS NOT NULL"
+        "SELECT COUNT(*) FROM rules WHERE last_relevant_at IS NOT NULL"
     ).fetchone()[0]
-    v.check(rules_with_last_hit == 0, f"All rules have last_hit_at=NULL after bootstrap (violations: {rules_with_last_hit})")
+    v.check(rules_with_last_hit == 0, f"All rules have last_relevant_at=NULL after bootstrap (violations: {rules_with_last_hit})")
 
     v.print_report()
     return v
@@ -513,9 +513,9 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
     v.check(rules_with_hits == 0, f"All rules have hit_count=0 after dry run (violations: {rules_with_hits})")
 
     rules_with_last_hit = db.execute(
-        "SELECT COUNT(*) FROM rules WHERE last_hit_at IS NOT NULL"
+        "SELECT COUNT(*) FROM rules WHERE last_relevant_at IS NOT NULL"
     ).fetchone()[0]
-    v.check(rules_with_last_hit == 0, f"All rules have last_hit_at=NULL after dry run (violations: {rules_with_last_hit})")
+    v.check(rules_with_last_hit == 0, f"All rules have last_relevant_at=NULL after dry run (violations: {rules_with_last_hit})")
 
     v.print_report()
     return v
@@ -678,24 +678,33 @@ def verify_learning_step1(
     else:
         v.warn("L1: skipped (ambiguous-service email not found)")
 
-    # --- L3: Rule-based correction with penalty (Category 2) ---
+    # --- L3: Rule-based correction (Category 2) ---
+    # With computed confidence model: correction is recorded as classification_source='correction',
+    # confidence is recomputed (not directly penalized), rule may stay active.
     if l3_email_id:
+        # Check for correction row (not 'manual' — corrections now use 'correction' source)
+        corr_rows = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? AND classification_source = 'correction'",
+            (run_id, l3_email_id),
+        ).fetchall()
         v.check(
-            has_manual_row(l3_email_id, "Stores"),
-            f"L3: manual audit row for chase → Stores (email {l3_email_id[:12]})",
+            len(corr_rows) > 0,
+            f"L3: correction audit row for chase (email {l3_email_id[:12]}, found {len(corr_rows)} rows)",
         )
 
-        # Check rule was penalized and deactivated
+        # After compute_rule_confidence: confidence should have dropped from original
         if l3_rule_id:
             rule = db.execute("SELECT * FROM rules WHERE id = ?", (l3_rule_id,)).fetchone()
-            if rule:
+            pre = pre_rules.get(l3_rule_id, {})
+            if rule and pre:
                 v.check(
-                    abs(rule["confidence"] - 0.80) < 0.01,
-                    f"L3: chase rule confidence = {rule['confidence']:.2f} (expected 0.80 = 0.95 - 0.15)",
+                    rule["confidence"] < pre["confidence"],
+                    f"L3: chase rule confidence dropped ({pre['confidence']:.2f} → {rule['confidence']:.2f})",
                 )
+                # Rule stays active (above deactivation_threshold 0.50) but may be below rule_move
                 v.check(
-                    not rule["active"],
-                    f"L3: chase rule deactivated (active={rule['active']}, expected 0 because 0.80 < 0.85)",
+                    rule["confidence"] > 0.50 or not rule["active"],
+                    f"L3: chase rule above deactivation or deactivated (conf={rule['confidence']:.2f}, active={rule['active']})",
                 )
             else:
                 v.check(False, f"L3: chase rule {l3_rule_id} not found")
@@ -734,18 +743,19 @@ def verify_learning_step1(
             f"L5: manual audit row for megastore returns → Banks (email {l5_email_id[:12]})",
         )
 
-        # No rules should have changed confidence (except the chase rule from L3)
-        changed_rules = []
+        # With computed confidence model, compute_rule_confidence updates all active rules.
+        # We only verify that rules without corrections didn't drop significantly.
         for rule_id, pre in pre_rules.items():
             if rule_id == l3_rule_id:
                 continue  # L3 intentionally changed this one
             current = db.execute("SELECT confidence FROM rules WHERE id = ?", (rule_id,)).fetchone()
-            if current and abs(current["confidence"] - pre["confidence"]) > 0.001:
-                changed_rules.append(rule_id)
-        v.check(
-            len(changed_rules) == 0,
-            f"L5: no rules changed confidence except chase (unexpected changes: {changed_rules})",
-        )
+            if current:
+                drop = pre["confidence"] - current["confidence"]
+                v.check(
+                    drop < 0.10,
+                    f"L5: rule {rule_id} confidence didn't drop significantly "
+                    f"({pre['confidence']:.2f} → {current['confidence']:.2f})",
+                )
     else:
         v.warn("L5: skipped (megastore returns email not found)")
 
@@ -765,45 +775,51 @@ def verify_learning_step2(
 
     # --- L6: Dedup — same correction not double-counted ---
     if l3_email_id:
-        manual_rows = db.execute(
-            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? AND classification_source = 'manual'",
+        # No new correction rows for the same email in the second run
+        corr_rows = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? "
+            "AND classification_source IN ('manual', 'correction')",
             (run_id, l3_email_id),
         ).fetchall()
         v.check(
-            len(manual_rows) == 0,
-            f"L6: no new manual rows for chase in second run (got {len(manual_rows)})",
+            len(corr_rows) == 0,
+            f"L6: no new correction rows for chase in second run (got {len(corr_rows)})",
         )
 
-        # Chase rule confidence should still be 0.80 (no double penalty)
+        # Chase rule confidence should be stable (idempotent — compute doesn't change on re-run)
         chase_rule = db.execute(
             "SELECT * FROM rules WHERE condition_value = 'noreply@chase.com' AND rule_type = 'exact_sender'"
         ).fetchone()
         if chase_rule:
+            # Confidence was already computed in step 1; should not change further
             v.check(
-                abs(chase_rule["confidence"] - 0.80) < 0.01,
-                f"L6: chase rule confidence still 0.80 (got {chase_rule['confidence']:.2f}, no double penalty)",
+                chase_rule["confidence"] < 0.95,
+                f"L6: chase rule confidence reduced from original (got {chase_rule['confidence']:.2f})",
             )
     else:
         v.warn("L6: skipped (chase email not available)")
 
-    # --- L9: Deactivated rule stops matching ---
-    # Chase emails in this run should be classified by LLM, not by rule
-    chase_rows = db.execute(
-        "SELECT * FROM audit_log WHERE run_id = ? AND from_address = 'noreply@chase.com'",
-        (run_id,),
-    ).fetchall()
-    if chase_rows:
-        for r in chase_rows:
+    # --- L9: Rule with low confidence doesn't fire ---
+    # With computed confidence model, the chase rule may still be active but with
+    # confidence below rule_move threshold (0.85). If active, it shouldn't be used
+    # as classification source because its confidence is too low.
+    chase_rule = db.execute(
+        "SELECT * FROM rules WHERE condition_value = 'noreply@chase.com' AND rule_type = 'exact_sender'"
+    ).fetchone()
+    if chase_rule:
+        if chase_rule["active"]:
             v.check(
-                r["classification_source"] != "rule",
-                f"L9: chase email classified by {r['classification_source']} (not rule — rule is deactivated)",
+                chase_rule["confidence"] < 0.85,
+                f"L9: chase rule confidence below rule_move threshold "
+                f"(conf={chase_rule['confidence']:.2f}, threshold=0.85)",
             )
+        else:
             v.check(
-                r["rule_id"] is None,
-                f"L9: chase email has no rule_id (got {r['rule_id']})",
+                chase_rule["confidence"] < 0.50,
+                f"L9: chase rule deactivated below threshold (conf={chase_rule['confidence']:.2f})",
             )
     else:
-        v.warn("L9: no chase emails found in second run (may all be in other folders now)")
+        v.warn("L9: chase rule not found")
 
     v.print_report()
     return v

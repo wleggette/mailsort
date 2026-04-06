@@ -124,36 +124,88 @@ async def rule_detail(request: Request, rule_id: int):
         (rule_id,),
     ).fetchall()
 
-    # Coherence stats and evidence emails for this rule's condition
+    # ---- Coherence & evidence stats (all-time + windowed) ----
+    _COL_MAP = {
+        "exact_sender": "from_address",
+        "sender_domain": "from_domain",
+        "list_id": "list_id",
+    }
     evidence_rows = []
-    if rule["rule_type"] in ("exact_sender", "list_id", "sender_domain"):
-        col = {
-            "exact_sender": "from_address",
-            "sender_domain": "from_domain",
-            "list_id": "list_id",
-        }[rule["rule_type"]]
+    stats: dict = {
+        "all_time": {"to_target": 0, "total": 0, "coherence": 0,
+                     "corrections": 0, "confirming": 0, "net_corrections": 0},
+        "windowed": {"to_target": 0, "total": 0, "coherence": 0,
+                     "corrections": 0, "confirming": 0, "net_corrections": 0},
+    }
 
+    if rule["rule_type"] in _COL_MAP:
+        col = _COL_MAP[rule["rule_type"]]
         cond_val = rule["condition_value"]
+        target = rule["target_folder_path"]
 
-        to_target = db.execute(
+        # --- All-time ---
+        at_to_target = db.execute(
             f"SELECT COUNT(*) FROM audit_log WHERE {col} COLLATE NOCASE = ? AND target_folder = ? AND moved = 1",
-            (cond_val, rule["target_folder_path"]),
+            (cond_val, target),
         ).fetchone()[0]
-        total = db.execute(
+        at_total = db.execute(
             f"SELECT COUNT(*) FROM audit_log WHERE {col} COLLATE NOCASE = ? AND moved = 1",
             (cond_val,),
         ).fetchone()[0]
-        coherence = to_target / total * 100 if total > 0 else 0
+        at_corrections = db.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE classification_source = 'correction' AND rule_id = ?",
+            (rule_id,),
+        ).fetchone()[0]
+        at_confirming = db.execute(
+            f"""SELECT COUNT(*) FROM audit_log
+                WHERE classification_source = 'manual' AND {col} = ? AND target_folder = ?""",
+            (cond_val, target),
+        ).fetchone()[0]
+        stats["all_time"] = {
+            "to_target": at_to_target, "total": at_total,
+            "coherence": at_to_target / at_total * 100 if at_total > 0 else 0,
+            "corrections": at_corrections, "confirming": at_confirming,
+            "net_corrections": max(0, at_corrections - at_confirming),
+        }
 
-        # All emails matching this condition (evidence for why the rule exists)
+        # --- Windowed (30 days) ---
+        lookback = "-30 days"
+        w_to_target = db.execute(
+            f"""SELECT COUNT(*) FROM audit_log
+                WHERE {col} COLLATE NOCASE = ? AND target_folder = ? AND moved = 1
+                  AND created_at >= datetime('now', ?)""",
+            (cond_val, target, lookback),
+        ).fetchone()[0]
+        w_total = db.execute(
+            f"""SELECT COUNT(*) FROM audit_log
+                WHERE {col} COLLATE NOCASE = ? AND moved = 1
+                  AND created_at >= datetime('now', ?)""",
+            (cond_val, lookback),
+        ).fetchone()[0]
+        w_corrections = db.execute(
+            """SELECT COUNT(*) FROM audit_log
+               WHERE classification_source = 'correction' AND rule_id = ?
+                 AND created_at >= datetime('now', ?)""",
+            (rule_id, lookback),
+        ).fetchone()[0]
+        w_confirming = db.execute(
+            f"""SELECT COUNT(*) FROM audit_log
+                WHERE classification_source = 'manual' AND {col} = ? AND target_folder = ?
+                  AND created_at >= datetime('now', ?)""",
+            (cond_val, target, lookback),
+        ).fetchone()[0]
+        stats["windowed"] = {
+            "to_target": w_to_target, "total": w_total,
+            "coherence": w_to_target / w_total * 100 if w_total > 0 else 0,
+            "corrections": w_corrections, "confirming": w_confirming,
+            "net_corrections": max(0, w_corrections - w_confirming),
+        }
+
+        # All emails matching this condition (evidence table)
         evidence_rows = db.execute(
             f"SELECT * FROM audit_log WHERE {col} COLLATE NOCASE = ? ORDER BY created_at DESC LIMIT 100",
             (cond_val,),
         ).fetchall()
-    else:
-        to_target = 0
-        total = 0
-        coherence = 0
 
     return templates.TemplateResponse(
         request=request,
@@ -162,9 +214,7 @@ async def rule_detail(request: Request, rule_id: int):
             "rule": rule,
             "audit_rows": audit_rows,
             "evidence_rows": evidence_rows,
-            "coherence": coherence,
-            "evidence_count": to_target,
-            "evidence_total": total,
+            "stats": stats,
             "nav_active": "rules",
     })
 

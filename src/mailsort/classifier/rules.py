@@ -92,7 +92,7 @@ class RuleEngine:
 
     def _record_hit(self, rule_id: int) -> None:
         self._db.execute(
-            "UPDATE rules SET hit_count = hit_count + 1, last_hit_at = datetime('now') WHERE id = ?",
+            "UPDATE rules SET hit_count = hit_count + 1 WHERE id = ?",
             (rule_id,),
         )
         self._db.commit()
@@ -144,6 +144,38 @@ class RuleEngine:
     def find_existing_rule(self, rule_type: str, condition_value: str) -> Optional[dict]:
         """Find an active rule by type and condition value."""
         return self._find_rule(rule_type, condition_value)
+
+    def find_rule_any_status(self, rule_type: str, condition_value: str) -> Optional[dict]:
+        """Find a rule by type and condition value regardless of active status."""
+        row = self._db.execute(
+            """SELECT * FROM rules
+               WHERE rule_type = ? AND condition_value = ?
+               LIMIT 1""",
+            (rule_type, condition_value),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def reactivate_rule(
+        self,
+        rule_id: int,
+        *,
+        confidence: float,
+        target_folder_path: str | None = None,
+    ) -> None:
+        """Reactivate an inactive rule with a fresh confidence value."""
+        if target_folder_path:
+            self._db.execute(
+                """UPDATE rules SET active = 1, confidence = ?,
+                       target_folder_path = ?, updated_at = datetime('now')
+                   WHERE id = ?""",
+                (confidence, target_folder_path, rule_id),
+            )
+        else:
+            self._db.execute(
+                "UPDATE rules SET active = 1, confidence = ?, updated_at = datetime('now') WHERE id = ?",
+                (confidence, rule_id),
+            )
+        self._db.commit()
 
     def reconcile_folders(self, live_folder_paths: set[str]) -> int:
         """Deactivate rules whose target folder no longer exists. Returns count."""

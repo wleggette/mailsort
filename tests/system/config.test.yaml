@@ -16,7 +16,21 @@ classification:
     rule_move: 0.85
     llm_move: 0.80
     llm_move_known_contact: 0.93
-  correction_penalty: 0.15
+  correction_penalty: 0.05
+  coherence_lookback_days: 30
+  coherence_min_sample: 3
+  staleness_threshold_days: 365
+  staleness_decay_days: 365
+  staleness_floor: 0.6
+  deactivation_threshold: 0.50
+  base_confidence:
+    list_id: 0.95
+    exact_sender_floor: 0.80
+    exact_sender_cap: 0.95
+    exact_sender_per_evidence: 0.03
+    sender_domain_floor: 0.75
+    sender_domain_cap: 0.90
+    sender_domain_per_evidence: 0.02
 
 folder_description_overrides:
   "Affairs": "Parent folder only — do NOT sort emails here. Use subfolders Affairs/Banks or Affairs/Stores instead."

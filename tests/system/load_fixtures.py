@@ -552,7 +552,7 @@ def cleanup_test_emails(loader: JMAPLoader, tag_keyword: str = "$mailsort-test")
 
 def main():
     parser = argparse.ArgumentParser(description="Load fixture emails into Fastmail test account")
-    parser.add_argument("--config", default="config.test.yaml", help="Path to test config")
+    parser.add_argument("--config", default="tests/system/config.test.yaml", help="Path to test config")
     parser.add_argument("--cleanup", action="store_true", help="Delete all test emails instead of loading")
     parser.add_argument("--to-email", default=None, help="Test account email address (auto-detected from JMAP session if omitted)")
     args = parser.parse_args()

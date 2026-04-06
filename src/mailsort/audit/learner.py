@@ -14,6 +14,7 @@ All detected manual sorts are logged and fed into auto-rule generation.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -37,6 +38,13 @@ class ManualSortCounts:
         return self.from_inbox + self.from_other
 
 logger = logging.getLogger(__name__)
+
+_RULE_TYPE_COLUMN: dict[str, str] = {
+    "exact_sender": "from_address",
+    "sender_domain": "from_domain",
+    "list_id": "list_id",
+    "subject_regex": "subject",
+}
 
 
 class Learner:
@@ -111,9 +119,9 @@ class Learner:
 
         skipped_ids = [row["email_id"] for row in rows]
 
-        # Dedup: skip emails that already have a manual audit_log row
-        already_corrected = self._already_corrected_email_ids(skipped_ids)
-        skipped_ids = [eid for eid in skipped_ids if eid not in already_corrected]
+        # Dedup: skip emails already handled (correction/manual row with no newer rule move)
+        already_handled = self._already_handled_email_ids(skipped_ids)
+        skipped_ids = [eid for eid in skipped_ids if eid not in already_handled]
         if not skipped_ids:
             return 0
 
@@ -144,17 +152,18 @@ class Learner:
     ) -> int:
         """Find emails we moved that the user subsequently relocated.
 
-        When a correction is detected:
-          1. A manual audit_log row is recorded for the new destination.
-          2. The originating rule (if any) receives a confidence penalty.
-          3. If the rule's confidence drops below the rule_move threshold,
-             the rule is automatically deactivated.
+        Corrections are recorded with classification_source='correction' and
+        rule_id set to the rule that fired. The computed confidence model
+        handles penalty application via compute_rule_confidence().
         """
         lookback = f"-{self._config.learner_lookback_days} days"
+        # ORDER BY created_at ASC so the most recent move wins in the dict
         rows = self._db.execute(
             """SELECT email_id, target_folder, rule_id FROM audit_log
-               WHERE moved = 1 AND classification_source != 'manual'
-                 AND created_at >= datetime('now', ?)""",
+               WHERE moved = 1
+                 AND classification_source NOT IN ('manual', 'correction')
+                 AND created_at >= datetime('now', ?)
+               ORDER BY created_at ASC""",
             (lookback,),
         ).fetchall()
         if not rows:
@@ -164,20 +173,21 @@ class Learner:
         rule_ids = {row["email_id"]: row["rule_id"] for row in rows}
         email_ids = list(expected.keys())
 
-        # Dedup: skip emails that already have a subsequent manual audit_log row
-        already_corrected = self._already_corrected_email_ids(email_ids)
+        # Dedup: skip emails already handled (correction/manual row with no newer rule move)
+        already_handled = self._already_handled_email_ids(email_ids)
+        fetch_ids = [eid for eid in email_ids if eid not in already_handled]
+        if not fetch_ids:
+            return 0
 
         found = 0
 
         try:
-            emails = jmap.get_emails(email_ids[:100], ["id", "threadId", "mailboxIds"])
+            emails = jmap.get_emails(fetch_ids[:100], ["id", "threadId", "mailboxIds"])
         except Exception:
             logger.exception("Failed to fetch moved emails for correction detection")
             return 0
 
         for email in emails:
-            if email.id in already_corrected:
-                continue
             expected_path = expected.get(email.id)
             if not expected_path:
                 continue
@@ -187,63 +197,77 @@ class Learner:
                 if new_folder_id:
                     new_path = tree.path_for(new_folder_id)
                     if new_path and new_path != "INBOX":
-                        self._record_manual_sort(run_id, email.id, new_path)
-                        self._penalize_rule(rule_ids.get(email.id))
+                        self._record_correction(
+                            run_id, email.id, new_path,
+                            rule_id=rule_ids.get(email.id),
+                        )
                         found += 1
         return found
 
-    def _already_corrected_email_ids(self, email_ids: list[str]) -> set[str]:
-        """Return the subset of email_ids that already have a manual audit_log row."""
+    def _already_handled_email_ids(self, email_ids: list[str]) -> set[str]:
+        """Return email_ids that already have a manual/correction row with no newer rule move.
+
+        This handles the move-correct-move-correct cycle: if a new rule move
+        exists after the last correction, the email is eligible for re-detection.
+        """
         if not email_ids:
             return set()
         placeholders = ",".join("?" for _ in email_ids)
         rows = self._db.execute(
-            f"""SELECT DISTINCT email_id FROM audit_log
-                WHERE email_id IN ({placeholders})
-                  AND classification_source = 'manual'""",
+            f"""SELECT DISTINCT a.email_id FROM audit_log a
+                WHERE a.email_id IN ({placeholders})
+                  AND a.classification_source IN ('manual', 'correction')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM audit_log b
+                      WHERE b.email_id = a.email_id
+                        AND b.classification_source NOT IN ('manual', 'correction')
+                        AND b.moved = 1
+                        AND b.created_at > a.created_at
+                  )""",
             email_ids,
         ).fetchall()
         return {r["email_id"] for r in rows}
 
-    def _penalize_rule(self, rule_id: int | None) -> None:
-        """Reduce a rule's confidence after a user correction.
-
-        Deactivates the rule if confidence drops below the rule_move threshold.
-        """
-        if rule_id is None:
-            return
+    def _record_correction(
+        self, run_id: str, email_id: str, folder_path: str,
+        *, rule_id: int | None = None,
+    ) -> None:
+        """Log a correction (Cat 2) with the rule that fired."""
         row = self._db.execute(
-            "SELECT confidence, active FROM rules WHERE id = ?",
-            (rule_id,),
+            """SELECT from_address, from_domain, thread_id, subject, list_id, email_received_at
+               FROM audit_log WHERE email_id = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (email_id,),
         ).fetchone()
-        if not row or not row["active"]:
-            return
-
-        old_conf = row["confidence"]
-        new_conf = max(0.0, old_conf - self._config.correction_penalty)
-        move_threshold = self._config.thresholds.rule_move
 
         self._db.execute(
-            "UPDATE rules SET confidence = ?, updated_at = datetime('now') WHERE id = ?",
-            (new_conf, rule_id),
+            "INSERT INTO audit_log "
+            "(run_id, email_id, thread_id, from_address, from_domain, "
+            " subject, list_id, source_folder, target_folder, confidence, "
+            " classification_source, rule_id, moved, skip_reason, email_received_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                run_id, email_id,
+                row["thread_id"] if row else None,
+                row["from_address"] if row else None,
+                row["from_domain"] if row else None,
+                row["subject"] if row else None,
+                row["list_id"] if row else None,
+                "INBOX", folder_path,
+                1.0, "correction", rule_id, True, None,
+                row["email_received_at"] if row else None,
+            ),
         )
-
-        if new_conf < move_threshold:
-            self._db.execute(
-                "UPDATE rules SET active = 0, updated_at = datetime('now') WHERE id = ?",
-                (rule_id,),
-            )
-            logger.info(
-                "Deactivated rule %d after correction: %.2f → %.2f (below threshold %.2f)",
-                rule_id, old_conf, new_conf, move_threshold,
-            )
-        else:
-            logger.info(
-                "Penalized rule %d after correction: %.2f → %.2f",
-                rule_id, old_conf, new_conf,
-            )
-
         self._db.commit()
+        logger.debug("Recorded correction: %s → %s (rule_id=%s)", email_id, folder_path, rule_id)
+
+        if row and row["from_address"]:
+            self.maybe_create_rule(
+                from_address=row["from_address"],
+                from_domain=row["from_domain"],
+                list_id=row["list_id"],
+                target_folder=folder_path,
+            )
 
     # ------------------------------------------------------------------
     # Category 3: Inbox departures (Option C)
@@ -508,11 +532,15 @@ class Learner:
           2. sender_domain — when domain history is coherent
           3. exact_sender  — narrow scope for individual senders
 
+        If an inactive rule with the same type+condition exists, it is
+        reactivated instead of creating a duplicate (one row per type+condition).
+
         Classification-time priority determines which rule fires.
-        Returns a list of created rule IDs (may be empty).
+        Returns a list of created/reactivated rule IDs (may be empty).
         """
         thresholds = self._config.auto_rule_thresholds
         coherence_min = self._config.auto_rule_domain_coherence
+        base_conf = self._config.base_confidence
         created: list[int] = []
 
         # 1. List-Id rule
@@ -527,13 +555,24 @@ class Learner:
             ).fetchone()[0]
             coherence = to_target / total if total > 0 else 0.0
             if to_target >= thresholds.list_id and coherence >= coherence_min:
-                existing = self._rules.find_existing_rule("list_id", list_id)
-                if not existing:
+                conf = base_conf.list_id
+                existing = self._rules.find_rule_any_status("list_id", list_id)
+                if existing and not existing["active"]:
+                    self._rules.reactivate_rule(
+                        existing["id"], confidence=conf,
+                        target_folder_path=target_folder,
+                    )
+                    logger.info(
+                        "Reactivated list_id rule %d: %s → %s (coherence=%.0f%%, n=%d)",
+                        existing["id"], list_id, target_folder, coherence * 100, to_target,
+                    )
+                    created.append(existing["id"])
+                elif not existing:
                     rule_id = self._rules.create_rule(
                         rule_type="list_id",
                         condition_value=list_id,
                         target_folder_path=target_folder,
-                        confidence=0.95,
+                        confidence=conf,
                         source="auto",
                     )
                     logger.info(
@@ -565,14 +604,27 @@ class Learner:
             if (domain_to_target >= thresholds.sender_domain
                     and domain_distinct >= 3
                     and coherence >= coherence_min):
-                existing = self._rules.find_existing_rule("sender_domain", from_domain)
-                if not existing:
-                    confidence = min(0.90, 0.75 + (domain_to_target * 0.02))
+                conf = min(
+                    base_conf.sender_domain_cap,
+                    base_conf.sender_domain_floor + domain_to_target * base_conf.sender_domain_per_evidence,
+                )
+                existing = self._rules.find_rule_any_status("sender_domain", from_domain)
+                if existing and not existing["active"]:
+                    self._rules.reactivate_rule(
+                        existing["id"], confidence=conf,
+                        target_folder_path=target_folder,
+                    )
+                    logger.info(
+                        "Reactivated domain rule %d: %s → %s (coherence=%.0f%%, n=%d)",
+                        existing["id"], from_domain, target_folder, coherence * 100, domain_to_target,
+                    )
+                    created.append(existing["id"])
+                elif not existing:
                     rule_id = self._rules.create_rule(
                         rule_type="sender_domain",
                         condition_value=from_domain,
                         target_folder_path=target_folder,
-                        confidence=confidence,
+                        confidence=conf,
                         source="auto",
                     )
                     logger.info(
@@ -593,14 +645,27 @@ class Learner:
             ).fetchone()[0]
             coherence = to_target / total if total > 0 else 0.0
             if to_target >= thresholds.exact_sender and coherence >= coherence_min:
-                existing = self._rules.find_existing_rule("exact_sender", from_address)
-                if not existing:
-                    confidence = min(0.95, 0.80 + (to_target * 0.03))
+                conf = min(
+                    base_conf.exact_sender_cap,
+                    base_conf.exact_sender_floor + to_target * base_conf.exact_sender_per_evidence,
+                )
+                existing = self._rules.find_rule_any_status("exact_sender", from_address)
+                if existing and not existing["active"]:
+                    self._rules.reactivate_rule(
+                        existing["id"], confidence=conf,
+                        target_folder_path=target_folder,
+                    )
+                    logger.info(
+                        "Reactivated sender rule %d: %s → %s (coherence=%.0f%%, n=%d)",
+                        existing["id"], from_address, target_folder, coherence * 100, to_target,
+                    )
+                    created.append(existing["id"])
+                elif not existing:
                     rule_id = self._rules.create_rule(
                         rule_type="exact_sender",
                         condition_value=from_address,
                         target_folder_path=target_folder,
-                        confidence=confidence,
+                        confidence=conf,
                         source="auto",
                     )
                     logger.info(
@@ -612,33 +677,219 @@ class Learner:
         return created
 
     # ------------------------------------------------------------------
-    # Rule confidence adjustment
+    # Computed confidence model
     # ------------------------------------------------------------------
 
-    def adjust_rule_confidence(self) -> int:
-        """Lower confidence on rules that haven't matched recently. Returns count adjusted."""
-        adjusted = 0
+    def compute_rule_confidence(self) -> int:
+        """Recompute confidence for all active auto rules from live state.
+
+        Returns count of rules whose confidence changed.
+        """
         rows = self._db.execute(
-            """SELECT id, confidence, hit_count, last_hit_at FROM rules
-               WHERE active = 1 AND last_hit_at IS NOT NULL
-                 AND last_hit_at < datetime('now', '-90 days')
-                 AND confidence > 0.50"""
+            "SELECT * FROM rules WHERE active = 1 AND source != 'manual'"
         ).fetchall()
+        if not rows:
+            return 0
 
-        for row in rows:
-            new_confidence = max(0.50, row["confidence"] - 0.10)
-            if new_confidence < row["confidence"]:
+        base_conf = self._config.base_confidence
+        lookback_days = self._config.coherence_lookback_days
+        min_sample = self._config.coherence_min_sample
+        staleness_threshold = self._config.staleness_threshold_days
+        staleness_decay = self._config.staleness_decay_days
+        staleness_floor = self._config.staleness_floor
+        penalty = self._config.correction_penalty
+        deactivation = self._config.deactivation_threshold
+        changed = 0
+
+        for rule in rows:
+            rule = dict(rule)
+            old_conf = rule["confidence"]
+
+            # 1. base_confidence — computed from all-time evidence
+            evidence_count = self._count_all_time_evidence(rule)
+            base = self._compute_base_confidence(rule["rule_type"], evidence_count, base_conf)
+
+            # 2. coherence_factor — from audit_log within lookback window
+            coherence, sample_count, last_relevant = self._compute_coherence(
+                rule, lookback_days,
+            )
+            if sample_count < min_sample:
+                coherence = 1.0  # benefit of the doubt
+
+            # 3. staleness_factor — from last_relevant_at
+            effective_last_relevant = last_relevant or rule.get("last_relevant_at")
+            staleness = self._compute_staleness(
+                effective_last_relevant,
+                staleness_threshold, staleness_decay, staleness_floor,
+            )
+
+            # 4. net_corrections — in lookback window
+            net_corrections = self._count_net_corrections(rule, lookback_days)
+
+            # 5. confidence formula
+            new_conf = max(0.0, base * coherence * staleness
+                           - net_corrections * penalty)
+
+            # 6. deactivation check
+            if new_conf < deactivation:
                 self._db.execute(
-                    "UPDATE rules SET confidence = ?, updated_at = datetime('now') WHERE id = ?",
-                    (new_confidence, row["id"]),
+                    "UPDATE rules SET active = 0, confidence = ?, updated_at = datetime('now') WHERE id = ?",
+                    (new_conf, rule["id"]),
                 )
-                adjusted += 1
                 logger.info(
-                    "Lowered confidence on rule %d: %.2f → %.2f (last hit: %s)",
-                    row["id"], row["confidence"], new_confidence, row["last_hit_at"],
+                    "Deactivated rule %d: confidence %.2f → %.2f (below threshold %.2f)",
+                    rule["id"], old_conf, new_conf, deactivation,
+                )
+                changed += 1
+            elif abs(new_conf - old_conf) > 0.001:
+                update_fields = "confidence = ?, updated_at = datetime('now')"
+                params: list = [new_conf]
+                if effective_last_relevant:
+                    update_fields += ", last_relevant_at = ?"
+                    params.append(effective_last_relevant)
+                params.append(rule["id"])
+                self._db.execute(
+                    f"UPDATE rules SET {update_fields} WHERE id = ?",
+                    params,
+                )
+                logger.debug(
+                    "Rule %d confidence: %.2f → %.2f (base=%.2f, coh=%.2f, stale=%.2f, corr=%d)",
+                    rule["id"], old_conf, new_conf, base, coherence, staleness, net_corrections,
+                )
+                changed += 1
+            elif effective_last_relevant:
+                # Confidence unchanged but update last_relevant_at if available
+                self._db.execute(
+                    "UPDATE rules SET last_relevant_at = ? WHERE id = ?",
+                    (effective_last_relevant, rule["id"]),
                 )
 
-        if adjusted:
+        if changed:
             self._db.commit()
-            logger.info("Adjusted confidence on %d stale rule(s)", adjusted)
-        return adjusted
+            logger.info("Recomputed confidence on %d rule(s)", changed)
+        else:
+            self._db.commit()  # commit last_relevant_at updates
+        return changed
+
+    def _count_all_time_evidence(self, rule: dict) -> int:
+        """Count all-time evidence for base_confidence. Uses LIMIT to cap scan."""
+        col = _RULE_TYPE_COLUMN[rule["rule_type"]]
+        bc = self._config.base_confidence
+        max_needed = max(
+            math.ceil((bc.exact_sender_cap - bc.exact_sender_floor) / bc.exact_sender_per_evidence)
+            if bc.exact_sender_per_evidence > 0 else 1,
+            math.ceil((bc.sender_domain_cap - bc.sender_domain_floor) / bc.sender_domain_per_evidence)
+            if bc.sender_domain_per_evidence > 0 else 1,
+            1,  # list_id is fixed — 1 row suffices
+        )
+        return self._db.execute(
+            f"""SELECT COUNT(*) FROM (
+                    SELECT 1 FROM audit_log
+                    WHERE {col} = ? AND target_folder = ? AND moved = 1
+                    LIMIT ?
+                )""",
+            (rule["condition_value"], rule["target_folder_path"], max_needed),
+        ).fetchone()[0]
+
+    @staticmethod
+    def _compute_base_confidence(
+        rule_type: str, evidence_count: int, base_conf,
+    ) -> float:
+        """Compute base confidence from rule type and evidence count."""
+        if rule_type == "list_id":
+            return base_conf.list_id
+        elif rule_type == "exact_sender":
+            return min(
+                base_conf.exact_sender_cap,
+                base_conf.exact_sender_floor + evidence_count * base_conf.exact_sender_per_evidence,
+            )
+        elif rule_type == "sender_domain":
+            return min(
+                base_conf.sender_domain_cap,
+                base_conf.sender_domain_floor + evidence_count * base_conf.sender_domain_per_evidence,
+            )
+        return 0.90  # fallback for subject_regex
+
+    def _compute_coherence(
+        self, rule: dict, lookback_days: int,
+    ) -> tuple[float, int, str | None]:
+        """Compute coherence factor and last_relevant_at from audit_log.
+
+        Returns (coherence_factor, sample_count, last_relevant_at_str).
+        """
+        col = _RULE_TYPE_COLUMN[rule["rule_type"]]
+        lookback = f"-{lookback_days} days"
+
+        # Total emails matching condition that were moved in the window
+        total_row = self._db.execute(
+            f"""SELECT COUNT(*) AS cnt FROM audit_log
+                WHERE {col} = ? AND moved = 1
+                  AND created_at >= datetime('now', ?)""",
+            (rule["condition_value"], lookback),
+        ).fetchone()
+        total = total_row["cnt"]
+
+        # Emails matching condition moved to this rule's target folder
+        target_row = self._db.execute(
+            f"""SELECT COUNT(*) AS cnt, MAX(created_at) AS last_relevant
+                FROM audit_log
+                WHERE {col} = ? AND target_folder = ? AND moved = 1
+                  AND created_at >= datetime('now', ?)""",
+            (rule["condition_value"], rule["target_folder_path"], lookback),
+        ).fetchone()
+        to_target = target_row["cnt"]
+        last_relevant = target_row["last_relevant"]
+
+        coherence = to_target / total if total > 0 else 1.0
+        return coherence, total, last_relevant
+
+    @staticmethod
+    def _compute_staleness(
+        last_relevant_at: str | None,
+        threshold_days: int,
+        decay_days: int,
+        floor: float,
+    ) -> float:
+        """Compute staleness factor from last_relevant_at timestamp."""
+        if not last_relevant_at:
+            return 1.0  # no data — benefit of the doubt
+
+        from datetime import datetime, timezone
+        try:
+            last_dt = datetime.fromisoformat(last_relevant_at).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return 1.0
+        now = datetime.now(timezone.utc)
+        days_since = (now - last_dt).total_seconds() / 86400
+
+        if days_since <= threshold_days:
+            return 1.0
+
+        days_past = days_since - threshold_days
+        return max(floor, 1.0 - (days_past / decay_days) * 0.4)
+
+    def _count_net_corrections(self, rule: dict, lookback_days: int) -> int:
+        """Count net corrections (corrections_against − confirming_sorts) in window."""
+        lookback = f"-{lookback_days} days"
+
+        # Corrections against this rule
+        corrections = self._db.execute(
+            """SELECT COUNT(*) FROM audit_log
+               WHERE classification_source = 'correction'
+                 AND rule_id = ?
+                 AND created_at >= datetime('now', ?)""",
+            (rule["id"], lookback),
+        ).fetchone()[0]
+
+        # Confirming manual sorts (matching condition → rule's target folder)
+        col = _RULE_TYPE_COLUMN[rule["rule_type"]]
+        confirming = self._db.execute(
+            f"""SELECT COUNT(*) FROM audit_log
+                WHERE classification_source = 'manual'
+                  AND {col} = ?
+                  AND target_folder = ?
+                  AND created_at >= datetime('now', ?)""",
+            (rule["condition_value"], rule["target_folder_path"], lookback),
+        ).fetchone()[0]
+
+        return max(0, corrections - confirming)

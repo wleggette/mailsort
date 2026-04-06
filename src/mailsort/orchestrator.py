@@ -191,7 +191,7 @@ def _execute_run(
             interval_hours=cfg.scheduler.folder_scan_interval_hours,
         )
         sort_counts.from_other += folder_scan_sorts  # Cat 4 = from_other
-        rules_adjusted = learner.adjust_rule_confidence()
+        rules_adjusted = learner.compute_rule_confidence()
         learner.cleanup_old_snapshots()
     except Exception:
         logger.exception("Learning step failed, continuing with classification")

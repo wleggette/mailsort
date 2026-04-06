@@ -16,37 +16,29 @@ End-to-end tests against a real Fastmail test account. See `SYSTEM_TEST_PLAN.md`
 export FASTMAIL_API_TOKEN="fmu1-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Copy test config to project root
-cp tests/system/config.test.yaml config.test.yaml
-
-# Setup only (for development)
-python tests/system/run_system_test.py \
-  --config config.test.yaml \
-  --to-email your-test@fastmail.com \
-  --setup-only
+# Setup only (for development) — run from project root
+python tests/system/run_system_test.py --setup-only
 
 # Then interact manually:
-mailsort web --config config.test.yaml --port 8081
-mailsort dry-run --config config.test.yaml
-mailsort run --config config.test.yaml
+mailsort web --config tests/system/config.test.yaml --port 8081
+mailsort dry-run --config tests/system/config.test.yaml
+mailsort run --config tests/system/config.test.yaml
 
 # Full automated sequence
-python tests/system/run_system_test.py \
-  --config config.test.yaml \
-  --to-email your-test@fastmail.com
+python tests/system/run_system_test.py
 
 # Cleanup only
-python tests/system/run_system_test.py \
-  --config config.test.yaml \
-  --to-email your-test@fastmail.com \
-  --cleanup
+python tests/system/run_system_test.py --cleanup
 ```
+
+The test harness defaults to `tests/system/config.test.yaml` — no need to copy
+it to the project root. Override with `--config <path>` if needed.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `config.test.yaml` | Test config template (copy to project root) |
+| `config.test.yaml` | Test configuration (used in-place, not copied to root) |
 | `fixtures/folder_emails.json` | Static fixture emails for bootstrap (groups A–I) |
 | `generate_inbox_emails.py` | Dynamic inbox email generator with relative timestamps |
 | `load_fixtures.py` | JMAP email loader (import emails into test account) |

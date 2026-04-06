@@ -28,7 +28,21 @@ classification:
   llm_max_preview_chars: 500
   llm_suggest_rule_after_n: 5
   # learner_lookback_days: 7    # How many days back to search for manual sorts
-  # correction_penalty: 0.15    # Confidence reduction when user corrects a rule's move
+  # correction_penalty: 0.05    # Confidence reduction per net user correction (3 stops any rule)
+  # coherence_lookback_days: 30 # Window for coherence and correction counting
+  # coherence_min_sample: 3     # Min emails in window before coherence adjusts confidence
+  # staleness_threshold_days: 365  # Days since last_relevant_at before staleness decay starts
+  # staleness_decay_days: 365      # Duration of linear decay from 1.0 to floor
+  # staleness_floor: 0.6           # Minimum staleness factor
+  # deactivation_threshold: 0.50   # Confidence below which a rule is set to active=0
+  # base_confidence:               # Base confidence formula params (computed each cycle)
+  #   list_id: 0.95
+  #   exact_sender_floor: 0.80
+  #   exact_sender_cap: 0.95
+  #   exact_sender_per_evidence: 0.03
+  #   sender_domain_floor: 0.75
+  #   sender_domain_cap: 0.90
+  #   sender_domain_per_evidence: 0.02
 
 # Folder descriptions — OPTIONAL manual overrides only.
 # Bootstrap auto-generates descriptions for all folders by scanning their contents.

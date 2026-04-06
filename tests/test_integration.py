@@ -67,7 +67,7 @@ def _email(
 
 
 def _seed_rules(db: Database) -> dict[str, int]:
-    """Seed rules and return {condition_value: rule_id}."""
+    """Seed rules with evidence and return {condition_value: rule_id}."""
     rules = {}
     for val, folder, conf in [
         ("noreply@chase.com", "INBOX/Affairs/Banks", 0.95),
@@ -78,7 +78,17 @@ def _seed_rules(db: Database) -> dict[str, int]:
             "confidence, source, active) VALUES ('exact_sender', ?, ?, ?, 'bootstrap', 1)",
             (val, folder, conf),
         )
-        rules[val] = cursor.lastrowid
+        rule_id = cursor.lastrowid
+        rules[val] = rule_id
+        # Seed evidence so compute_rule_confidence keeps confidence high
+        domain = val.split("@")[1]
+        for i in range(5):
+            db.execute(
+                "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+                "source_folder, target_folder, confidence, classification_source, moved) "
+                "VALUES ('run-seed', ?, ?, ?, 'INBOX', ?, 1.0, 'rule', 1)",
+                (f"e-seed-{val}-{i}", val, domain, folder),
+            )
     db.commit()
     return rules
 
@@ -158,13 +168,13 @@ def test_pass1_classify_and_move(db: Database, monkeypatch):
 # Pass 2: Learning detects user correction → penalizes rule
 # ---------------------------------------------------------------------------
 
-def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypatch):
+def test_pass2_learning_detects_correction_and_computes_confidence(db: Database, monkeypatch):
     """Second run after user corrects a move.
 
     Setup:
       - Pass 1 moved e-chase to Banks via rule (conf 0.95)
       - User relocated e-chase from Banks to Travel (correction)
-      - Pass 2 should detect the correction and penalize the rule
+      - Pass 2 should detect the correction, record it, and recompute confidence
     """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = _cfg()
@@ -189,7 +199,7 @@ def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypat
 
     run1_id = run_classification_pass(cfg, db, mock_jmap, tree, dry_run=False, trigger="test").run_id
 
-    # Confirm rule confidence is still original
+    # Confirm rule confidence is still high after pass 1
     rule_row = db.execute(
         "SELECT confidence, active FROM rules WHERE id = ?",
         (rules["noreply@chase.com"],),
@@ -198,16 +208,11 @@ def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypat
     assert rule_row["active"] == 1
 
     # --- Simulate pass 2: user has moved e-chase from Banks to Travel ---
-    # Now the learner will query audit_log for moved emails and check their
-    # current location via JMAP. We mock get_emails to show e-chase is in Travel.
     mock_jmap2 = MagicMock()
-    # Unfiltered inbox: empty (e-chase is no longer in inbox)
     mock_jmap2.query_inbox_emails.side_effect = [
         set(),   # unfiltered
         [],      # filtered (eligible) — nothing to classify
     ]
-    # The learner's _detect_correction_sorts calls get_emails for recently moved emails
-    # It will find e-chase and see it's now in Travel (mb-travel) instead of Banks (mb-banks)
     corrected_chase = MagicMock()
     corrected_chase.id = "e-chase"
     corrected_chase.mailbox_ids = {"mb-travel": True}  # user moved to Travel
@@ -219,27 +224,27 @@ def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypat
 
     run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=False, trigger="test").run_id
 
-    # --- Verify rule was penalized ---
+    # --- Verify confidence dropped via computed model ---
     rule_row = db.execute(
         "SELECT confidence, active FROM rules WHERE id = ?",
         (rules["noreply@chase.com"],),
     ).fetchone()
-    assert abs(rule_row["confidence"] - 0.80) < 1e-9  # 0.95 - 0.15
-    assert rule_row["active"] == 0  # 0.80 < 0.85 threshold → deactivated
+    assert rule_row["confidence"] < 0.85  # below rule_move threshold
+    assert rule_row["active"] == 1  # above deactivation_threshold (0.50)
 
-    # --- Verify a manual sort was recorded ---
-    manual_row = db.execute(
-        "SELECT * FROM audit_log WHERE email_id = 'e-chase' AND classification_source = 'manual'"
+    # --- Verify a correction was recorded ---
+    corr_row = db.execute(
+        "SELECT * FROM audit_log WHERE email_id = 'e-chase' AND classification_source = 'correction'"
     ).fetchone()
-    assert manual_row is not None
-    assert manual_row["target_folder"] == "INBOX/Travel"
+    assert corr_row is not None
+    assert corr_row["target_folder"] == "INBOX/Travel"
+    assert corr_row["rule_id"] == rules["noreply@chase.com"]
 
-    # --- Verify dedup: running again doesn't double-penalize ---
+    # --- Verify dedup: running again doesn't create duplicate corrections ---
     original_conf = rule_row["confidence"]
     mock_jmap3 = MagicMock()
     mock_jmap3.query_inbox_emails.side_effect = [set(), []]
-    # e-chase still in Travel, but already corrected
-    mock_jmap3.get_emails.return_value = [corrected_chase]
+    mock_jmap3.get_emails.return_value = []
     mock_jmap3.get_contacts.return_value = []
     mock_jmap3.query_folder_emails.return_value = []
     mock_jmap3.session_capabilities = set()
@@ -251,7 +256,7 @@ def test_pass2_learning_detects_correction_and_penalizes(db: Database, monkeypat
         "SELECT confidence FROM rules WHERE id = ?",
         (rules["noreply@chase.com"],),
     ).fetchone()
-    assert rule_row["confidence"] == original_conf  # unchanged — dedup works
+    assert abs(rule_row["confidence"] - original_conf) < 1e-9  # unchanged — dedup works
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +267,8 @@ def test_full_lifecycle_move_correct_deactivate(db: Database, monkeypatch):
     """Multi-pass lifecycle test.
 
     Pass 1: Rule matches chase → moves to Banks
-    Pass 2: User corrected to Travel → rule penalized & deactivated
-    Pass 3: New chase email arrives → rule no longer matches (deactivated),
+    Pass 2: User corrected to Travel → confidence drops below rule_move
+    Pass 3: New chase email arrives → rule confidence < rule_move → no match,
             falls through to no classification
     """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -306,21 +311,17 @@ def test_full_lifecycle_move_correct_deactivate(db: Database, monkeypatch):
     run_classification_pass(cfg, db, jmap2, tree, dry_run=False, trigger="test")
 
     rule = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (chase_rule_id,)).fetchone()
-    assert rule["active"] == 0  # deactivated after correction
+    assert rule["confidence"] < 0.85  # below rule_move — won't fire
+    assert rule["active"] == 1  # still above deactivation threshold
 
-    # --- Pass 3: new chase email arrives → rule is deactivated → no match ---
+    # --- Pass 3: new chase email arrives → confidence < rule_move → no match ---
     e2 = _email("e-chase-2", "noreply@chase.com", "Feb statement")
 
     jmap3 = MagicMock()
     jmap3.query_inbox_emails.side_effect = [{"e-chase-2"}, ["e-chase-2"]]
-    # Learner will try to check corrected emails again — return already-corrected ones
-    already_corrected = MagicMock()
-    already_corrected.id = "e-chase-1"
-    already_corrected.mailbox_ids = {"mb-travel": True}
-    jmap3.get_emails.side_effect = [
-        [already_corrected],  # learner: check corrections
-        [e2],                  # orchestrator: fetch features
-    ]
+    # Dedup filters e-chase-1 (already handled), so learner won't fetch it.
+    # Only get_emails call is for classification of e-chase-2.
+    jmap3.get_emails.return_value = [e2]
     jmap3.get_thread_email_ids.return_value = []
     jmap3.get_contacts.return_value = []
     jmap3.query_folder_emails.return_value = []
@@ -329,7 +330,7 @@ def test_full_lifecycle_move_correct_deactivate(db: Database, monkeypatch):
 
     run_classification_pass(cfg, db, jmap3, tree, dry_run=False, trigger="test")
 
-    # e-chase-2 should NOT have been moved — rule is deactivated
+    # e-chase-2 should NOT have been moved — rule confidence below rule_move
     row2 = db.execute(
         "SELECT moved, skip_reason FROM audit_log WHERE email_id = 'e-chase-2'"
     ).fetchone()
@@ -893,16 +894,16 @@ def test_snapshot_captures_beyond_batch_for_departure_detection(db: Database, mo
 # X12: Dry run still runs learning step
 # ---------------------------------------------------------------------------
 
-def test_dry_run_detects_corrections_and_penalizes_rules(db: Database, monkeypatch):
-    """Learning (correction detection + rule penalty) runs even in dry_run mode.
+def test_dry_run_detects_corrections_and_computes_confidence(db: Database, monkeypatch):
+    """Learning (correction detection + confidence recomputation) runs even in dry_run mode.
 
     Tests X12: if a user corrects an email between a live run and a dry run,
-    the dry run's learning step should detect the correction and adjust rule
+    the dry run's learning step should detect the correction and recompute
     confidence — even though it won't move any new emails.
 
     Pass 1 (live): Rule moves chase to Banks.
     (User corrects chase to Travel)
-    Pass 2 (dry_run=True): Learning detects correction, penalizes rule.
+    Pass 2 (dry_run=True): Learning detects correction, recomputes confidence.
     """
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     cfg = _cfg()
@@ -945,25 +946,25 @@ def test_dry_run_detects_corrections_and_penalizes_rules(db: Database, monkeypat
     mock_jmap2.session_capabilities = set()
     mock_jmap2.is_read_only = False
 
-    # --- Pass 2 (DRY RUN): should still detect correction and penalize ---
+    # --- Pass 2 (DRY RUN): should still detect correction and recompute ---
     run2_id = run_classification_pass(cfg, db, mock_jmap2, tree, dry_run=True, trigger="test").run_id
 
-    # Verify: rule was penalized even though this was a dry run
+    # Verify: confidence reduced even though this was a dry run
     rule_row = db.execute(
         "SELECT confidence, active FROM rules WHERE id = ?",
         (rules["noreply@chase.com"],),
     ).fetchone()
-    assert abs(rule_row["confidence"] - 0.80) < 1e-9, (
-        f"Rule should be penalized to 0.80 even in dry run (got {rule_row['confidence']})"
+    assert rule_row["confidence"] < 0.85, (
+        f"Rule confidence should drop below rule_move even in dry run (got {rule_row['confidence']})"
     )
-    assert rule_row["active"] == 0, "Rule should be deactivated even in dry run"
+    assert rule_row["active"] == 1, "Rule should stay active (above deactivation threshold)"
 
-    # Verify: manual audit row was created
-    manual_row = db.execute(
-        "SELECT * FROM audit_log WHERE email_id = 'e-chase-x12' AND classification_source = 'manual'"
+    # Verify: correction audit row was created
+    corr_row = db.execute(
+        "SELECT * FROM audit_log WHERE email_id = 'e-chase-x12' AND classification_source = 'correction'"
     ).fetchone()
-    assert manual_row is not None, "Manual sort should be detected in dry run"
-    assert "Travel" in manual_row["target_folder"]
+    assert corr_row is not None, "Correction should be detected in dry run"
+    assert "Travel" in corr_row["target_folder"]
 
     # Verify: no emails were moved (dry run)
     run_row = db.execute("SELECT * FROM runs WHERE run_id = ?", (run2_id,)).fetchone()

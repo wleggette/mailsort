@@ -57,3 +57,48 @@ def test_config_loads_token_from_env(tmp_path: Path, monkeypatch):
 def test_config_file_not_found():
     with pytest.raises(FileNotFoundError):
         load_config("/nonexistent/path/config.yaml")
+
+
+def test_base_confidence_config_defaults():
+    from mailsort.config import BaseConfidenceConfig
+    bc = BaseConfidenceConfig()
+    assert bc.list_id == 0.95
+    assert bc.exact_sender_floor == 0.80
+    assert bc.exact_sender_cap == 0.95
+    assert bc.exact_sender_per_evidence == 0.03
+    assert bc.sender_domain_floor == 0.75
+    assert bc.sender_domain_cap == 0.90
+    assert bc.sender_domain_per_evidence == 0.02
+
+
+def test_computed_confidence_param_defaults():
+    from mailsort.config import ClassificationConfig
+    cc = ClassificationConfig()
+    assert cc.correction_penalty == 0.05
+    assert cc.coherence_lookback_days == 30
+    assert cc.coherence_min_sample == 3
+    assert cc.staleness_threshold_days == 365
+    assert cc.staleness_decay_days == 365
+    assert cc.staleness_floor == 0.6
+    assert cc.deactivation_threshold == 0.50
+
+
+def test_base_confidence_config_override(tmp_path: Path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("""
+classification:
+  base_confidence:
+    list_id: 0.99
+    exact_sender_floor: 0.70
+    exact_sender_cap: 0.98
+  correction_penalty: 0.10
+  deactivation_threshold: 0.40
+""")
+    cfg = load_config(config_file, require_secrets=False)
+    assert cfg.classification.base_confidence.list_id == 0.99
+    assert cfg.classification.base_confidence.exact_sender_floor == 0.70
+    assert cfg.classification.base_confidence.exact_sender_cap == 0.98
+    # Non-overridden fields keep defaults
+    assert cfg.classification.base_confidence.sender_domain_floor == 0.75
+    assert cfg.classification.correction_penalty == 0.10
+    assert cfg.classification.deactivation_threshold == 0.40

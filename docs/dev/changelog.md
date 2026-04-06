@@ -5,6 +5,38 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-05 — Feat: computed confidence model
+
+**What changed:**
+- **feat:** Replaced static confidence model (set once, modified by one-way penalties)
+  with a computed model: `confidence = max(0, base × coherence × staleness − net_corrections × penalty)`.
+  Confidence is recomputed each cycle from live audit_log state — bidirectional, so rules
+  recover when evidence improves.
+- **feat:** `BaseConfidenceConfig` — per-rule-type base confidence with floor/cap/per_evidence
+  scaling (exact_sender: 0.80–0.95, sender_domain: 0.75–0.90, list_id: fixed 0.95).
+- **feat:** Coherence factor from 30-day window with min-sample guard (< 3 emails → 1.0).
+- **feat:** Staleness factor from `last_relevant_at` (365d threshold, 365d decay, floor 0.6).
+- **feat:** Corrections recorded as `classification_source='correction'` with `rule_id`.
+  Net corrections = corrections_against − confirming_manual_sorts. Corrections age out at 30d.
+- **feat:** `correction_penalty` reduced 0.15 → 0.05 (volume-independent per-correction deduction).
+- **feat:** Deactivation at configurable threshold (0.50) instead of below `rule_move`.
+- **feat:** Reactivation over duplication — `find_rule_any_status` + `reactivate_rule` prevents
+  duplicate rule rows when evidence re-accumulates for an inactive rule.
+- **feat:** `_count_all_time_evidence` LIMIT dynamically computed from config caps/floors.
+- **refactor:** `last_hit_at` → `last_relevant_at` (migration 11). `hit_count` retained for display.
+- **refactor:** Removed `adjust_rule_confidence` (staleness decay) and `_penalize_rule` (direct
+  penalty). Both replaced by `compute_rule_confidence()`.
+- **refactor:** Dedup fix: `_already_handled_email_ids` allows re-correction after a new rule move
+  (previous dedup was too aggressive — blocked corrections permanently).
+- **feat:** Web UI rule detail: Performance card split into All Time / Last 30 Days columns
+  with coherence, evidence, corrections against/confirming/net. Added `correction` badge (red).
+
+**Files:** `config.py`, `db/migrations.py`, `audit/learner.py`, `classifier/rules.py`,
+`orchestrator.py`, `main.py`, `web/routes/rules.py`, `web/templates/rules/detail.html`,
+`web/templates/rules/list.html`, `config.yaml.example`, plus all test files.
+
+---
+
 ## 2026-04-03 — Fix: system test age gate timing + Docker intercept
 
 **What changed:**

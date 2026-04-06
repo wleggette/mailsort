@@ -343,6 +343,102 @@ def test_auto_rule_not_duplicated(db: Database):
     assert len(created_2) == 0  # already exists
 
 
+def test_auto_rule_reactivates_inactive_exact_sender(db: Database):
+    """Inactive exact_sender rule is reactivated instead of creating a duplicate."""
+    learner = _make_learner(db)
+
+    # Create and deactivate a rule
+    db.execute(
+        "INSERT INTO rules (id, rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES (70, 'exact_sender', 'noreply@chase.com', "
+        "'INBOX/Affairs/Banks', 0.30, 'auto', 0)"
+    )
+    db.commit()
+
+    for i in range(3):
+        _seed_audit_row(db, email_id=f"e-react-{i}", from_address="noreply@chase.com",
+                        from_domain="chase.com", target_folder="INBOX/Affairs/Banks")
+
+    created = learner.maybe_create_rule(
+        from_address="noreply@chase.com", from_domain="chase.com",
+        list_id=None, target_folder="INBOX/Affairs/Banks",
+    )
+    # Should reactivate, not create new — returned list may be empty (reactivation isn't a "creation")
+    # But rule 70 should now be active with fresh confidence
+    row = db.execute("SELECT * FROM rules WHERE id = 70").fetchone()
+    assert row["active"] == 1
+    assert row["confidence"] > 0.30  # fresh confidence from BaseConfidenceConfig
+
+    # No duplicate rows
+    count = db.execute(
+        "SELECT COUNT(*) FROM rules WHERE rule_type = 'exact_sender' AND condition_value = 'noreply@chase.com'"
+    ).fetchone()[0]
+    assert count == 1
+
+
+def test_auto_rule_reactivates_inactive_list_id(db: Database):
+    """Inactive list_id rule is reactivated instead of creating a duplicate."""
+    learner = _make_learner(db)
+
+    db.execute(
+        "INSERT INTO rules (id, rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES (71, 'list_id', 'news.chase.com', "
+        "'INBOX/Affairs/Banks', 0.20, 'auto', 0)"
+    )
+    db.commit()
+
+    for i in range(2):  # list_id threshold = 2
+        _seed_audit_row(db, email_id=f"e-list-react-{i}", from_address=f"bot{i}@chase.com",
+                        from_domain="chase.com", target_folder="INBOX/Affairs/Banks",
+                        list_id="news.chase.com")
+
+    learner.maybe_create_rule(
+        from_address="bot@chase.com", from_domain="chase.com",
+        list_id="news.chase.com", target_folder="INBOX/Affairs/Banks",
+    )
+
+    row = db.execute("SELECT * FROM rules WHERE id = 71").fetchone()
+    assert row["active"] == 1
+    assert row["confidence"] == 0.95  # list_id gets fixed confidence
+
+    count = db.execute(
+        "SELECT COUNT(*) FROM rules WHERE rule_type = 'list_id' AND condition_value = 'news.chase.com'"
+    ).fetchone()[0]
+    assert count == 1
+
+
+def test_auto_rule_reactivates_inactive_sender_domain(db: Database):
+    """Inactive sender_domain rule is reactivated instead of creating a duplicate."""
+    learner = _make_learner(db)
+
+    db.execute(
+        "INSERT INTO rules (id, rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES (72, 'sender_domain', 'chase.com', "
+        "'INBOX/Affairs/Banks', 0.25, 'auto', 0)"
+    )
+    db.commit()
+
+    # sender_domain needs 5 emails from 3 distinct senders
+    for i in range(5):
+        _seed_audit_row(db, email_id=f"e-dom-react-{i}",
+                        from_address=f"user{i % 3}@chase.com",
+                        from_domain="chase.com", target_folder="INBOX/Affairs/Banks")
+
+    learner.maybe_create_rule(
+        from_address="user0@chase.com", from_domain="chase.com",
+        list_id=None, target_folder="INBOX/Affairs/Banks",
+    )
+
+    row = db.execute("SELECT * FROM rules WHERE id = 72").fetchone()
+    assert row["active"] == 1
+    assert row["confidence"] > 0.25  # fresh confidence
+
+    count = db.execute(
+        "SELECT COUNT(*) FROM rules WHERE rule_type = 'sender_domain' AND condition_value = 'chase.com'"
+    ).fetchone()[0]
+    assert count == 1
+
+
 # ------------------------------------------------------------------
 # Manual sort detection
 # ------------------------------------------------------------------
@@ -451,7 +547,7 @@ def test_skipped_sort_still_detected_after_user_move_and_return(db: Database):
 
     # The NOT IN subquery should only exclude non-manual moved=1, so
     # the email should pass the SQL filter. However, the dedup check
-    # (_already_corrected_email_ids) will still filter it out because
+    # (_already_handled_email_ids) will still filter it out because
     # a manual row already exists. This is expected — the dedup prevents
     # the same email from being double-counted in the same detection pass.
     # The correction_sorts path handles the re-sort case.
@@ -527,7 +623,7 @@ def test_detect_correction_of_mailsort_move(db: Database):
     assert found.from_other == 1  # correction sort = from other
 
     row = db.execute(
-        "SELECT * FROM audit_log WHERE email_id='e-moved' AND classification_source='manual'"
+        "SELECT * FROM audit_log WHERE email_id='e-moved' AND classification_source='correction'"
     ).fetchone()
     assert row is not None
     assert row["target_folder"] == "INBOX/Affairs/Banks"
@@ -634,59 +730,391 @@ def test_multiple_categories_accumulate_correctly(db: Database):
 
 
 # ------------------------------------------------------------------
-# Rule confidence adjustment
+# Computed confidence model
 # ------------------------------------------------------------------
 
-def test_confidence_decay_on_stale_rules(db: Database):
+def test_compute_confidence_with_recent_evidence(db: Database):
+    """Rules with recent coherent evidence get confidence from the formula."""
     learner = _make_learner(db)
 
-    # Create a rule that was last hit 100 days ago
+    _seed_rule(db, rule_id=50, condition_value="recent@example.com",
+               target_folder="INBOX/Affairs/Banks", confidence=0.70)
+
+    # 5 recent evidence rows — all to the same target
+    for i in range(5):
+        _seed_audit_row(db, email_id=f"e-rec-{i}", from_address="recent@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    changed = learner.compute_rule_confidence()
+    assert changed == 1
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = 50").fetchone()
+    # base = min(0.95, 0.80 + 5*0.03) = 0.95, coherence=1.0, staleness=1.0
+    assert abs(row["confidence"] - 0.95) < 1e-9
+    assert row["active"] == 1
+
+
+def test_compute_confidence_staleness_reduces(db: Database):
+    """Staleness factor reduces confidence when last_relevant_at is old."""
+    learner = _make_learner(db)
+
+    _seed_rule(db, rule_id=51, condition_value="old@example.com",
+               target_folder="INBOX/Affairs/Banks", confidence=0.90)
+
+    # Evidence outside the 30-day coherence window
+    for i in range(5):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("run-old", f"e-old-{i}", "old@example.com", "example.com",
+             "INBOX", "INBOX/Affairs/Banks", 1.0, "manual", 1,
+             "2024-01-01T00:00:00"),
+        )
     db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, "
-        "confidence, source, last_hit_at) "
-        "VALUES ('exact_sender', 'old@example.com', 'INBOX/Affairs/Banks', "
-        "0.90, 'auto', datetime('now', '-100 days'))"
+        "UPDATE rules SET last_relevant_at = datetime('now', '-500 days') WHERE id = 51",
     )
     db.commit()
 
-    adjusted = learner.adjust_rule_confidence()
-    assert adjusted == 1
+    changed = learner.compute_rule_confidence()
+    assert changed == 1
 
-    row = db.execute("SELECT confidence FROM rules WHERE condition_value='old@example.com'").fetchone()
-    assert row["confidence"] == 0.80  # 0.90 - 0.10
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = 51").fetchone()
+    # base=0.95, coherence=1.0 (no data in window), staleness < 1.0
+    assert row["confidence"] < 0.90
+    assert row["confidence"] > 0.50  # still above deactivation
+    assert row["active"] == 1
 
 
-def test_confidence_not_decayed_for_recent_rules(db: Database):
+def test_compute_confidence_deactivates_below_threshold(db: Database):
+    """Rules with low coherence + corrections drop below deactivation threshold."""
     learner = _make_learner(db)
 
-    # Rule hit 30 days ago — should NOT be decayed
+    rid = _seed_rule(db, rule_id=52, condition_value="bad@example.com",
+                     target_folder="INBOX/Affairs/Banks", confidence=0.90)
+
+    # Low coherence: 2 to target, 3 elsewhere
+    for i in range(2):
+        _seed_audit_row(db, email_id=f"e-good-{i}", from_address="bad@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+    for i in range(3):
+        _seed_audit_row(db, email_id=f"e-bad-{i}", from_address="bad@example.com",
+                        from_domain="example.com", target_folder="INBOX/Shopping/Orders")
+
+    # 3 corrections against the rule
+    for i in range(3):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved, rule_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("run-corr", f"e-corr-{i}", "bad@example.com", "example.com",
+             "INBOX", "INBOX/Shopping/Orders", 1.0, "correction", 1, rid),
+        )
+    db.commit()
+
+    learner.compute_rule_confidence()
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert row["active"] == 0
+    assert row["confidence"] < 0.50
+
+
+def test_compute_confidence_skips_manual_rules(db: Database):
+    """Manual rules should not be recomputed by compute_rule_confidence."""
+    learner = _make_learner(db)
+
     db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, "
-        "confidence, source, last_hit_at) "
-        "VALUES ('exact_sender', 'recent@example.com', 'INBOX/Affairs/Banks', "
-        "0.90, 'auto', datetime('now', '-30 days'))"
+        "INSERT INTO rules (id, rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES (53, 'exact_sender', 'manual@example.com', "
+        "'INBOX/Affairs/Banks', 0.95, 'manual', 1)"
     )
     db.commit()
 
-    adjusted = learner.adjust_rule_confidence()
-    assert adjusted == 0
+    changed = learner.compute_rule_confidence()
+    assert changed == 0
+
+    row = db.execute("SELECT confidence FROM rules WHERE id = 53").fetchone()
+    assert row["confidence"] == 0.95  # unchanged
 
 
-def test_confidence_floor_at_050(db: Database):
+def test_compute_confidence_net_correction_recovery(db: Database):
+    """Confirming manual sorts cancel out corrections (sort-back recovery)."""
     learner = _make_learner(db)
 
-    # Rule at 0.55 with stale hit — should only go to 0.50, not below
+    rid = _seed_rule(db, rule_id=60, condition_value="recover@example.com",
+                     target_folder="INBOX/Affairs/Banks", confidence=0.90)
+
+    # 5 evidence rows (all to target)
+    for i in range(5):
+        _seed_audit_row(db, email_id=f"e-ev-{i}", from_address="recover@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    # 2 corrections against the rule
+    for i in range(2):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved, rule_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("run-corr", f"e-corr-{i}", "recover@example.com", "example.com",
+             "INBOX", "INBOX/Shopping/Orders", 1.0, "correction", 1, rid),
+        )
+    # 2 confirming manual sorts (cancel out corrections → net = 0)
+    for i in range(2):
+        _seed_audit_row(db, email_id=f"e-confirm-{i}", from_address="recover@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks",
+                        classification_source="manual")
+    db.commit()
+
+    learner.compute_rule_confidence()
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
+    # net_corrections = max(0, 2-2) = 0 → no penalty
+    # coherence = 7/9 ≈ 0.78 (5 evidence + 2 confirming to target, 2 corrections elsewhere)
+    # base = 0.95 (5+ evidence for exact_sender)
+    # confidence ≈ 0.95 * 0.78 * 1.0 - 0 ≈ 0.74
+    assert row["active"] == 1
+    assert row["confidence"] > 0.50  # well above deactivation
+
+
+def test_compute_confidence_correction_aging(db: Database):
+    """Corrections outside the 30-day coherence window don't count."""
+    learner = _make_learner(db)
+
+    rid = _seed_rule(db, rule_id=61, condition_value="aged@example.com",
+                     target_folder="INBOX/Affairs/Banks", confidence=0.70)
+
+    # 5 recent evidence rows
+    for i in range(5):
+        _seed_audit_row(db, email_id=f"e-recent-{i}", from_address="aged@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    # Old correction (60 days ago — outside 30-day window)
     db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, "
-        "confidence, source, last_hit_at) "
-        "VALUES ('exact_sender', 'floor@example.com', 'INBOX/Affairs/Banks', "
-        "0.55, 'auto', datetime('now', '-100 days'))"
+        "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+        "source_folder, target_folder, confidence, classification_source, moved, rule_id, "
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("run-old-corr", "e-old-corr", "aged@example.com", "example.com",
+         "INBOX", "INBOX/Shopping/Orders", 1.0, "correction", 1, rid,
+         "2025-01-01T00:00:00"),
     )
     db.commit()
 
-    learner.adjust_rule_confidence()
-    row = db.execute("SELECT confidence FROM rules WHERE condition_value='floor@example.com'").fetchone()
-    assert row["confidence"] == 0.50
+    learner.compute_rule_confidence()
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
+    # Old correction is outside window → net_corrections = 0
+    # base = 0.95, coherence = 1.0 (all 5 recent to target), staleness = 1.0
+    assert abs(row["confidence"] - 0.95) < 1e-9
+    assert row["active"] == 1
+
+
+def test_compute_confidence_min_sample_guard(db: Database):
+    """When fewer than coherence_min_sample emails in window, coherence defaults to 1.0."""
+    learner = _make_learner(db)
+    # Default coherence_min_sample = 3
+
+    _seed_rule(db, rule_id=62, condition_value="sparse@example.com",
+               target_folder="INBOX/Affairs/Banks", confidence=0.70)
+
+    # Only 2 recent evidence rows (below min_sample of 3)
+    # One to target, one elsewhere → raw coherence = 50% but should be overridden to 1.0
+    _seed_audit_row(db, email_id="e-sparse-0", from_address="sparse@example.com",
+                    from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+    _seed_audit_row(db, email_id="e-sparse-1", from_address="sparse@example.com",
+                    from_domain="example.com", target_folder="INBOX/Shopping/Orders")
+
+    learner.compute_rule_confidence()
+
+    row = db.execute("SELECT confidence FROM rules WHERE id = 62").fetchone()
+    # evidence = 1 (only the row to target folder counts in _count_all_time_evidence)
+    # base = min(0.95, 0.80 + 1*0.03) = 0.83
+    # coherence = 1.0 (min sample guard), staleness = 1.0, no corrections
+    assert abs(row["confidence"] - 0.83) < 1e-9
+
+
+def test_compute_confidence_idempotent(db: Database):
+    """Running compute_rule_confidence twice produces the same result."""
+    learner = _make_learner(db)
+
+    _seed_rule(db, rule_id=63, condition_value="idem@example.com",
+               target_folder="INBOX/Affairs/Banks", confidence=0.70)
+
+    for i in range(4):
+        _seed_audit_row(db, email_id=f"e-idem-{i}", from_address="idem@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    learner.compute_rule_confidence()
+    conf_after_first = db.execute("SELECT confidence FROM rules WHERE id = 63").fetchone()["confidence"]
+
+    changed = learner.compute_rule_confidence()
+    conf_after_second = db.execute("SELECT confidence FROM rules WHERE id = 63").fetchone()["confidence"]
+
+    assert changed == 0  # no change on second run
+    assert abs(conf_after_first - conf_after_second) < 1e-9
+
+
+def test_compute_confidence_staleness_recovery(db: Database):
+    """Rule with old last_relevant_at recovers when new evidence refreshes it."""
+    learner = _make_learner(db)
+
+    _seed_rule(db, rule_id=64, condition_value="stale-recover@example.com",
+               target_folder="INBOX/Affairs/Banks", confidence=0.90)
+
+    # Start with old evidence only
+    for i in range(5):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved, "
+            "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("run-old", f"e-stale-old-{i}", "stale-recover@example.com", "example.com",
+             "INBOX", "INBOX/Affairs/Banks", 1.0, "manual", 1,
+             "2024-01-01T00:00:00"),
+        )
+    db.execute(
+        "UPDATE rules SET last_relevant_at = datetime('now', '-500 days') WHERE id = 64",
+    )
+    db.commit()
+
+    learner.compute_rule_confidence()
+    stale_conf = db.execute("SELECT confidence FROM rules WHERE id = 64").fetchone()["confidence"]
+    assert stale_conf < 0.90  # staleness reduced it
+
+    # Now add recent evidence → staleness recovers
+    for i in range(5):
+        _seed_audit_row(db, email_id=f"e-stale-new-{i}", from_address="stale-recover@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    learner.compute_rule_confidence()
+    recovered_conf = db.execute("SELECT confidence FROM rules WHERE id = 64").fetchone()["confidence"]
+    assert recovered_conf > stale_conf  # recovered
+    assert abs(recovered_conf - 0.95) < 1e-9  # back to full (recent evidence in window)
+
+
+def test_compute_confidence_floor_at_zero(db: Database):
+    """Confidence cannot go below 0 even with many corrections."""
+    learner = _make_learner(db)
+
+    rid = _seed_rule(db, rule_id=65, condition_value="floor@example.com",
+                     target_folder="INBOX/Affairs/Banks", confidence=0.90)
+
+    # Minimal evidence
+    _seed_audit_row(db, email_id="e-floor-0", from_address="floor@example.com",
+                    from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    # 50 corrections → net_corrections * 0.05 = 2.50, way more than any base
+    for i in range(50):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved, rule_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("run-floor", f"e-floor-corr-{i}", "floor@example.com", "example.com",
+             "INBOX", "INBOX/Shopping/Orders", 1.0, "correction", 1, rid),
+        )
+    db.commit()
+
+    learner.compute_rule_confidence()
+
+    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert row["confidence"] == 0.0
+    assert row["active"] == 0  # below deactivation threshold
+
+
+# ------------------------------------------------------------------
+# _count_all_time_evidence unit tests
+# ------------------------------------------------------------------
+
+def test_count_evidence_exact_sender(db: Database):
+    """Evidence count uses from_address column for exact_sender rules."""
+    learner = _make_learner(db)
+    rule = {"rule_type": "exact_sender", "condition_value": "a@example.com",
+            "target_folder_path": "INBOX/Affairs/Banks"}
+
+    for i in range(3):
+        _seed_audit_row(db, email_id=f"e-match-{i}", from_address="a@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    assert learner._count_all_time_evidence(rule) == 3
+
+
+def test_count_evidence_sender_domain(db: Database):
+    """Evidence count uses from_domain column for sender_domain rules."""
+    learner = _make_learner(db)
+    rule = {"rule_type": "sender_domain", "condition_value": "example.com",
+            "target_folder_path": "INBOX/Affairs/Banks"}
+
+    for i in range(4):
+        _seed_audit_row(db, email_id=f"e-dom-{i}", from_address=f"user{i}@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    assert learner._count_all_time_evidence(rule) == 4
+
+
+def test_count_evidence_list_id(db: Database):
+    """Evidence count uses list_id column for list_id rules."""
+    learner = _make_learner(db)
+    rule = {"rule_type": "list_id", "condition_value": "news.example.com",
+            "target_folder_path": "INBOX/Affairs/Banks"}
+
+    for i in range(2):
+        _seed_audit_row(db, email_id=f"e-list-{i}", from_address=f"bot{i}@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks",
+                        list_id="news.example.com")
+
+    assert learner._count_all_time_evidence(rule) == 2
+
+
+def test_count_evidence_excludes_unmoved_rows(db: Database):
+    """Only rows with moved=1 count as evidence."""
+    learner = _make_learner(db)
+    rule = {"rule_type": "exact_sender", "condition_value": "a@example.com",
+            "target_folder_path": "INBOX/Affairs/Banks"}
+
+    _seed_audit_row(db, email_id="e-moved", from_address="a@example.com",
+                    from_domain="example.com", target_folder="INBOX/Affairs/Banks", moved=True)
+    _seed_audit_row(db, email_id="e-not-moved", from_address="a@example.com",
+                    from_domain="example.com", target_folder="INBOX/Affairs/Banks", moved=False)
+
+    assert learner._count_all_time_evidence(rule) == 1
+
+
+def test_count_evidence_excludes_different_target(db: Database):
+    """Rows to a different target_folder are not counted."""
+    learner = _make_learner(db)
+    rule = {"rule_type": "exact_sender", "condition_value": "a@example.com",
+            "target_folder_path": "INBOX/Affairs/Banks"}
+
+    _seed_audit_row(db, email_id="e-right", from_address="a@example.com",
+                    from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+    _seed_audit_row(db, email_id="e-wrong", from_address="a@example.com",
+                    from_domain="example.com", target_folder="INBOX/Shopping/Orders")
+
+    assert learner._count_all_time_evidence(rule) == 1
+
+
+def test_count_evidence_capped_by_config_limit(db: Database):
+    """Count is capped at max_needed derived from BaseConfidenceConfig.
+
+    Default config: max(ceil((0.95-0.80)/0.03), ceil((0.90-0.75)/0.02), 1)
+                  = max(5, 8, 1) = 8
+    """
+    learner = _make_learner(db)
+    rule = {"rule_type": "exact_sender", "condition_value": "a@example.com",
+            "target_folder_path": "INBOX/Affairs/Banks"}
+
+    # Insert 20 rows — well past the cap
+    for i in range(20):
+        _seed_audit_row(db, email_id=f"e-cap-{i}", from_address="a@example.com",
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+
+    import math
+    bc = learner._config.base_confidence
+    expected_limit = max(
+        math.ceil((bc.exact_sender_cap - bc.exact_sender_floor) / bc.exact_sender_per_evidence),
+        math.ceil((bc.sender_domain_cap - bc.sender_domain_floor) / bc.sender_domain_per_evidence),
+        1,
+    )
+    assert learner._count_all_time_evidence(rule) == expected_limit
+    assert expected_limit == 8  # sanity check on default config
 
 
 # ------------------------------------------------------------------
@@ -917,13 +1345,12 @@ def _seed_rule(db: Database, *, rule_id: int = 1, condition_value: str = "norepl
     return rule_id
 
 
-def test_correction_penalizes_originating_rule(db: Database):
-    """When a user relocates a mailsort-moved email, the originating rule loses confidence."""
+def test_correction_records_correction_row_with_rule_id(db: Database):
+    """Correction records a 'correction' audit row with the originating rule_id."""
     tree = _make_tree()
     learner = _make_learner(db)
 
-    # Start at 1.0 so after −0.15 → 0.85, which equals the threshold (not below)
-    rid = _seed_rule(db, confidence=1.0, target_folder="INBOX/Shopping/Orders")
+    rid = _seed_rule(db, confidence=0.95, target_folder="INBOX/Shopping/Orders")
     _seed_audit_row(db, email_id="e-corr", from_address="noreply@chase.com",
                     from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
                     moved=True, rule_id=rid)
@@ -942,18 +1369,25 @@ def test_correction_penalizes_originating_rule(db: Database):
     found = learner.detect_manual_sorts(mock_jmap, tree, "run-pen")
     assert found.from_other == 1
 
-    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
-    assert row["confidence"] == 0.85  # 1.0 - 0.15
-    assert row["active"] == 1  # 0.85 == threshold, not below → stays active
+    # Correction row recorded with classification_source='correction' and rule_id
+    corr_row = db.execute(
+        "SELECT * FROM audit_log WHERE email_id = 'e-corr' AND classification_source = 'correction'"
+    ).fetchone()
+    assert corr_row is not None
+    assert corr_row["rule_id"] == rid
+    assert corr_row["target_folder"] == "INBOX/Affairs/Banks"
+
+    # Rule confidence unchanged by detect_manual_sorts (compute_rule_confidence handles it)
+    rule_row = db.execute("SELECT confidence FROM rules WHERE id = ?", (rid,)).fetchone()
+    assert rule_row["confidence"] == 0.95
 
 
-def test_correction_deactivates_rule_below_threshold(db: Database):
-    """Rule should be deactivated when confidence drops below rule_move threshold."""
+def test_correction_then_compute_reduces_confidence(db: Database):
+    """After a correction, compute_rule_confidence reduces confidence via coherence + penalty."""
     tree = _make_tree()
     learner = _make_learner(db)
 
-    # Start at 0.90 — after −0.15 penalty → 0.75, which is below default rule_move (0.85)
-    rid = _seed_rule(db, confidence=0.90)
+    rid = _seed_rule(db, confidence=0.95, target_folder="INBOX/Shopping/Orders")
     _seed_audit_row(db, email_id="e-corr", from_address="noreply@chase.com",
                     from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
                     moved=True, rule_id=rid)
@@ -965,19 +1399,22 @@ def test_correction_deactivates_rule_below_threshold(db: Database):
     mock_jmap.get_emails.return_value = [email]
 
     db.execute(
-        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-deact', datetime('now'), 'running')",
+        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-corr', datetime('now'), 'running')",
     )
     db.commit()
 
-    learner.detect_manual_sorts(mock_jmap, tree, "run-deact")
+    learner.detect_manual_sorts(mock_jmap, tree, "run-corr")
+    learner.compute_rule_confidence()
 
     row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
-    assert row["confidence"] == 0.75
-    assert row["active"] == 0  # 0.75 < 0.85 threshold → deactivated
+    # Confidence should drop: base * coherence - corrections * penalty
+    # With 1 rule move + 1 correction, coherence < 1.0 and net_corrections >= 0
+    assert row["confidence"] < 0.95
+    assert row["active"] == 1  # above deactivation threshold (0.50)
 
 
-def test_correction_dedup_skips_already_corrected(db: Database):
-    """Emails that already have a manual audit_log row should not trigger another penalty."""
+def test_correction_dedup_skips_already_handled(db: Database):
+    """Emails with a correction/manual row (no newer rule move) should not re-trigger."""
     tree = _make_tree()
     learner = _make_learner(db)
 
@@ -988,7 +1425,7 @@ def test_correction_dedup_skips_already_corrected(db: Database):
     # Simulate a previous correction already recorded
     _seed_audit_row(db, email_id="e-dup", from_address="noreply@chase.com",
                     from_domain="chase.com", target_folder="INBOX/Affairs/Banks",
-                    moved=True, classification_source="manual", run_id="run-prev-correction")
+                    moved=True, classification_source="correction", run_id="run-prev-correction")
 
     mock_jmap = MagicMock()
     email = MagicMock()
@@ -1002,14 +1439,11 @@ def test_correction_dedup_skips_already_corrected(db: Database):
     db.commit()
 
     found = learner.detect_manual_sorts(mock_jmap, tree, "run-dup")
-    assert found.from_other == 0  # skipped because already corrected
-
-    row = db.execute("SELECT confidence FROM rules WHERE id = ?", (rid,)).fetchone()
-    assert row["confidence"] == 0.90  # unchanged
+    assert found.from_other == 0  # skipped because already handled
 
 
-def test_correction_no_penalty_for_llm_classification(db: Database):
-    """Corrections of LLM-classified emails (no rule_id) should not crash or penalize."""
+def test_correction_of_llm_move_records_no_rule_id(db: Database):
+    """Corrections of LLM-classified emails record correction with rule_id=None."""
     tree = _make_tree()
     learner = _make_learner(db)
 
@@ -1030,40 +1464,17 @@ def test_correction_no_penalty_for_llm_classification(db: Database):
     db.commit()
 
     found = learner.detect_manual_sorts(mock_jmap, tree, "run-llm")
-    assert found.from_other == 1  # correction detected
-    # No crash, no rule penalty (rule_id is None)
+    assert found.from_other == 1
+
+    corr_row = db.execute(
+        "SELECT * FROM audit_log WHERE email_id='e-llm' AND classification_source='correction'"
+    ).fetchone()
+    assert corr_row is not None
+    assert corr_row["rule_id"] is None
 
 
-def test_correction_penalty_floors_at_zero(db: Database):
-    """Rule confidence should not go below 0.0 after penalty."""
-    tree = _make_tree()
-    learner = _make_learner(db)
-
-    rid = _seed_rule(db, confidence=0.05)
-    _seed_audit_row(db, email_id="e-floor", from_address="noreply@chase.com",
-                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
-                    moved=True, rule_id=rid)
-
-    mock_jmap = MagicMock()
-    email = MagicMock()
-    email.id = "e-floor"
-    email.mailbox_ids = {"mb-banks": True}
-    mock_jmap.get_emails.return_value = [email]
-
-    db.execute(
-        "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-floor', datetime('now'), 'running')",
-    )
-    db.commit()
-
-    learner.detect_manual_sorts(mock_jmap, tree, "run-floor")
-
-    row = db.execute("SELECT confidence, active FROM rules WHERE id = ?", (rid,)).fetchone()
-    assert row["confidence"] == 0.0  # floored at 0, not negative
-    assert row["active"] == 0  # deactivated
-
-
-def test_inbox_return_not_penalized(db: Database):
-    """Moving an email back to inbox should NOT trigger penalty (ambiguous intent)."""
+def test_inbox_return_not_detected_as_correction(db: Database):
+    """Moving an email back to inbox should NOT trigger a correction (ambiguous intent)."""
     tree = _make_tree()
     learner = _make_learner(db)
 
@@ -1086,5 +1497,106 @@ def test_inbox_return_not_penalized(db: Database):
     found = learner.detect_manual_sorts(mock_jmap, tree, "run-inbox")
     assert found.from_other == 0  # not counted as correction
 
-    row = db.execute("SELECT confidence FROM rules WHERE id = ?", (rid,)).fetchone()
-    assert row["confidence"] == 0.90  # unchanged
+    # No correction row recorded
+    corr_row = db.execute(
+        "SELECT * FROM audit_log WHERE email_id='e-inbox' AND classification_source='correction'"
+    ).fetchone()
+    assert corr_row is None
+
+
+# ------------------------------------------------------------------
+# Dedup regression tests (C4)
+# ------------------------------------------------------------------
+
+def test_re_correction_after_new_rule_move(db: Database):
+    """move → correct → move again → correct again should create two correction rows.
+
+    Uses explicit timestamps because SQLite datetime('now') has second-level
+    precision and the dedup query uses strict > comparison.
+    """
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    rid = _seed_rule(db, confidence=0.95, target_folder="INBOX/Shopping/Orders")
+
+    # T0: First rule move
+    db.execute(
+        "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+        "source_folder, target_folder, confidence, classification_source, moved, rule_id, "
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("run-move-1", "e-cycle", "noreply@chase.com", "chase.com",
+         "INBOX", "INBOX/Shopping/Orders", 0.95, "rule", 1, rid,
+         "2026-04-05T10:00:00"),
+    )
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-move-1', '2026-04-05T10:00:00', 'completed')")
+    db.commit()
+
+    # T1: First correction detected
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-cycle"
+    email.mailbox_ids = {"mb-banks": True}
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-corr-1', '2026-04-05T11:00:00', 'running')")
+    db.commit()
+    found1 = learner.detect_manual_sorts(mock_jmap, tree, "run-corr-1")
+    assert found1.from_other == 1
+
+    # T2: Second rule move — must be strictly newer than the correction row
+    # The correction row was created with datetime('now') by _record_correction,
+    # so we insert the second move with a future timestamp to guarantee ordering.
+    db.execute(
+        "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+        "source_folder, target_folder, confidence, classification_source, moved, rule_id, "
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("run-move-2", "e-cycle", "noreply@chase.com", "chase.com",
+         "INBOX", "INBOX/Shopping/Orders", 0.90, "rule", 1, rid,
+         "2099-01-01T00:00:00"),
+    )
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-move-2', '2099-01-01T00:00:00', 'completed')")
+    db.commit()
+
+    # T3: Second correction should be detected (new rule move is newer than first correction)
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-corr-2', '2099-01-01T01:00:00', 'running')")
+    db.commit()
+    found2 = learner.detect_manual_sorts(mock_jmap, tree, "run-corr-2")
+    assert found2.from_other == 1
+
+    # Should have 2 correction rows total
+    corr_count = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE email_id='e-cycle' AND classification_source='correction'"
+    ).fetchone()[0]
+    assert corr_count == 2
+
+
+def test_dedup_blocks_same_cycle_duplicate(db: Database):
+    """Within a single detection cycle, same email should not produce duplicate corrections."""
+    tree = _make_tree()
+    learner = _make_learner(db)
+
+    rid = _seed_rule(db, confidence=0.95, target_folder="INBOX/Shopping/Orders")
+    _seed_audit_row(db, email_id="e-once", from_address="noreply@chase.com",
+                    from_domain="chase.com", target_folder="INBOX/Shopping/Orders",
+                    moved=True, rule_id=rid)
+
+    mock_jmap = MagicMock()
+    email = MagicMock()
+    email.id = "e-once"
+    email.mailbox_ids = {"mb-banks": True}
+    mock_jmap.get_emails.return_value = [email]
+
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-dup-1', datetime('now'), 'running')")
+    db.commit()
+    learner.detect_manual_sorts(mock_jmap, tree, "run-dup-1")
+
+    # Run detection again without a new rule move — should NOT create another correction
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-dup-2', datetime('now'), 'running')")
+    db.commit()
+    found2 = learner.detect_manual_sorts(mock_jmap, tree, "run-dup-2")
+    assert found2.from_other == 0
+
+    corr_count = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE email_id='e-once' AND classification_source='correction'"
+    ).fetchone()[0]
+    assert corr_count == 1

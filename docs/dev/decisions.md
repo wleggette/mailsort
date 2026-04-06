@@ -6,6 +6,61 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-05 — Computed confidence model replaces static penalties
+
+**Context:** Rules had static confidence set at creation, modified only by one-way
+penalties (−0.15 per correction, −0.10/cycle for staleness). This created three problems:
+(1) every rule was deactivated after a single correction (one-strike problem), (2) rules
+that drifted in coherence kept firing because stored confidence never reflected live state,
+(3) stale rules below the confidence gate entered a dead zone (can't fire → can't get a
+hit → can't reset staleness → stuck forever).
+
+**Decision:** Replace with a computed model:
+`confidence = max(0, base × coherence × staleness − net_corrections × penalty)`.
+Recomputed each cycle from live audit_log state. Bidirectional — confidence recovers
+when conditions improve.
+
+**Key design choices:**
+
+- **Per-correction penalty (0.05) is volume-independent.** 3 corrections stops any rule
+  regardless of evidence count. Avoids the dilution problem where high-volume rules absorb
+  corrections through coherence alone.
+- **Net corrections = corrections_against − confirming_sorts.** User sorting back cancels
+  corrections 1:1. Corrections age out of the 30-day window automatically.
+- **Corrections recorded as `classification_source='correction'`** with `rule_id` set to
+  the firing rule. Only the rule that actually fired gets a correction; coherence handles
+  cascade to broader rules naturally.
+- **`last_relevant_at` replaces `last_hit_at`** for staleness. Tracks most recent email
+  matching the rule's condition sorted to the target folder by any method (rule, LLM,
+  manual). Fixes the dead zone: LLM or user sorts reset staleness even when the rule
+  can't fire.
+- **Deactivation at 0.50** (not at `rule_move`). Between 0.50 and 0.85, the rule stays
+  `active=1` but doesn't fire — the confidence gate filters it. If conditions improve,
+  it recovers without deactivation/reactivation.
+- **Reactivation over duplication.** `find_rule_any_status` + `reactivate_rule` ensures
+  one row per type+condition. No duplicate rules when evidence re-accumulates.
+- **Manual rules exempt.** `source='manual'` rules are not recomputed.
+
+**Alternatives considered:**
+
+1. **Static confidence with one-way penalties (original).** Confidence set once, reduced by
+   penalties. Never increases. Dead zones, one-strike kills, no recovery without re-creation.
+2. **Confidence as one-way cap.** `min(current, max_from_coherence)`. Same dead-zone problem.
+3. **Four-factor multiplicative.** `base × coherence × staleness × correction_ratio`. The
+   ratio factor is diluted by volume — 1 correction / 200 emails = 0.995 factor. Invisible.
+4. **Coherence-only (no separate correction signal).** 3 corrections / 200 emails = 98.5%
+   coherence — rule keeps firing. Unacceptable response time to user feedback.
+5. **Ratio-based correction penalty.** Same dilution as option 4.
+6. **Check coherence at classification time.** DB query per rule per email. Couples
+   classification latency to audit_log size.
+7. **Event-driven re-evaluation.** Over-engineered for email sorting's 5-min cycle.
+
+**Affected files:** `config.py`, `db/migrations.py` (M11), `audit/learner.py`,
+`classifier/rules.py`, `orchestrator.py`, `main.py`, `web/routes/rules.py`,
+`web/templates/rules/detail.html`, `config.yaml.example`.
+
+---
+
 ## 2026-04-03 — Auto-downgrade to dry run on read-only token
 
 **Context:** Users may configure a read-only JMAP API token (intentionally or

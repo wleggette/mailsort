@@ -10,7 +10,7 @@ def test_migrations_apply_once(db: Database):
     """Running migrations twice should be idempotent."""
     run_migrations(db)  # second call
     version = db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert version == 10
+    assert version == 11
 
 
 def test_all_tables_created(db: Database):
@@ -65,4 +65,4 @@ def test_audit_log_schema(db: Database):
 def test_schema_version_tracked(db: Database):
     rows = db.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
     versions = [r[0] for r in rows]
-    assert versions == list(range(1, 11))
+    assert versions == list(range(1, 12))

@@ -174,3 +174,34 @@ services**. They are not the right place to test:
 
 The test plan should explicitly note which scenarios are **deferred to
 unit tests** so the gap is visible, not hidden.
+
+## 9. System Test Configuration
+
+System tests use `tests/system/config.test.yaml` **in-place** — it is never
+copied to the project root. The test harness (`run_system_test.py`) defaults
+to this path, so running from the project root requires no `--config` flag:
+
+```bash
+# From project root — config is picked up automatically
+python tests/system/run_system_test.py
+python tests/system/run_system_test.py --setup-only
+python tests/system/run_system_test.py --cleanup
+```
+
+For manual CLI commands against the test database, pass the path explicitly:
+
+```bash
+mailsort dry-run --config tests/system/config.test.yaml
+mailsort web --config tests/system/config.test.yaml --port 8081
+```
+
+**Rules:**
+
+- All system-test-specific configuration (thresholds, intervals, fixture
+  tuning) lives in `tests/system/config.test.yaml`. Do not duplicate these
+  values into a root-level file.
+- When adding new configurable parameters, add them to
+  `tests/system/config.test.yaml` with test-appropriate values alongside
+  the production example in `config.yaml.example`.
+- The `--config` flag on `run_system_test.py` is an override for
+  non-standard layouts; the default should always work from the project root.

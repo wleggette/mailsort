@@ -39,11 +39,17 @@
       created independently — list_id, sender_domain (with coherence check),
       exact_sender — classification-time priority decides which fires
       (`audit/learner.py`)
-- [x] Rule confidence adjustment: decay by 0.10 for rules not hit in 90+ days,
-      floor at 0.50 (`audit/learner.py`)
-- [x] Feedback loop: correction sorts penalize originating rule by −0.15,
-      auto-deactivate below `rule_move` threshold, dedup via manual audit rows
-      (`audit/learner.py`)
+- [x] Computed confidence model: `confidence = max(0, base × coherence × staleness − net_corrections × penalty)`.
+      Base from `BaseConfidenceConfig` per rule type, coherence from 30-day window,
+      staleness from `last_relevant_at` (365d threshold), corrections net of confirming
+      sorts. Deactivation at 0.50. All thresholds configurable. (`audit/learner.py`)
+- [x] Feedback loop: corrections recorded as `classification_source='correction'` with
+      `rule_id`. Computed confidence model handles penalty via `compute_rule_confidence()`.
+      Dedup via `_already_handled_email_ids` (allows re-correction after new rule move).
+- [x] Reactivation over duplication: `find_rule_any_status` + `reactivate_rule` prevents
+      duplicate rule rows when evidence re-accumulates for an inactive rule.
+- [x] Schema: `last_hit_at` → `last_relevant_at` (migration 11), `hit_count` retained
+      for display only.
 
 ## Phase 5: Scheduling & Deployment ✅
 - [x] APScheduler integration: `BlockingScheduler` with `max_instances=1`,

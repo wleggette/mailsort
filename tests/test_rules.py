@@ -221,9 +221,9 @@ def test_hit_count_not_incremented_when_record_hits_false(db: Database):
     assert clf is not None
     assert clf.folder_path == "INBOX/Affairs/Banks"
 
-    row = db.execute("SELECT hit_count, last_hit_at FROM rules WHERE id = ?", (rule_id,)).fetchone()
+    row = db.execute("SELECT hit_count, last_relevant_at FROM rules WHERE id = ?", (rule_id,)).fetchone()
     assert row["hit_count"] == 0
-    assert row["last_hit_at"] is None
+    assert row["last_relevant_at"] is None
 
 
 def test_reconcile_folders_deactivates_stale(db: Database):

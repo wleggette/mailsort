@@ -354,7 +354,7 @@ def export_rules(ctx: click.Context, inactive: bool) -> None:
         where = "" if inactive else "WHERE active = 1"
         rows = db.execute(
             f"SELECT rule_type, condition_value, target_folder_path, confidence, "
-            f"source, hit_count, last_hit_at, active, created_at "
+            f"source, hit_count, last_relevant_at, active, created_at "
             f"FROM rules {where} ORDER BY rule_type, condition_value"
         ).fetchall()
 
@@ -368,8 +368,8 @@ def export_rules(ctx: click.Context, inactive: bool) -> None:
                 "source": r["source"],
                 "hits": r["hit_count"],
             }
-            if r["last_hit_at"]:
-                entry["last_hit"] = r["last_hit_at"]
+            if r["last_relevant_at"]:
+                entry["last_relevant"] = r["last_relevant_at"]
             if not r["active"]:
                 entry["active"] = False
             rules.append(entry)

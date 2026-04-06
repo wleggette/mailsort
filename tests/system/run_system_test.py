@@ -1,14 +1,14 @@
 """System test orchestrator: runs the full end-to-end test sequence.
 
 Usage:
-    # Full test sequence
-    python tests/system/run_system_test.py --config config.test.yaml --to-email test@fastmail.com
+    # Full test sequence (run from project root)
+    python tests/system/run_system_test.py
 
     # Setup only (for interactive development)
-    python tests/system/run_system_test.py --config config.test.yaml --to-email test@fastmail.com --setup-only
+    python tests/system/run_system_test.py --setup-only
 
     # Cleanup
-    python tests/system/run_system_test.py --config config.test.yaml --to-email test@fastmail.com --cleanup
+    python tests/system/run_system_test.py --cleanup
 """
 
 from __future__ import annotations
@@ -604,7 +604,7 @@ def phase_cleanup(config: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Run mailsort system tests against a Fastmail test account")
-    parser.add_argument("--config", default="config.test.yaml", help="Path to test config")
+    parser.add_argument("--config", default="tests/system/config.test.yaml", help="Path to test config")
     parser.add_argument("--to-email", default=None, help="Test account email address (auto-detected from JMAP session if omitted)")
     parser.add_argument("--setup-only", action="store_true", help="Only setup (load fixtures + bootstrap), then stop")
     parser.add_argument("--cleanup", "--cleanup-only", action="store_true", help="Only cleanup test data")

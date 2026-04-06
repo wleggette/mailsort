@@ -38,6 +38,27 @@ def _make_tree() -> MailboxTree:
     return MailboxTree.build(mailboxes)
 
 
+def _seed_rule(db: Database, condition_value: str, target_folder: str,
+               confidence: float = 0.95, source: str = "bootstrap") -> int:
+    """Insert a rule with backing evidence so compute_rule_confidence keeps it viable."""
+    cursor = db.execute(
+        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
+        "VALUES ('exact_sender', ?, ?, ?, ?)",
+        (condition_value, target_folder, confidence, source),
+    )
+    rule_id = cursor.lastrowid
+    domain = condition_value.split("@")[1]
+    for i in range(5):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "source_folder, target_folder, confidence, classification_source, moved) "
+            "VALUES ('run-seed', ?, ?, ?, 'INBOX', ?, 1.0, 'rule', 1)",
+            (f"e-seed-{condition_value}-{i}", condition_value, domain, target_folder),
+        )
+    db.commit()
+    return rule_id
+
+
 def _make_jmap_email(
     email_id: str = "email-001",
     from_email: str = "noreply@chase.com",
@@ -66,11 +87,7 @@ def test_dry_run_logs_but_does_not_move(db: Database):
     tree = _make_tree()
 
     # Seed a rule so the email gets classified
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
@@ -97,10 +114,9 @@ def test_dry_run_logs_but_does_not_move(db: Database):
 
     # Rule hit_count should NOT be incremented during dry run
     rule_row = db.execute(
-        "SELECT hit_count, last_hit_at FROM rules WHERE condition_value='noreply@chase.com'"
+        "SELECT hit_count FROM rules WHERE condition_value='noreply@chase.com'"
     ).fetchone()
     assert rule_row["hit_count"] == 0
-    assert rule_row["last_hit_at"] is None
 
 
 # ------------------------------------------------------------------
@@ -111,11 +127,7 @@ def test_live_run_moves_and_logs(db: Database):
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
@@ -149,10 +161,10 @@ def test_live_run_moves_and_logs(db: Database):
 
     # Rule hit_count SHOULD be incremented during live run
     rule_row = db.execute(
-        "SELECT hit_count, last_hit_at FROM rules WHERE condition_value='noreply@chase.com'"
+        "SELECT hit_count, last_relevant_at FROM rules WHERE condition_value='noreply@chase.com'"
     ).fetchone()
     assert rule_row["hit_count"] == 1
-    assert rule_row["last_hit_at"] is not None
+    assert rule_row["last_relevant_at"] is not None
 
 
 # ------------------------------------------------------------------
@@ -164,11 +176,7 @@ def test_move_emails_called_with_keyword_tag(db: Database):
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
@@ -262,11 +270,7 @@ def test_move_failure_recorded(db: Database):
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
@@ -302,15 +306,8 @@ def test_run_output_numbers_all_add_up(db: Database, monkeypatch):
     tree = _make_tree()
 
     # Seed rules for chase and amazon
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'orders@amazon.com', 'INBOX/Shopping/Orders', 0.90, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
+    _seed_rule(db, "orders@amazon.com", "INBOX/Shopping/Orders", confidence=0.90)
 
     email_chase = _make_jmap_email(email_id="e-chase", from_email="noreply@chase.com", subject="Statement")
     email_amazon = _make_jmap_email(email_id="e-amazon", from_email="orders@amazon.com", subject="Shipped")
@@ -374,11 +371,7 @@ def test_move_exception_sets_move_failed_and_error_status(db: Database):
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
@@ -409,11 +402,7 @@ def test_successful_move_has_no_move_failed(db: Database):
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]
@@ -451,11 +440,7 @@ def test_email_vanishes_between_query_and_fetch(db: Database, monkeypatch):
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     # query returns 2 IDs, but get_emails only returns 1 (email-gone was deleted)
@@ -491,15 +476,8 @@ def test_partial_move_success_records_mixed_outcomes(db: Database, monkeypatch):
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'orders@amazon.com', 'INBOX/Shopping/Orders', 0.90, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
+    _seed_rule(db, "orders@amazon.com", "INBOX/Shopping/Orders", confidence=0.90)
 
     email_chase = _make_jmap_email(email_id="e-chase", from_email="noreply@chase.com")
     email_amazon = _make_jmap_email(email_id="e-amazon", from_email="orders@amazon.com")
@@ -538,15 +516,8 @@ def test_move_response_missing_email_records_not_moved(db: Database, monkeypatch
     cfg = _make_config()
     tree = _make_tree()
 
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'orders@amazon.com', 'INBOX/Shopping/Orders', 0.90, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
+    _seed_rule(db, "orders@amazon.com", "INBOX/Shopping/Orders", confidence=0.90)
 
     email_chase = _make_jmap_email(email_id="e-chase", from_email="noreply@chase.com")
     email_amazon = _make_jmap_email(email_id="e-amazon", from_email="orders@amazon.com")
@@ -759,11 +730,7 @@ def test_read_only_downgrade_skips_record_hits(test_config, db, monkeypatch):
     tree = _make_tree()
 
     # Insert a rule that would match
-    db.execute(
-        "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
-        "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
-    )
-    db.commit()
+    _seed_rule(db, "noreply@chase.com", "INBOX/Affairs/Banks")
 
     mock_jmap = MagicMock()
     mock_jmap.query_inbox_emails.return_value = ["email-001"]

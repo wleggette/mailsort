@@ -202,7 +202,7 @@
           <td class="px-4 py-3 text-sm text-right font-mono text-gray-900">{{ "%.2f"|format(rule['confidence']) }}</td>
           <td class="px-4 py-3 text-sm text-gray-500">{{ rule['source'] }}</td>
           <td class="px-4 py-3 text-sm text-right text-gray-900">{{ rule['hit_count'] }}</td>
-          <td class="px-4 py-3 text-sm text-gray-500">{{ rule['last_hit_at'] or '—' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-500">{{ rule['last_relevant_at'] or '—' }}</td>
           <td class="px-4 py-3 text-center">
             {% if rule['active'] %}
               <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>

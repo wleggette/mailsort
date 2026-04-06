@@ -39,6 +39,16 @@ class AutoRuleThresholdsConfig(BaseModel):
     sender_domain: int = 5
 
 
+class BaseConfidenceConfig(BaseModel):
+    list_id: float = 0.95
+    exact_sender_floor: float = 0.80
+    exact_sender_cap: float = 0.95
+    exact_sender_per_evidence: float = 0.03
+    sender_domain_floor: float = 0.75
+    sender_domain_cap: float = 0.90
+    sender_domain_per_evidence: float = 0.02
+
+
 class ClassificationConfig(BaseModel):
     thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
     auto_rule_thresholds: AutoRuleThresholdsConfig = Field(default_factory=AutoRuleThresholdsConfig)
@@ -52,7 +62,14 @@ class ClassificationConfig(BaseModel):
     llm_skip_senders: list[str] = Field(default_factory=list)
     llm_skip_domains: list[str] = Field(default_factory=list)
     learner_lookback_days: int = 7
-    correction_penalty: float = 0.15
+    correction_penalty: float = 0.05
+    coherence_lookback_days: int = 30
+    coherence_min_sample: int = 3
+    staleness_threshold_days: int = 365
+    staleness_decay_days: int = 365
+    staleness_floor: float = 0.6
+    deactivation_threshold: float = 0.50
+    base_confidence: BaseConfidenceConfig = Field(default_factory=BaseConfidenceConfig)
 
 
 class LoggingConfig(BaseModel):
