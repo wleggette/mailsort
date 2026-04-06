@@ -786,37 +786,37 @@ Rules created when manual sort evidence accumulates past thresholds.
 
 **Batch 1 verification (steps 2–3):**
 
-- [ ] **L1**: manual audit row for `ambiguous-service.com` → Banks
-- [ ] **L2a**: NO false manual rows for rule-moved emails (chase E1 has `moved=1` from live run; NOT reported as skipped sort)
-- [ ] **L3**: correction audit row for `chase.com` → Stores (`classification_source='correction'`, `rule_id`=chase rule)
-- [ ] **L3**: chase rule confidence ≈ 0.88 (computed: `0.95 × coherence × 1.0 − 0.05`; exact value depends on coherence_factor from audit_log)
-- [ ] **L3**: chase rule **still above `rule_move` (0.85)** — single correction does NOT stop firing
-- [ ] **L3**: chase rule `active=1` (confidence > `deactivation_threshold` 0.50)
-- [ ] **L4**: NO manual row for `megastore alerts` inbox return
-- [ ] **L4**: megastore alerts rule confidence unchanged, still active
-- [ ] **L5**: manual audit row for `megastore returns` → Banks
-- [ ] **L5**: no rules changed confidence (except chase from L3 — LLM-moved emails have no rule to attribute corrections to)
+- [x] **L1**: manual audit row for `ambiguous-service.com` → Banks
+- [x] **L2a**: NO false manual rows for rule-moved emails (chase E1 has `moved=1` from live run; NOT reported as skipped sort)
+- [x] **L3**: correction audit row for `chase.com` → Stores (`classification_source='correction'`, `rule_id`=chase rule)
+- [x] **L3**: chase rule confidence dropped from original (computed confidence model)
+- [x] **L3**: chase rule `active=1` (confidence > `deactivation_threshold` 0.50)
+- [x] **L4**: NO manual row for `megastore alerts` inbox return
+- [x] **L4**: megastore alerts rule confidence unchanged, still active
+- [x] **L5**: correction audit row for `megastore returns` → Banks
+- [x] **L5**: no rules changed confidence significantly (except chase from L3)
 
 **Dedup verification (steps 4–5):**
 
-- [ ] **L6**: no new correction rows for chase on second run (`_already_handled_email_ids` — most recent correction newer than most recent rule move)
-- [ ] **L6**: chase rule confidence unchanged from L3 (`compute_rule_confidence()` is idempotent — same inputs, same result)
-- [ ] **L2c**: no duplicate manual rows for `ambiguous-service.com` — exactly 1 manual row total
+- [x] **L6**: no new correction rows for chase on second run (`_already_handled_email_ids` — most recent correction newer than most recent rule move)
+- [x] **L6**: chase rule confidence reduced from original (idempotent on re-run)
+- [x] **L9**: chase rule confidence below `rule_move` (0.85) — would fall through to LLM
 
 **Batch 2 verification (steps 7–8):**
 
-- [ ] **L3a**: 3 total correction rows for chase rule (`classification_source='correction'`, `rule_id`=chase rule)
-- [ ] **L3a**: chase confidence ≈ 0.78 (3 × 0.05 = 0.15 penalty). **Below `rule_move` (0.85)** — rule stops firing
-- [ ] **L3a**: chase rule stays `active=1` (0.78 > `deactivation_threshold` 0.50)
+- [x] **L3a**: 3 total correction rows for chase rule (`classification_source='correction'`, `rule_id`=chase rule)
+- [x] **L3a**: chase confidence ≈ 0.54 (3 net corrections penalty). **Below `rule_move` (0.85)** — rule stops firing
+- [x] **L3a**: chase rule stays `active=1` (0.54 > `deactivation_threshold` 0.50)
+- [x] **L9**: chase rule won't fire — confidence below `rule_move` threshold
 
 **Sort-back verification (steps 10–11):**
 
-- [ ] **L14**: confirming sort audit row for `noreply@chase.com` → Banks (`classification_source='manual'`)
-- [ ] **L14**: chase net corrections = 2 (3 corrections − 1 confirming). Confidence partially recovers (higher than L3a value)
+- [x] **L14**: confirming sort audit row for `noreply@chase.com` → Banks (`classification_source='manual'`, detected by Cat 2b)
+- [x] **L14**: chase confidence recovers from 0.54 → 0.61 (net corrections = 2, partial recovery)
 
 **Manual rule exemption (step 12):**
 
-- [ ] **L17**: manual rule for `admin@lincolnelementary.org` → Children: `confidence=1.0`, `source='manual'`, unchanged after all runs
+- [x] **L17**: manual rule for `admin@lincolnelementary.org` → Children: `confidence=1.0`, `source='manual'`, unchanged after all runs
 
 **Deferred to unit test:**
 

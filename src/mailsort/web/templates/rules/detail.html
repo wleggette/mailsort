@@ -50,16 +50,20 @@
         <span class="text-sm font-mono font-semibold text-gray-900">{{ "%.2f"|format(rule['confidence']) }}</span>
       </div>
       <div class="flex justify-between">
-        <span class="text-sm text-gray-600">Source</span>
-        <span class="text-sm text-gray-900">{{ rule['source'] }}</span>
-      </div>
-      <div class="flex justify-between">
         <span class="text-sm text-gray-600">Active</span>
         {% if rule['active'] %}
           <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Yes</span>
         {% else %}
           <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">No</span>
         {% endif %}
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Rule #</span>
+        <span class="text-sm font-mono text-gray-900">{{ rule['id'] }}</span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-sm text-gray-600">Source</span>
+        <span class="text-sm text-gray-900">{{ rule['source'] }}</span>
       </div>
       <div class="flex justify-between">
         <span class="text-sm text-gray-600">Created</span>
@@ -69,63 +73,50 @@
         <span class="text-sm text-gray-600">Updated</span>
         <span class="text-sm text-gray-900" data-utc="{{ rule['updated_at'] }}">{{ rule['updated_at'] }}</span>
       </div>
-    </div>
-  </div>
-
-  <div class="bg-white rounded-lg border border-gray-200 p-6">
-    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Performance</h2>
-    <div class="space-y-2">
-      <div class="flex justify-between">
-        <span class="text-sm text-gray-600">Hit Count</span>
-        <span class="text-sm font-semibold text-gray-900">{{ rule['hit_count'] }}</span>
-      </div>
       <div class="flex justify-between">
         <span class="text-sm text-gray-600">Last Relevant</span>
         <span class="text-sm text-gray-900" data-utc="{{ rule['last_relevant_at'] or '' }}">{{ rule['last_relevant_at'] or 'Never' }}</span>
       </div>
     </div>
   </div>
-</div>
 
-<!-- Coherence & Corrections — All Time vs Last 30 Days -->
-<div class="bg-white rounded-lg border border-gray-200 p-6 mb-8">
-  <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Coherence &amp; Corrections</h2>
-  <div class="grid grid-cols-3 gap-4 text-sm">
-    <!-- Header row -->
-    <div></div>
-    <div class="text-center font-medium text-gray-500 uppercase text-xs tracking-wider">All Time</div>
-    <div class="text-center font-medium text-gray-500 uppercase text-xs tracking-wider">Last 30 Days</div>
+  <div class="bg-white rounded-lg border border-gray-200 p-6">
+    <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider mb-4">Performance</h2>
+    <div class="grid grid-cols-3 gap-x-4 gap-y-1 text-sm">
+      <div></div>
+      <div class="text-right font-medium text-gray-500 uppercase text-xs tracking-wider">30 Days</div>
+      <div class="text-right font-medium text-gray-500 uppercase text-xs tracking-wider">All Time</div>
 
-    <!-- Coherence -->
-    <div class="text-gray-600">Coherence</div>
-    {% set at_coh = stats.all_time.coherence %}
-    <div class="text-center font-semibold {{ 'text-green-700' if at_coh >= 80 else 'text-amber-700' if at_coh >= 50 else 'text-red-700' }}">
-      {{ "%.0f"|format(at_coh) }}%
+      <div class="text-gray-600">Coherence</div>
+      {% set w_coh = stats.windowed.coherence %}
+      <div class="text-right font-semibold {{ 'text-green-700' if w_coh >= 80 else 'text-amber-700' if w_coh >= 50 else 'text-red-700' }}">
+        {% if stats.windowed.total > 0 %}{{ "%.0f"|format(w_coh) }}%{% else %}—{% endif %}
+      </div>
+      {% set at_coh = stats.all_time.coherence %}
+      <div class="text-right font-semibold {{ 'text-green-700' if at_coh >= 80 else 'text-amber-700' if at_coh >= 50 else 'text-red-700' }}">
+        {{ "%.0f"|format(at_coh) }}%
+      </div>
+
+      <div class="text-gray-600">Evidence</div>
+      <div class="text-right text-gray-900">{{ stats.windowed.to_target }} / {{ stats.windowed.total }}</div>
+      <div class="text-right text-gray-900">{{ stats.all_time.to_target }} / {{ stats.all_time.total }}</div>
+
+      <div class="text-gray-600">Corrections</div>
+      <div class="text-right {{ 'text-red-600' if stats.windowed.corrections > 0 else 'text-gray-400' }}">{{ stats.windowed.corrections }}</div>
+      <div class="text-right {{ 'text-red-600' if stats.all_time.corrections > 0 else 'text-gray-400' }}">{{ stats.all_time.corrections }}</div>
+
+      <div class="text-gray-600">Confirming</div>
+      <div class="text-right {{ 'text-green-600' if stats.windowed.confirming > 0 else 'text-gray-400' }}">{{ stats.windowed.confirming }}</div>
+      <div class="text-right {{ 'text-green-600' if stats.all_time.confirming > 0 else 'text-gray-400' }}">{{ stats.all_time.confirming }}</div>
+
+      <div class="text-gray-600">Net Corrections</div>
+      <div class="text-right font-medium {{ 'text-red-700' if stats.windowed.net_corrections > 0 else 'text-gray-400' }}">{{ stats.windowed.net_corrections }}</div>
+      <div class="text-right font-medium {{ 'text-red-700' if stats.all_time.net_corrections > 0 else 'text-gray-400' }}">{{ stats.all_time.net_corrections }}</div>
+
+      <div class="text-gray-600">Hit Count</div>
+      <div class="text-right text-gray-400">—</div>
+      <div class="text-right font-semibold text-gray-900">{{ rule['hit_count'] }}</div>
     </div>
-    {% set w_coh = stats.windowed.coherence %}
-    <div class="text-center font-semibold {{ 'text-green-700' if w_coh >= 80 else 'text-amber-700' if w_coh >= 50 else 'text-red-700' }}">
-      {% if stats.windowed.total > 0 %}{{ "%.0f"|format(w_coh) }}%{% else %}—{% endif %}
-    </div>
-
-    <!-- Evidence -->
-    <div class="text-gray-600">Evidence</div>
-    <div class="text-center text-gray-900">{{ stats.all_time.to_target }} / {{ stats.all_time.total }}</div>
-    <div class="text-center text-gray-900">{{ stats.windowed.to_target }} / {{ stats.windowed.total }}</div>
-
-    <!-- Corrections against -->
-    <div class="text-gray-600">Corrections Against</div>
-    <div class="text-center {{ 'text-red-600' if stats.all_time.corrections > 0 else 'text-gray-400' }}">{{ stats.all_time.corrections }}</div>
-    <div class="text-center {{ 'text-red-600' if stats.windowed.corrections > 0 else 'text-gray-400' }}">{{ stats.windowed.corrections }}</div>
-
-    <!-- Confirming sorts -->
-    <div class="text-gray-600">Confirming Sorts</div>
-    <div class="text-center {{ 'text-green-600' if stats.all_time.confirming > 0 else 'text-gray-400' }}">{{ stats.all_time.confirming }}</div>
-    <div class="text-center {{ 'text-green-600' if stats.windowed.confirming > 0 else 'text-gray-400' }}">{{ stats.windowed.confirming }}</div>
-
-    <!-- Net corrections -->
-    <div class="text-gray-600">Net Corrections</div>
-    <div class="text-center font-medium {{ 'text-red-700' if stats.all_time.net_corrections > 0 else 'text-gray-400' }}">{{ stats.all_time.net_corrections }}</div>
-    <div class="text-center font-medium {{ 'text-red-700' if stats.windowed.net_corrections > 0 else 'text-gray-400' }}">{{ stats.windowed.net_corrections }}</div>
   </div>
 </div>
 
@@ -200,7 +191,7 @@
     <table class="min-w-full divide-y divide-gray-200 sortable">
       <thead class="bg-gray-50 sticky top-0">
         <tr>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Last Hit</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Last Relevant</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">From</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
           <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Moved</th>

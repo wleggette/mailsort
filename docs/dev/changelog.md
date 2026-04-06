@@ -5,6 +5,30 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-05 — Feat: system test scenarios L3a, L14, L9, L17 + supporting features
+
+**What changed:**
+- **feat:** Cat 2b correction-reversal detection (`_detect_correction_reversals` in `learner.py`).
+  Detects when a user moves a previously-corrected email to a new folder (sort-back).
+  Records a `classification_source='manual'` row, enabling confirming-sort counting
+  and partial confidence recovery.
+- **feat:** Bootstrap now processes `manual_rules` from config — creates rules with
+  `source='manual'` that are exempt from computed confidence. Existing auto rules
+  are upgraded to manual if they match.
+- **feat:** `VerificationResult.metadata` dict for passing data between verification steps.
+- **fix:** Confirming sorts in `_count_net_corrections` and web UI now exclude bootstrap
+  runs from the count (prevents inflated confirming sort numbers).
+- **test:** System test scenarios: L3a "3 strikes" (3 chase corrections → confidence
+  drops below rule_move), L9 (verify low-confidence rule won't fire), L14 (sort-back
+  recovery — confirming sort partially restores confidence), L17 (manual rule exempt
+  from confidence recomputation).
+- **test:** Added L3a-1 and L3a-2 chase emails to `generate_inbox_emails.py`.
+- **test:** Added `verify_learning_step3` (L3a/L9), `verify_learning_step4` (L14),
+  `verify_learning_step5` (L17) to `verify_results.py`.
+- **config:** Added `manual_rules` to `config.test.yaml` for L17 testing.
+
+---
+
 ## 2026-04-05 — Feat: computed confidence model
 
 **What changed:**

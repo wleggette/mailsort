@@ -88,6 +88,9 @@ class Learner:
         # Category 2: emails we moved that the user relocated
         counts.from_other += self._detect_correction_sorts(jmap, tree, run_id)
 
+        # Category 2b: corrected emails the user moved again (sort-back recovery)
+        counts.from_other += self._detect_correction_reversals(jmap, tree, run_id)
+
         # Category 3: inbox departures (Option C) — user sorted from inbox
         if current_inbox_ids is not None:
             counts.from_inbox += self._detect_inbox_departures(jmap, tree, run_id, current_inbox_ids)
@@ -227,6 +230,108 @@ class Learner:
             email_ids,
         ).fetchall()
         return {r["email_id"] for r in rows}
+
+    def _detect_correction_reversals(
+        self,
+        jmap: JMAPClient,
+        tree: MailboxTree,
+        run_id: str,
+    ) -> int:
+        """Find corrected emails the user moved again (Cat 2b: sort-back).
+
+        After Cat 2 records a correction, the email is marked as "handled" by
+        _already_handled_email_ids.  If the user subsequently moves that email
+        to yet another folder (e.g. back to the rule's original target), Cat 2
+        won't see it because the latest audit row is a correction, not a
+        rule/LLM move.
+
+        This pass queries the most-recent correction row per email, then checks
+        whether the email's current JMAP mailbox still matches the correction
+        target.  If not, the user moved it again and we record a 'manual' row
+        for the new location.
+        """
+        lookback = f"-{self._config.learner_lookback_days} days"
+
+        # Most-recent correction row per email (GROUP BY keeps the latest via MAX)
+        rows = self._db.execute(
+            """SELECT email_id, target_folder, rule_id,
+                      MAX(created_at) as latest
+               FROM audit_log
+               WHERE classification_source = 'correction'
+                 AND created_at >= datetime('now', ?)
+               GROUP BY email_id""",
+            (lookback,),
+        ).fetchall()
+        if not rows:
+            return 0
+
+        correction_target = {r["email_id"]: r["target_folder"] for r in rows}
+        correction_rule = {r["email_id"]: r["rule_id"] for r in rows}
+        email_ids = list(correction_target.keys())
+
+        # Only consider emails whose most-recent audit row is still a
+        # correction (no newer rule move that Cat 2 would handle instead).
+        handled_by_cat2 = set()
+        for eid in email_ids:
+            newer = self._db.execute(
+                """SELECT 1 FROM audit_log
+                   WHERE email_id = ?
+                     AND classification_source NOT IN ('manual', 'correction')
+                     AND moved = 1
+                     AND created_at > (
+                         SELECT MAX(created_at) FROM audit_log
+                         WHERE email_id = ? AND classification_source = 'correction'
+                     )
+                   LIMIT 1""",
+                (eid, eid),
+            ).fetchone()
+            if newer:
+                handled_by_cat2.add(eid)
+
+        fetch_ids = [eid for eid in email_ids if eid not in handled_by_cat2]
+
+        # Also skip emails where we already recorded a manual row newer than
+        # the last correction (prevents double-counting on re-runs).
+        still_needed = []
+        for eid in fetch_ids:
+            newer_manual = self._db.execute(
+                """SELECT 1 FROM audit_log
+                   WHERE email_id = ?
+                     AND classification_source = 'manual'
+                     AND created_at > (
+                         SELECT MAX(created_at) FROM audit_log
+                         WHERE email_id = ? AND classification_source = 'correction'
+                     )
+                   LIMIT 1""",
+                (eid, eid),
+            ).fetchone()
+            if not newer_manual:
+                still_needed.append(eid)
+
+        if not still_needed:
+            return 0
+
+        found = 0
+        try:
+            emails = jmap.get_emails(still_needed[:100], ["id", "threadId", "mailboxIds"])
+        except Exception:
+            logger.exception("Failed to fetch corrected emails for reversal detection")
+            return 0
+
+        for email in emails:
+            expected_path = correction_target.get(email.id)
+            if not expected_path:
+                continue
+            expected_id = tree.id_for(expected_path)
+            if expected_id and expected_id not in email.mailbox_ids:
+                # Email is no longer where the correction put it
+                new_folder_id = next(iter(email.mailbox_ids), None)
+                if new_folder_id:
+                    new_path = tree.path_for(new_folder_id)
+                    if new_path and new_path != "INBOX":
+                        self._record_manual_sort(run_id, email.id, new_path)
+                        found += 1
+        return found
 
     def _record_correction(
         self, run_id: str, email_id: str, folder_path: str,
@@ -882,13 +987,18 @@ class Learner:
         ).fetchone()[0]
 
         # Confirming manual sorts (matching condition → rule's target folder)
+        # Exclude bootstrap runs — bootstrap evidence is historical data, not
+        # a user response to a correction.
         col = _RULE_TYPE_COLUMN[rule["rule_type"]]
         confirming = self._db.execute(
             f"""SELECT COUNT(*) FROM audit_log
                 WHERE classification_source = 'manual'
                   AND {col} = ?
                   AND target_folder = ?
-                  AND created_at >= datetime('now', ?)""",
+                  AND created_at >= datetime('now', ?)
+                  AND run_id NOT IN (
+                      SELECT run_id FROM runs WHERE trigger = 'bootstrap'
+                  )""",
             (rule["condition_value"], rule["target_folder_path"], lookback),
         ).fetchone()[0]
 

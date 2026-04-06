@@ -370,16 +370,28 @@ def phase_live_verify(config: str, run_id: str) -> bool:
 
 
 def phase_learning(config: str, to_email: str) -> bool:
-    """Phase 4: Learning & Feedback — L1, L3, L4, L5, L6, L9.
+    """Phase 4: Learning & Feedback — L1, L3, L3a, L4, L5, L6, L9, L14, L17.
 
-    Step 1: Make 4 JMAP moves simulating user actions.
-    Step 2: Run mailsort → learning detects the moves.
-    Step 3: Verify L1, L3, L4, L5.
-    Step 4: Run mailsort again → tests L6 (dedup) and L9 (deactivated rule).
-    Step 5: Verify L6, L9.
+    Batch 1 (single correction + skipped sort):
+      Step 1: Make 4 JMAP moves simulating user actions.
+      Step 2: Run mailsort → learning detects the moves.
+      Step 3: Verify L1, L3, L4, L5.
+    Dedup pass:
+      Step 4: Run mailsort again → tests L6 (dedup).
+      Step 5: Verify L6.
+    Batch 2 ("3 strikes"):
+      Step 6: Make 2 more JMAP corrections (L3a).
+      Step 7: Run mailsort.
+      Step 8: Verify L3a, L9.
+    Sort-back recovery:
+      Step 9: Move chase L3a-1 back to Banks (L14 confirming sort).
+      Step 10: Run mailsort.
+      Step 11: Verify L14.
+    Manual rule exemption:
+      Step 12: Verify L17.
     """
     print("\n" + "=" * 60)
-    print("Phase 4: Learning & Feedback (L1, L3, L4, L5, L6, L9)")
+    print("Phase 4: Learning & Feedback (L1, L3, L3a, L4, L5, L6, L9, L14, L17)")
     print("=" * 60)
 
     import yaml
@@ -568,9 +580,176 @@ def phase_learning(config: str, to_email: str) -> bool:
             db, run2_id,
             l3_email_id=l3_row["email_id"] if l3_row else None,
         )
-        return v1.failed == 0 and v2.failed == 0
     finally:
         db.close()
+
+    # ------------------------------------------------------------------
+    # Step 6: Batch 2 — two more chase corrections ("3 strikes", L3a)
+    # ------------------------------------------------------------------
+    # Find 2 more chase rule-moved emails (L3a-1, L3a-2)
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        l3a_rows = db.execute(
+            "SELECT email_id, target_folder, rule_id FROM audit_log "
+            "WHERE moved = 1 AND from_address = 'noreply@chase.com' "
+            "AND classification_source = 'rule' AND rule_id IS NOT NULL "
+            "AND email_id != ? "
+            "ORDER BY created_at DESC LIMIT 2",
+            (l3_row["email_id"] if l3_row else "",),
+        ).fetchall()
+        chase_rule_id = l3_row["rule_id"] if l3_row else None
+    finally:
+        db.close()
+
+    if len(l3a_rows) < 2:
+        print(f"  WARN: Only found {len(l3a_rows)} additional chase rule-moved emails for L3a (need 2)")
+        print("  Skipping Batch 2, sort-back, and L17 checks")
+        return v1.failed == 0 and v2.failed == 0
+
+    l3a1_email_id = l3a_rows[0]["email_id"]
+    l3a2_email_id = l3a_rows[1]["email_id"]
+
+    print(f"\n  Step 6: Simulating 2 more chase corrections (L3a)...")
+    loader = JMAPLoader(token, session_url)
+    try:
+        folder_map = loader.resolve_folder_paths()
+
+        def resolve_folder(name: str) -> str | None:
+            return (folder_map.get(name)
+                    or folder_map.get(f"INBOX/{name}")
+                    or folder_map.get(f"Inbox/{name}"))
+
+        children_id = resolve_folder("People/Children")
+        stores_id = resolve_folder("Affairs/Stores")
+
+        def move_email(email_id: str, target_id: str, label: str) -> bool:
+            try:
+                loader.call([
+                    ["Email/set", {
+                        "accountId": loader.account_id,
+                        "update": {email_id: {"mailboxIds": {target_id: True}}},
+                    }, "s1"],
+                ])
+                print(f"    {label}: moved {email_id[:12]}...")
+                return True
+            except Exception as e:
+                print(f"    {label}: FAILED — {e}")
+                return False
+
+        if children_id:
+            move_email(l3a1_email_id, children_id, "L3a-1 chase → Children")
+        if stores_id:
+            move_email(l3a2_email_id, stores_id, "L3a-2 chase → Stores")
+    finally:
+        loader.close()
+
+    # ------------------------------------------------------------------
+    # Step 7: Run mailsort to detect batch 2 corrections
+    # ------------------------------------------------------------------
+    print("\n  Step 7: Running mailsort (detect batch 2 corrections)...")
+    result = run_mailsort("run", config)
+    if result.returncode != 0:
+        print("  ERROR: Batch 2 run failed")
+        return False
+
+    # ------------------------------------------------------------------
+    # Step 8: Verify L3a, L9
+    # ------------------------------------------------------------------
+    print("\n  Step 8: Verifying L3a, L9...")
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        run3_id = db.execute(
+            "SELECT run_id FROM runs WHERE trigger != 'bootstrap' ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()["run_id"]
+
+        from tests.system.verify_results import verify_learning_step3
+        v3 = verify_learning_step3(
+            db, run3_id,
+            chase_rule_id=chase_rule_id,
+            l3a1_email_id=l3a1_email_id,
+            l3a2_email_id=l3a2_email_id,
+        )
+        if v3.failed > 0:
+            print("  Step 8 had failures — continuing to step 9")
+    finally:
+        db.close()
+
+    # ------------------------------------------------------------------
+    # Step 9: Sort-back recovery (L14) — move L3a-1 back to Banks
+    # ------------------------------------------------------------------
+    print(f"\n  Step 9: Sort-back — moving L3a-1 chase email back to Banks (L14)...")
+    loader = JMAPLoader(token, session_url)
+    try:
+        folder_map = loader.resolve_folder_paths()
+        banks_id = (folder_map.get("Affairs/Banks")
+                    or folder_map.get("INBOX/Affairs/Banks")
+                    or folder_map.get("Inbox/Affairs/Banks"))
+        if banks_id:
+            try:
+                loader.call([
+                    ["Email/set", {
+                        "accountId": loader.account_id,
+                        "update": {l3a1_email_id: {"mailboxIds": {banks_id: True}}},
+                    }, "s1"],
+                ])
+                print(f"    L14 chase L3a-1 → Banks: moved {l3a1_email_id[:12]}...")
+            except Exception as e:
+                print(f"    L14: FAILED — {e}")
+        else:
+            print("    L14: WARN — Banks folder not found")
+    finally:
+        loader.close()
+
+    # ------------------------------------------------------------------
+    # Step 10: Run mailsort to detect confirming sort
+    # ------------------------------------------------------------------
+    print("\n  Step 10: Running mailsort (detect confirming sort)...")
+    result = run_mailsort("run", config)
+    if result.returncode != 0:
+        print("  ERROR: Sort-back run failed")
+        return False
+
+    # ------------------------------------------------------------------
+    # Step 11: Verify L14 (sort-back recovery)
+    # ------------------------------------------------------------------
+    print("\n  Step 11: Verifying L14 (sort-back recovery)...")
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        run4_id = db.execute(
+            "SELECT run_id FROM runs WHERE trigger != 'bootstrap' ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()["run_id"]
+
+        from tests.system.verify_results import verify_learning_step4
+        v4 = verify_learning_step4(
+            db, run4_id,
+            chase_rule_id=chase_rule_id,
+            l3a1_email_id=l3a1_email_id,
+            pre_l3a_confidence=v3.metadata.get("chase_confidence") if v3.metadata else None,
+        )
+    finally:
+        db.close()
+
+    # ------------------------------------------------------------------
+    # Step 12: Verify L17 (manual rule exemption)
+    # ------------------------------------------------------------------
+    print("\n  Step 12: Verifying L17 (manual rule exemption)...")
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        from tests.system.verify_results import verify_learning_step5
+        v5 = verify_learning_step5(db)
+    finally:
+        db.close()
+
+    return (v1.failed == 0 and v2.failed == 0
+            and v3.failed == 0 and v4.failed == 0 and v5.failed == 0)
 
 
 def phase_cleanup(config: str) -> bool:

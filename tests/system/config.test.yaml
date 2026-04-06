@@ -44,6 +44,11 @@ known_contact_overrides:
   "testcontact@example.com":
     relationship: "friend"
 
+manual_rules:
+  - type: exact_sender
+    value: "admin@lincolnelementary.org"
+    folder: "People/Children"
+
 exclude_folder_patterns:
   - "INBOX/Affairs"
   - "INBOX/People"

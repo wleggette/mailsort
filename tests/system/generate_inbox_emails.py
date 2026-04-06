@@ -249,6 +249,32 @@ def generate_inbox_emails() -> list[dict]:
             "description": "P1: exact_sender beats sender_domain — statements@bigbank.com matches both rule types",
         },
 
+        # L3a-1: Chase correction target #2 (moved to Banks by rule, corrected in Phase 4)
+        {
+            "from_email": "noreply@chase.com",
+            "from_name": "Chase Bank",
+            "subject": f"[TEST] Chase L3a-1 correction target {ts}",
+            "body": "Your Chase checking account direct deposit has been posted.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "moved",
+            "expected_folder": "Affairs/Banks",
+            "description": "L3a-1: Chase correction target #2 — corrected to Children in Phase 4",
+        },
+
+        # L3a-2: Chase correction target #3 (moved to Banks by rule, corrected in Phase 4)
+        {
+            "from_email": "noreply@chase.com",
+            "from_name": "Chase Bank",
+            "subject": f"[TEST] Chase L3a-2 correction target {ts}",
+            "body": "Your Chase savings account earned $0.42 in interest this month.",
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "moved",
+            "expected_folder": "Affairs/Banks",
+            "description": "L3a-2: Chase correction target #3 — corrected to Stores in Phase 4",
+        },
+
         # P2: list_id should beat exact_sender
         # activities@ymca.org has BOTH an exact_sender rule AND <updates.ymca.org> has a list_id rule.
         # list_id (priority 1) should fire, not exact_sender (priority 2).

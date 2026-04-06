@@ -158,7 +158,10 @@ async def rule_detail(request: Request, rule_id: int):
         ).fetchone()[0]
         at_confirming = db.execute(
             f"""SELECT COUNT(*) FROM audit_log
-                WHERE classification_source = 'manual' AND {col} = ? AND target_folder = ?""",
+                WHERE classification_source = 'manual' AND {col} = ? AND target_folder = ?
+                  AND run_id NOT IN (
+                      SELECT run_id FROM runs WHERE trigger = 'bootstrap'
+                  )""",
             (cond_val, target),
         ).fetchone()[0]
         stats["all_time"] = {
@@ -191,7 +194,10 @@ async def rule_detail(request: Request, rule_id: int):
         w_confirming = db.execute(
             f"""SELECT COUNT(*) FROM audit_log
                 WHERE classification_source = 'manual' AND {col} = ? AND target_folder = ?
-                  AND created_at >= datetime('now', ?)""",
+                  AND created_at >= datetime('now', ?)
+                  AND run_id NOT IN (
+                      SELECT run_id FROM runs WHERE trigger = 'bootstrap'
+                  )""",
             (cond_val, target, lookback),
         ).fetchone()[0]
         stats["windowed"] = {

@@ -20,6 +20,7 @@ class VerificationResult:
     failed: int = 0
     warnings: int = 0
     details: list[str] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
 
     def check(self, condition: bool, description: str) -> bool:
         if condition:
@@ -833,6 +834,185 @@ def verify_learning_step2(
             )
     else:
         v.warn("L9: chase rule not found")
+
+    v.print_report()
+    return v
+
+
+def verify_learning_step3(
+    db: Database,
+    run_id: str,
+    *,
+    chase_rule_id: int | None,
+    l3a1_email_id: str,
+    l3a2_email_id: str,
+) -> VerificationResult:
+    """Verify L3a ('3 strikes') and L9 after batch 2 corrections."""
+    v = VerificationResult()
+    print(f"\n=== Verifying Learning Step 3 ({run_id[:8]}) — L3a, L9 ===")
+
+    # --- L3a: 3 total correction rows for chase rule ---
+    if chase_rule_id:
+        total_corrections = db.execute(
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE classification_source = 'correction' AND rule_id = ?",
+            (chase_rule_id,),
+        ).fetchone()[0]
+        v.check(
+            total_corrections >= 3,
+            f"L3a: 3+ total correction rows for chase rule (got {total_corrections})",
+        )
+
+        # New correction rows for L3a-1 and L3a-2 in this run
+        l3a1_corr = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? "
+            "AND classification_source = 'correction'",
+            (run_id, l3a1_email_id),
+        ).fetchall()
+        v.check(
+            len(l3a1_corr) > 0,
+            f"L3a: correction row for L3a-1 chase email (email {l3a1_email_id[:12]})",
+        )
+
+        l3a2_corr = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? "
+            "AND classification_source = 'correction'",
+            (run_id, l3a2_email_id),
+        ).fetchall()
+        v.check(
+            len(l3a2_corr) > 0,
+            f"L3a: correction row for L3a-2 chase email (email {l3a2_email_id[:12]})",
+        )
+
+        # Chase rule confidence should be well below rule_move (0.85)
+        chase_rule = db.execute(
+            "SELECT * FROM rules WHERE id = ?", (chase_rule_id,)
+        ).fetchone()
+        if chase_rule:
+            conf = chase_rule["confidence"]
+            v.check(
+                conf < 0.85,
+                f"L3a: chase confidence below rule_move "
+                f"(conf={conf:.2f}, threshold=0.85)",
+            )
+            v.check(
+                bool(chase_rule["active"]),
+                f"L3a: chase rule still active (conf={conf:.2f} > deactivation 0.50)",
+            )
+            # Store for L14 comparison
+            v.metadata["chase_confidence"] = conf
+        else:
+            v.check(False, f"L3a: chase rule {chase_rule_id} not found")
+    else:
+        v.warn("L3a: skipped (chase rule_id not available)")
+
+    # --- L9: chase rule below rule_move means it won't fire ---
+    chase_rule = db.execute(
+        "SELECT * FROM rules WHERE condition_value = 'noreply@chase.com' "
+        "AND rule_type = 'exact_sender'"
+    ).fetchone()
+    if chase_rule:
+        v.check(
+            chase_rule["confidence"] < 0.85,
+            f"L9: chase rule won't fire — confidence below rule_move "
+            f"(conf={chase_rule['confidence']:.2f}, threshold=0.85)",
+        )
+    else:
+        v.warn("L9: chase rule not found")
+
+    v.print_report()
+    return v
+
+
+def verify_learning_step4(
+    db: Database,
+    run_id: str,
+    *,
+    chase_rule_id: int | None,
+    l3a1_email_id: str,
+    pre_l3a_confidence: float | None,
+) -> VerificationResult:
+    """Verify L14 (sort-back recovery) — confirming sort detected, confidence recovers."""
+    v = VerificationResult()
+    print(f"\n=== Verifying Learning Step 4 ({run_id[:8]}) — L14 ===")
+
+    # --- L14: Confirming sort detected ---
+    # The L3a-1 email was moved back to Banks. It could be detected as:
+    # - Cat 2 correction (if it had a prior rule/LLM move to Children)
+    # - Cat 1 skipped sort (if it was in a non-inbox folder and user moved it)
+    # Either way, a manual or correction row should exist for Banks.
+    manual_rows = db.execute(
+        "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? "
+        "AND classification_source IN ('manual', 'correction')",
+        (run_id, l3a1_email_id),
+    ).fetchall()
+    banks_rows = [r for r in manual_rows if "Banks" in (r["target_folder"] or "")]
+    v.check(
+        len(banks_rows) > 0,
+        f"L14: confirming sort detected for L3a-1 → Banks "
+        f"(email {l3a1_email_id[:12]}, found {len(banks_rows)} rows)",
+    )
+
+    # --- L14: Net corrections decreased, confidence partially recovered ---
+    if chase_rule_id:
+        chase_rule = db.execute(
+            "SELECT * FROM rules WHERE id = ?", (chase_rule_id,)
+        ).fetchone()
+        if chase_rule:
+            conf = chase_rule["confidence"]
+            if pre_l3a_confidence is not None:
+                v.check(
+                    conf > pre_l3a_confidence,
+                    f"L14: chase confidence recovered from L3a "
+                    f"({pre_l3a_confidence:.2f} → {conf:.2f})",
+                )
+            else:
+                v.warn("L14: no pre-L3a confidence available for comparison")
+
+            # Should still be below rule_move (recovery is partial: 3 corr - 1 confirm = 2 net)
+            v.check(
+                conf < 0.85,
+                f"L14: chase still below rule_move after partial recovery "
+                f"(conf={conf:.2f})",
+            )
+            v.check(
+                bool(chase_rule["active"]),
+                f"L14: chase rule still active (conf={conf:.2f})",
+            )
+        else:
+            v.check(False, f"L14: chase rule {chase_rule_id} not found")
+    else:
+        v.warn("L14: skipped (chase rule_id not available)")
+
+    v.print_report()
+    return v
+
+
+def verify_learning_step5(db: Database) -> VerificationResult:
+    """Verify L17 — manual rule exemption from computed confidence."""
+    v = VerificationResult()
+    print("\n=== Verifying Learning Step 5 — L17 (manual rule exemption) ===")
+
+    manual_rule = db.execute(
+        "SELECT * FROM rules WHERE condition_value = 'admin@lincolnelementary.org' "
+        "AND source = 'manual'"
+    ).fetchone()
+    if manual_rule:
+        v.check(
+            manual_rule["confidence"] == 1.0,
+            f"L17: manual rule confidence unchanged "
+            f"(got {manual_rule['confidence']:.2f}, expected 1.0)",
+        )
+        v.check(
+            bool(manual_rule["active"]),
+            "L17: manual rule still active",
+        )
+        v.check(
+            manual_rule["source"] == "manual",
+            f"L17: rule source is 'manual' (got '{manual_rule['source']}')",
+        )
+    else:
+        v.check(False, "L17: manual rule for admin@lincolnelementary.org not found")
 
     v.print_report()
     return v

@@ -15,6 +15,7 @@ It detects user sorts through four complementary categories:
 |----------|----------------|--------------|
 | **1. Skipped sorts** | Emails mailsort left in inbox that the user moved | Query `audit_log WHERE moved=0` in last 7 days, check current `mailboxIds` |
 | **2. Correction sorts** | Emails mailsort moved that the user relocated | Query `audit_log WHERE moved=1`, compare current mailbox to expected |
+| **2b. Correction reversals** | Previously-corrected emails the user moved again (sort-back) | Query most-recent `correction` rows, check if email left the correction target |
 | **3. Inbox departures** | Emails the user sorted before mailsort processed them | Diff previous inbox snapshot against current inbox IDs; fetch departed emails to see where they went |
 | **4. Daily folder scan** | Emails sorted outside any scan window entirely | Sample recent emails from each folder, find ones absent from `audit_log` |
 
@@ -35,6 +36,37 @@ Once per 24 hours, the learner samples recent emails from each non-inbox folder
 and checks if any are absent from `audit_log`. This catches emails that arrived
 and were sorted between two consecutive scans (i.e., never appeared in any
 snapshot). The last-scan timestamp is tracked in the `learner_state` table.
+
+### Correction Reversals (Category 2b)
+
+After Cat 2 records a correction, the email is marked as "handled" by
+`_already_handled_email_ids` (most-recent audit row is a correction with no
+newer rule move). If the user subsequently moves that email again — e.g., back
+to the rule's original target folder — Cat 2 won't detect it because it only
+queries rule/LLM moves.
+
+Cat 2b closes this gap: it queries the most-recent `classification_source='correction'`
+row per email, then checks whether the email's current JMAP mailbox still matches
+the correction target. If not, the user moved it again, and a `classification_source='manual'`
+row is recorded for the new location.
+
+This enables **sort-back recovery**: when a user corrects a rule move but later
+moves the email back to the original target, the confirming sort is detected and
+reduces the rule's net corrections, partially recovering its confidence.
+
+Dedup: Cat 2b skips emails where (a) a newer rule move exists after the correction
+(Cat 2 handles those), or (b) a manual row already exists newer than the last correction
+(prevents double-counting on re-runs).
+
+**Known accuracy limitation:** If a user corrects a rule move (e.g., Banks → Children)
+and then moves the email back to INBOX (not to another folder), Cat 2b correctly
+ignores the inbox return (`new_path != "INBOX"`). Mailsort will re-classify the
+email on the next scan, and Cat 2b's dedup correctly defers to Cat 2 for any
+subsequent corrections. However, the original correction penalty (0.05) persists
+in `_count_net_corrections` even though the user effectively withdrew the correction
+by returning the email to inbox. The penalty ages out of the 30-day lookback window
+naturally. This is accepted as a minor inaccuracy to avoid the complexity of
+tracking "correction withdrawals."
 
 ### Detection Logic
 

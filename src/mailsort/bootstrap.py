@@ -93,6 +93,11 @@ def run_bootstrap(
         _create_rules_from_evidence(db, learner, report, live_folders)
         logger.info("Phase 2/4 complete: %d rules created", report.rules_created)
 
+        # Phase 2b: Create manual rules from config
+        if cfg.manual_rules:
+            _create_manual_rules(db, rule_engine, cfg, report, live_folders, tree)
+            logger.info("Phase 2b: %d manual rule(s) from config", len(cfg.manual_rules))
+
         # Phase 3: Import contacts from Fastmail
         logger.info("Phase 3/4: Importing contacts from Fastmail...")
         report.contacts_imported = refresh_contacts(db, jmap, cfg.known_contact_overrides)
@@ -241,6 +246,68 @@ def _create_rules_from_evidence(
         report.rules_created += len(created)
 
 
+
+
+def _create_manual_rules(
+    db: Database,
+    rule_engine: RuleEngine,
+    cfg: Config,
+    report: BootstrapReport,
+    live_folders: set[str] | None = None,
+    tree: MailboxTree | None = None,
+) -> None:
+    """Create rules from config manual_rules with source='manual'.
+
+    Manual rules are exempt from computed confidence — they always stay at
+    their configured confidence (default 1.0). If a rule with the same
+    type+condition already exists, it is updated to source='manual'.
+    """
+    for mr in cfg.manual_rules:
+        # Resolve folder path — config uses short form (People/Children) but
+        # the tree may use INBOX/People/Children.
+        folder = mr.folder
+        if live_folders is not None:
+            if folder not in live_folders:
+                # Try with INBOX/ prefix
+                prefixed = f"INBOX/{folder}"
+                if prefixed in live_folders:
+                    folder = prefixed
+                elif tree:
+                    # Try resolving via tree
+                    mid = tree.id_for(folder)
+                    if mid:
+                        folder = tree.path_for(mid) or folder
+                    else:
+                        logger.warning(
+                            "Manual rule target folder %r not in live folders — skipping", mr.folder
+                        )
+                        continue
+                else:
+                    logger.warning(
+                        "Manual rule target folder %r not in live folders — skipping", mr.folder
+                    )
+                    continue
+
+        existing = rule_engine.find_existing_rule(mr.type, mr.value)
+        if existing:
+            # Upgrade existing rule to manual
+            db.execute(
+                "UPDATE rules SET source = 'manual', confidence = ?, active = 1, "
+                "updated_at = datetime('now') WHERE id = ?",
+                (mr.confidence, existing["id"]),
+            )
+            db.commit()
+            logger.debug("Upgraded rule %d to manual: %s=%s", existing["id"], mr.type, mr.value)
+        else:
+            rule_engine.create_rule(
+                rule_type=mr.type,
+                condition_value=mr.value,
+                target_folder_path=mr.folder,
+                confidence=mr.confidence,
+                source="manual",
+            )
+            report.rules_created += 1
+            logger.debug("Created manual rule: %s=%s → %s", mr.type, mr.value, mr.folder)
 
 
 def _calculate_coverage(

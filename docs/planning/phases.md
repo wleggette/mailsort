@@ -28,9 +28,11 @@
 ## Phase 4: Learning ✅
 - [x] Bootstrap: scan existing folders → seed rules + folder descriptions
       (`bootstrap.py`, `mailsort bootstrap` CLI command)
-- [x] Manual sort detection — four categories (`audit/learner.py`):
+- [x] Manual sort detection — five categories (`audit/learner.py`):
   - [x] Category 1: skipped emails the user moved out of inbox
   - [x] Category 2: mailsort-moved emails the user relocated
+  - [x] Category 2b: correction reversals — previously-corrected emails moved
+        again (sort-back recovery, `_detect_correction_reversals`)
   - [x] Category 3: inbox departures via snapshot diff (emails sorted before
         mailsort processed them) — `inbox_snapshot` table, migration 7
   - [x] Category 4: daily folder scan for emails with no audit_log record
