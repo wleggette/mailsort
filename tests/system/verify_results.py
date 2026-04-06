@@ -512,10 +512,15 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
     ).fetchone()[0]
     v.check(rules_with_hits == 0, f"All rules have hit_count=0 after dry run (violations: {rules_with_hits})")
 
-    rules_with_last_hit = db.execute(
+    # compute_rule_confidence() runs during the learning step (even on dry runs)
+    # and populates last_relevant_at from bootstrap audit_log evidence.
+    rules_with_last_relevant = db.execute(
         "SELECT COUNT(*) FROM rules WHERE last_relevant_at IS NOT NULL"
     ).fetchone()[0]
-    v.check(rules_with_last_hit == 0, f"All rules have last_relevant_at=NULL after dry run (violations: {rules_with_last_hit})")
+    total_rules = db.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
+    v.check(rules_with_last_relevant == total_rules,
+            f"All rules have last_relevant_at set after dry run "
+            f"(set: {rules_with_last_relevant}, total: {total_rules})")
 
     v.print_report()
     return v
@@ -736,11 +741,19 @@ def verify_learning_step1(
     else:
         v.warn("L4: skipped (megastore alerts email not found)")
 
-    # --- L5: LLM-based correction, no rule penalty (Category 2) ---
+    # --- L5: LLM-based correction (Category 2) ---
+    # In the computed confidence model, _detect_correction_sorts catches all
+    # non-manual/non-correction moves (including LLM). The relocation is
+    # recorded as classification_source='correction' (not 'manual').
     if l5_email_id:
+        corr_rows = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? AND email_id = ? AND classification_source = 'correction'",
+            (run_id, l5_email_id),
+        ).fetchall()
+        has_corr = any("Banks" in (r["target_folder"] or "") for r in corr_rows) if corr_rows else False
         v.check(
-            has_manual_row(l5_email_id, "Banks"),
-            f"L5: manual audit row for megastore returns → Banks (email {l5_email_id[:12]})",
+            has_corr,
+            f"L5: correction audit row for megastore returns → Banks (email {l5_email_id[:12]})",
         )
 
         # With computed confidence model, compute_rule_confidence updates all active rules.
