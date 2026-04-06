@@ -94,6 +94,15 @@ def test_jmap_move_crash_still_logs_decisions(db: Database):
         "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
         "VALUES ('exact_sender', 'noreply@chase.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
     )
+    # Add evidence so compute_rule_confidence keeps confidence above rule_move (0.85).
+    # 3 evidence rows → base = min(0.95, 0.80 + 3×0.03) = 0.89.
+    for i in range(3):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "target_folder, confidence, classification_source, moved) "
+            f"VALUES ('boot', 'ev-{i}', 'noreply@chase.com', 'chase.com', "
+            "'INBOX/Affairs/Banks', 1.0, 'manual', 1)"
+        )
     db.commit()
 
     mock_jmap = MagicMock()
@@ -133,6 +142,14 @@ def test_classification_error_isolates_to_single_email(db: Database):
         "INSERT INTO rules (rule_type, condition_value, target_folder_path, confidence, source) "
         "VALUES ('exact_sender', 'good@example.com', 'INBOX/Affairs/Banks', 0.95, 'bootstrap')"
     )
+    # Add evidence so compute_rule_confidence keeps confidence above rule_move (0.85).
+    for i in range(3):
+        db.execute(
+            "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
+            "target_folder, confidence, classification_source, moved) "
+            f"VALUES ('boot', 'ev-{i}', 'good@example.com', 'example.com', "
+            "'INBOX/Affairs/Banks', 1.0, 'manual', 1)"
+        )
     db.commit()
 
     email_good = _make_jmap_email(email_id="email-good", from_email="good@example.com")
