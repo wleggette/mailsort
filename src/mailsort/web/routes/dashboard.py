@@ -41,8 +41,14 @@ async def dashboard(request: Request):
     total_rules = db.execute("SELECT COUNT(*) FROM rules WHERE active = 1").fetchone()[0]
     total_contacts = db.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
     total_folders = db.execute("SELECT COUNT(*) FROM folder_descriptions").fetchone()[0]
-    total_processed = db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
-    unique_emails = db.execute("SELECT COUNT(DISTINCT email_id) FROM audit_log").fetchone()[0]
+    total_processed = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE run_id NOT IN "
+        "(SELECT run_id FROM runs WHERE trigger = 'bootstrap')"
+    ).fetchone()[0]
+    unique_emails = db.execute(
+        "SELECT COUNT(DISTINCT email_id) FROM audit_log WHERE run_id NOT IN "
+        "(SELECT run_id FROM runs WHERE trigger = 'bootstrap')"
+    ).fetchone()[0]
 
     # Learner state
     last_contact_refresh = db.execute(
