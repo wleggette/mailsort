@@ -15,10 +15,12 @@ async def analyze(request: Request, days: int = 30):
 
     window = f"-{days} days"
 
-    # Base filter: exclude bootstrap runs
+    # Base filter: exclude bootstrap and dry runs (dry runs inflate metrics
+    # because emails are classified but not actually moved)
     base = (
         "FROM audit_log a JOIN runs r ON r.run_id = a.run_id "
-        "WHERE r.trigger != 'bootstrap' AND a.created_at >= datetime('now', ?)"
+        "WHERE r.trigger != 'bootstrap' AND r.dry_run = 0 "
+        "AND a.created_at >= datetime('now', ?)"
     )
     classify_base = f"{base} AND a.classification_source != 'manual'"
 

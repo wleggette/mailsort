@@ -5,6 +5,21 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-06 — Fix: exclude dry runs from analysis page
+
+**What changed:**
+- **fix:** Analysis page included dry-run data in all metrics (emails classified,
+  moved/skipped counts, source breakdown, LLM confidence distribution, etc.).
+  Dry runs inflate these numbers since emails are classified but not actually
+  moved. Added `r.dry_run = 0` filter to the base query — propagates to all
+  analysis metrics.
+
+**Files modified:**
+- `src/mailsort/web/routes/analyze.py` — added dry_run filter to base query
+- `docs/design/web-ui.md` — note that analysis excludes dry runs
+
+---
+
 ## 2026-04-06 — Fix: correction badges and analysis page queries
 
 **What changed:**

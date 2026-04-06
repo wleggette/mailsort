@@ -116,7 +116,7 @@ Interactive version of `mailsort analyze`.
 - **Date range picker** (default 30 days)
 - **Classification sources** — bar chart with counts and percentages.
   Bar colors: blue (rule), purple (llm), teal (thread), orange (correction).
-  Excludes `manual` rows (user sorts, not mailsort decisions).
+  Excludes bootstrap runs, dry runs, and `manual` rows (user sorts).
 - **User Corrections card** — count of distinct emails with
   `classification_source='correction'`. Error rate = corrections / moved × 100.
 - **LLM confidence histogram** — bucketed distribution with current threshold marked
