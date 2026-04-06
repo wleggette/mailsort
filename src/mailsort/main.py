@@ -515,29 +515,45 @@ def _print_analysis(db: Database, cfg: Config, days: int) -> None:
     """
     window = f"-{days} days"
 
-    # Base filter: exclude bootstrap and dry runs, only look at recent data
-    base = (
-        "FROM audit_log a JOIN runs r ON r.run_id = a.run_id "
-        "WHERE r.trigger != 'bootstrap' AND r.dry_run = 0 "
-        "AND a.created_at >= datetime('now', ?)"
+    # Deduplicated base: keep only the most recent audit row per email_id.
+    # Excludes bootstrap, dry runs, and manual rows.
+    dedup_cte = (
+        "WITH latest AS ("
+        "  SELECT a.* FROM audit_log a"
+        "  JOIN runs r ON r.run_id = a.run_id"
+        "  WHERE r.trigger != 'bootstrap' AND r.dry_run = 0"
+        "    AND a.created_at >= datetime('now', ?)"
+        "    AND a.classification_source != 'manual'"
+        "    AND a.id = ("
+        "      SELECT MAX(a2.id) FROM audit_log a2"
+        "      JOIN runs r2 ON r2.run_id = a2.run_id"
+        "      WHERE a2.email_id = a.email_id"
+        "        AND r2.trigger != 'bootstrap' AND r2.dry_run = 0"
+        "        AND a2.created_at >= datetime('now', ?)"
+        "        AND a2.classification_source != 'manual'"
+        "    )"
+        ") "
     )
+    cte_params = (window, window)
 
-    # Overall counts — exclude manual rows (user actions, not mailsort classifications)
-    classify_base = f"{base} AND a.classification_source != 'manual'"
-    total = db.execute(f"SELECT COUNT(*) {classify_base}", (window,)).fetchone()[0]
+    # Overall counts
+    total = db.execute(
+        f"{dedup_cte} SELECT COUNT(*) FROM latest", cte_params
+    ).fetchone()[0]
     if total == 0:
         click.echo("No classification data found. Run 'mailsort run' or 'mailsort dry-run' first.")
         return
 
     moved = db.execute(
-        f"SELECT COUNT(*) {classify_base} AND a.moved = 1", (window,)
+        f"{dedup_cte} SELECT COUNT(*) FROM latest WHERE moved = 1", cte_params
     ).fetchone()[0]
     skipped = total - moved
 
-    # By source (exclude manual — those are user actions, not classifications)
+    # By source
     source_rows = db.execute(
-        f"SELECT a.classification_source, COUNT(*) as n, SUM(a.moved) as m {classify_base} "
-        "GROUP BY a.classification_source ORDER BY n DESC", (window,)
+        f"{dedup_cte} SELECT classification_source, COUNT(*) as n, "
+        "SUM(CASE WHEN moved = 1 THEN 1 ELSE 0 END) as m "
+        "FROM latest GROUP BY classification_source ORDER BY n DESC", cte_params
     ).fetchall()
 
     # True corrections: emails mailsort moved that the user relocated
@@ -566,20 +582,20 @@ def _print_analysis(db: Database, cfg: Config, days: int) -> None:
     click.echo(f"  Skipped:          {skipped:5d} ({skipped / total * 100:.0f}%)")
     click.echo(f"  User corrections: {corrections:5d} ({error_rate:.1f}% error rate)")
 
-    # LLM confidence distribution
+    # LLM confidence distribution (also deduplicated)
     llm_rows = db.execute(
-        "SELECT "
+        f"{dedup_cte} SELECT "
         "  CASE "
-        "    WHEN a.confidence >= 0.90 THEN '0.90–1.00' "
-        "    WHEN a.confidence >= 0.80 THEN '0.80–0.89' "
-        "    WHEN a.confidence >= 0.70 THEN '0.70–0.79' "
-        "    WHEN a.confidence >= 0.60 THEN '0.60–0.69' "
+        "    WHEN confidence >= 0.90 THEN '0.90\u20131.00' "
+        "    WHEN confidence >= 0.80 THEN '0.80\u20130.89' "
+        "    WHEN confidence >= 0.70 THEN '0.70\u20130.79' "
+        "    WHEN confidence >= 0.60 THEN '0.60\u20130.69' "
         "    ELSE '< 0.60' "
         "  END AS bucket, "
-        "  SUM(CASE WHEN a.moved = 1 THEN 1 ELSE 0 END) AS moved, "
-        "  SUM(CASE WHEN a.moved = 0 THEN 1 ELSE 0 END) AS skipped "
-        f"{base} AND a.classification_source = 'llm' "
-        "GROUP BY bucket ORDER BY bucket DESC", (window,)
+        "  SUM(CASE WHEN moved = 1 THEN 1 ELSE 0 END) AS moved, "
+        "  SUM(CASE WHEN moved = 0 THEN 1 ELSE 0 END) AS skipped "
+        "FROM latest WHERE classification_source = 'llm' "
+        "GROUP BY bucket ORDER BY bucket DESC", cte_params
     ).fetchall()
 
     if llm_rows:

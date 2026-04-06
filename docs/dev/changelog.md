@@ -5,6 +5,25 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-06 — Fix: deduplicate analysis metrics by email_id
+
+**What changed:**
+- **fix:** Analysis page and CLI `mailsort analyze` counted audit_log rows, not
+  distinct emails. An email skipped across 3 cycles counted as 3 skipped. Now
+  uses a CTE to keep only the most recent audit row per `email_id`, so each
+  email counts once with its final outcome (moved vs. skipped) and final source.
+- Affects: overall totals, source breakdown, LLM confidence distribution.
+- Corrections count was already `COUNT(DISTINCT email_id)` — unaffected.
+
+**Files modified:**
+- `src/mailsort/web/routes/analyze.py` — CTE dedup for web
+- `src/mailsort/main.py` — CTE dedup for CLI `_print_analysis`
+- `tests/test_observability.py` — 2 new tests (dedup + dry-run exclusion)
+- `docs/dev/decisions.md` — design decision documented
+- `docs/design/web-ui.md` — note dedup behavior
+
+---
+
 ## 2026-04-06 — Fix: reconcile CLI analyze + docs with web page fixes
 
 **What changed:**

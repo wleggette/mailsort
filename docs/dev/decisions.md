@@ -6,6 +6,57 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-06 — Deduplicate analysis metrics by email_id
+
+**Context:** The analysis page (`/analyze`) and CLI `mailsort analyze` count
+`audit_log` rows, not distinct emails. If an email sits in the inbox for
+multiple cycles (e.g., skipped as `below_threshold` three times before a rule
+is created that moves it), it contributes three rows to the "skipped" total
+and three to the LLM confidence histogram. This inflates totals and distorts
+the source breakdown, especially for skipped emails.
+
+**Options considered:**
+
+1. **COUNT(DISTINCT email_id)** — simple dedup for totals, but ambiguous for
+   attribution. Which source, confidence, and outcome do we assign to the
+   email? The first? The last? An aggregate?
+2. **Keep only the most recent audit row per email_id** — uses a CTE or
+   subquery with `ROW_NUMBER() OVER (PARTITION BY email_id ORDER BY
+   created_at DESC)` to select the latest decision for each email. The last
+   decision reflects the final outcome (moved vs. skipped) and the source that
+   ultimately handled it. Attribution is unambiguous.
+3. **Do nothing** — the audit log is an event log; multiple rows per email are
+   expected. Analysis consumers should understand this. But this makes the
+   "emails classified" count misleading to users who read it as "how many
+   emails did mailsort process."
+
+**Decision:** Option 2 — deduplicate by taking the most recent audit row per
+`email_id` within the analysis window. Applied to: overall totals (classified,
+moved, skipped), source breakdown, and LLM confidence distribution.
+
+**Rationale:**
+- The analysis page answers "how well is mailsort performing?" The meaningful
+  unit is the email, not the classification event. If an email was skipped
+  twice then moved on the third cycle, the outcome is "moved" — not
+  "2 skipped + 1 moved."
+- The most recent row has the final outcome: if mailsort eventually moved
+  the email, the earlier skipped rows are superseded. If it was skipped
+  every time, the last skip is representative.
+- Correction rows (`classification_source='correction'`) are already counted
+  separately via `COUNT(DISTINCT email_id)` and are unaffected by this change.
+- The audit log itself is not modified — dedup is applied only at query time
+  for analysis metrics.
+
+**Implementation:** A CTE `latest_per_email` selects the row with the highest
+`a.id` per `email_id` (using `id` instead of `created_at` to avoid ties).
+The base filter, source breakdown, and LLM confidence queries all join against
+this CTE instead of raw `audit_log`.
+
+**Affected files:** `src/mailsort/web/routes/analyze.py`,
+`src/mailsort/main.py` (`_print_analysis`).
+
+---
+
 ## 2026-04-05 — Folder description regeneration via `mailsort describe`
 
 **Context:** Folder descriptions are generated once during bootstrap and never updated.

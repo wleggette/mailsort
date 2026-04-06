@@ -15,27 +15,44 @@ async def analyze(request: Request, days: int = 30):
 
     window = f"-{days} days"
 
-    # Base filter: exclude bootstrap and dry runs (dry runs inflate metrics
-    # because emails are classified but not actually moved)
-    base = (
-        "FROM audit_log a JOIN runs r ON r.run_id = a.run_id "
-        "WHERE r.trigger != 'bootstrap' AND r.dry_run = 0 "
-        "AND a.created_at >= datetime('now', ?)"
+    # Deduplicated base: keep only the most recent audit row per email_id.
+    # Excludes bootstrap, dry runs, and manual rows. Uses MAX(a.id) per
+    # email_id so an email classified across multiple cycles counts once
+    # with its final outcome.
+    dedup_cte = (
+        "WITH latest AS ("
+        "  SELECT a.* FROM audit_log a"
+        "  JOIN runs r ON r.run_id = a.run_id"
+        "  WHERE r.trigger != 'bootstrap' AND r.dry_run = 0"
+        "    AND a.created_at >= datetime('now', ?)"
+        "    AND a.classification_source != 'manual'"
+        "    AND a.id = ("
+        "      SELECT MAX(a2.id) FROM audit_log a2"
+        "      JOIN runs r2 ON r2.run_id = a2.run_id"
+        "      WHERE a2.email_id = a.email_id"
+        "        AND r2.trigger != 'bootstrap' AND r2.dry_run = 0"
+        "        AND a2.created_at >= datetime('now', ?)"
+        "        AND a2.classification_source != 'manual'"
+        "    )"
+        ") "
     )
-    classify_base = f"{base} AND a.classification_source != 'manual'"
+    # Queries against the CTE need 2 window params (outer + subquery)
+    cte_params = (window, window)
 
-    # Overall counts (exclude manual rows — those are user actions)
-    total = db.execute(f"SELECT COUNT(*) {classify_base}", (window,)).fetchone()[0]
+    # Overall counts
+    total = db.execute(
+        f"{dedup_cte} SELECT COUNT(*) FROM latest", cte_params
+    ).fetchone()[0]
     moved = db.execute(
-        f"SELECT COUNT(*) {classify_base} AND a.moved = 1", (window,)
+        f"{dedup_cte} SELECT COUNT(*) FROM latest WHERE moved = 1", cte_params
     ).fetchone()[0]
     skipped = total - moved
 
     # By source
     source_rows = db.execute(
-        f"SELECT a.classification_source as source, COUNT(*) as n, "
-        f"SUM(CASE WHEN a.moved = 1 THEN 1 ELSE 0 END) as moved {classify_base} "
-        "GROUP BY a.classification_source ORDER BY n DESC", (window,)
+        f"{dedup_cte} SELECT classification_source as source, COUNT(*) as n, "
+        "SUM(CASE WHEN moved = 1 THEN 1 ELSE 0 END) as moved "
+        "FROM latest GROUP BY classification_source ORDER BY n DESC", cte_params
     ).fetchall()
 
     sources = []
@@ -58,22 +75,22 @@ async def analyze(request: Request, days: int = 30):
     ).fetchone()[0]
     error_rate = corrections / moved * 100 if moved > 0 else 0.0
 
-    # LLM confidence distribution
+    # LLM confidence distribution (also deduplicated)
     buckets = [
-        ("< 0.60", "a.confidence < 0.60"),
-        ("0.60–0.69", "a.confidence >= 0.60 AND a.confidence < 0.70"),
-        ("0.70–0.79", "a.confidence >= 0.70 AND a.confidence < 0.80"),
-        ("0.80–0.89", "a.confidence >= 0.80 AND a.confidence < 0.90"),
-        ("0.90–1.00", "a.confidence >= 0.90"),
+        ("< 0.60", "confidence < 0.60"),
+        ("0.60\u20130.69", "confidence >= 0.60 AND confidence < 0.70"),
+        ("0.70\u20130.79", "confidence >= 0.70 AND confidence < 0.80"),
+        ("0.80\u20130.89", "confidence >= 0.80 AND confidence < 0.90"),
+        ("0.90\u20131.00", "confidence >= 0.90"),
     ]
-    llm_base = f"{base} AND a.classification_source = 'llm'"
     confidence_dist = []
     for label, condition in buckets:
         row = db.execute(
-            f"SELECT "
-            f"SUM(CASE WHEN a.moved = 1 THEN 1 ELSE 0 END) as moved, "
-            f"SUM(CASE WHEN a.moved = 0 THEN 1 ELSE 0 END) as skipped "
-            f"{llm_base} AND {condition}", (window,)
+            f"{dedup_cte} SELECT "
+            f"SUM(CASE WHEN moved = 1 THEN 1 ELSE 0 END) as moved, "
+            f"SUM(CASE WHEN moved = 0 THEN 1 ELSE 0 END) as skipped "
+            f"FROM latest WHERE classification_source = 'llm' AND {condition}",
+            cte_params
         ).fetchone()
         m = row["moved"] or 0
         s = row["skipped"] or 0

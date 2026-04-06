@@ -117,6 +117,7 @@ Interactive version of `mailsort analyze`.
 - **Classification sources** — bar chart with counts and percentages.
   Bar colors: blue (rule), purple (llm), teal (thread), orange (correction).
   Excludes bootstrap runs, dry runs, and `manual` rows (user sorts).
+  Deduplicated by `email_id` — each email counts once with its final outcome.
 - **User Corrections card** — count of distinct emails with
   `classification_source='correction'`. Error rate = corrections / moved × 100.
 - **LLM confidence histogram** — bucketed distribution with current threshold marked

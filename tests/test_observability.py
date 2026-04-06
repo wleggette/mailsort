@@ -170,3 +170,142 @@ def test_analyze_with_data(tmp_path):
     assert "rule" in result.output
     assert "llm" in result.output
     assert "Moved:" in result.output
+
+
+def test_analyze_dedup_same_email_across_runs(tmp_path):
+    """Same email classified in multiple runs should count once (final outcome)."""
+    import yaml
+
+    db_path = tmp_path / "test.db"
+    db = Database(str(db_path))
+    db.connect()
+    run_migrations(db)
+
+    # Two live runs
+    db.execute(
+        "INSERT INTO runs (run_id, started_at, status) "
+        "VALUES ('run-1', datetime('now', '-2 hours'), 'completed')"
+    )
+    db.execute(
+        "INSERT INTO runs (run_id, started_at, status) "
+        "VALUES ('run-2', datetime('now', '-1 hours'), 'completed')"
+    )
+
+    # email-A: skipped in run-1 (llm, below_threshold), then moved in run-2 (rule)
+    db.execute(
+        "INSERT INTO audit_log "
+        "(run_id, email_id, from_address, from_domain, target_folder, "
+        " confidence, classification_source, moved, skip_reason, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-2 hours'))",
+        ("run-1", "email-A", "a@example.com", "example.com",
+         "INBOX/Banks", 0.65, "llm", False, "below_threshold"),
+    )
+    db.execute(
+        "INSERT INTO audit_log "
+        "(run_id, email_id, from_address, from_domain, target_folder, "
+        " confidence, classification_source, moved, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-1 hours'))",
+        ("run-2", "email-A", "a@example.com", "example.com",
+         "INBOX/Banks", 0.95, "rule", True),
+    )
+
+    # email-B: skipped in both runs (only counts once)
+    db.execute(
+        "INSERT INTO audit_log "
+        "(run_id, email_id, from_address, from_domain, target_folder, "
+        " confidence, classification_source, moved, skip_reason, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-2 hours'))",
+        ("run-1", "email-B", "b@example.com", "example.com",
+         "INBOX/Stores", 0.55, "llm", False, "below_threshold"),
+    )
+    db.execute(
+        "INSERT INTO audit_log "
+        "(run_id, email_id, from_address, from_domain, target_folder, "
+        " confidence, classification_source, moved, skip_reason, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-1 hours'))",
+        ("run-2", "email-B", "b@example.com", "example.com",
+         "INBOX/Stores", 0.58, "llm", False, "below_threshold"),
+    )
+
+    # email-C: unique, moved once
+    db.execute(
+        "INSERT INTO audit_log "
+        "(run_id, email_id, from_address, from_domain, target_folder, "
+        " confidence, classification_source, moved, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-1 hours'))",
+        ("run-2", "email-C", "c@example.com", "example.com",
+         "INBOX/Banks", 0.95, "rule", True),
+    )
+    db.commit()
+    db.close()
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "fastmail_api_token": "test-token",
+        "db_path": str(db_path),
+    }))
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--config", str(config_path), "analyze", "--days", "30"])
+    assert result.exit_code == 0
+    # 3 distinct emails, not 5 audit rows
+    assert "3 emails" in result.output
+    # email-A final outcome is moved (rule), email-C is moved (rule) → 2 moved
+    assert "Moved:                2" in result.output
+    # email-B final outcome is skipped → 1 skipped
+    assert "Skipped:              1" in result.output
+
+
+def test_analyze_dedup_dry_runs_excluded(tmp_path):
+    """Dry run audit rows should not appear in analysis totals."""
+    import yaml
+
+    db_path = tmp_path / "test.db"
+    db = Database(str(db_path))
+    db.connect()
+    run_migrations(db)
+
+    # One live run, one dry run
+    db.execute(
+        "INSERT INTO runs (run_id, started_at, status) "
+        "VALUES ('live-1', datetime('now'), 'completed')"
+    )
+    db.execute(
+        "INSERT INTO runs (run_id, started_at, status, dry_run) "
+        "VALUES ('dry-1', datetime('now'), 'completed', 1)"
+    )
+
+    # Live run: 2 emails
+    for i in range(2):
+        db.execute(
+            "INSERT INTO audit_log "
+            "(run_id, email_id, from_address, from_domain, target_folder, "
+            " confidence, classification_source, moved) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("live-1", f"email-live-{i}", "a@example.com", "example.com",
+             "INBOX/Banks", 0.95, "rule", True),
+        )
+    # Dry run: 3 emails (should be excluded)
+    for i in range(3):
+        db.execute(
+            "INSERT INTO audit_log "
+            "(run_id, email_id, from_address, from_domain, target_folder, "
+            " confidence, classification_source, moved) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("dry-1", f"email-dry-{i}", "b@example.com", "example.com",
+             "INBOX/Stores", 0.80, "llm", False),
+        )
+    db.commit()
+    db.close()
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "fastmail_api_token": "test-token",
+        "db_path": str(db_path),
+    }))
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--config", str(config_path), "analyze", "--days", "30"])
+    assert result.exit_code == 0
+    # Only 2 live emails, not 5
+    assert "2 emails" in result.output
