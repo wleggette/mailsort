@@ -128,9 +128,12 @@ def resolve_thread_context(email_features: EmailFeatures) -> Optional[Classifica
   email IDs into a single `Email/get` for `mailboxIds`. This reduces the JMAP
   fallback to at most 2 extra calls per scan regardless of batch size.
 - **Mislabeled thread correction:** If a thread-inherited move turns out to be
-  wrong (you manually move the email back or to a different folder), that manual
-  move is detected by `detect_manual_sorts` and logged with
-  `classification_source='manual'`. The next call to `resolve_thread_context`
+  wrong (you manually move the email back or to a different folder), the
+  correction is detected by `detect_corrections` and logged with
+  `classification_source='correction'` (with the original `rule_id` if
+  applicable). If the thread move was skipped (not executed), the user's sort
+  is detected by `detect_manual_sorts` as `classification_source='manual'`.
+  Either way, the next call to `resolve_thread_context`
   for that thread will now find multiple target_folders in audit_log; if the
   manual destination outvotes the original, it wins. If they're tied, the thread
   falls through to the rule engine rather than inheriting an ambiguous result.

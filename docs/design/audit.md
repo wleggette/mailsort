@@ -81,25 +81,24 @@ Key naming decisions:
   relocated after mailsort moved them
 - **No "left in inbox" prefix** — the outcome reason stands on its own
 
-### Correction Subtotals
+### Correction Counting
 
-The learning step detects user sorts across five categories, but for reporting
-they are grouped into two user-facing buckets:
+The learning step detects user sorts across five categories, but for analysis
+reporting only **Category 2** (correction sorts) matters — these are emails
+mailsort moved that the user relocated to a different folder. They are stored
+with `classification_source='correction'` and optionally carry the `rule_id`
+of the original move.
 
-| Bucket | Learner categories | Meaning |
-|--------|-------------------|---------|
-| **From inbox** | Category 1 (skipped sorts) + Category 3 (inbox departures) | User sorted an email out of the inbox themselves |
-| **From other** | Category 2 (correction sorts) + Category 2b (correction reversals) + Category 4 (folder scan) | User moved an email from one non-inbox folder to another |
-
-This distinction matters because "from inbox" tells you about emails mailsort
-missed or couldn't classify, while "from other" tells you about emails
-mailsort classified incorrectly.
+Categories 1 (skipped sorts), 3 (inbox departures), and 4 (folder scan) are
+stored as `classification_source='manual'`. These represent user sorting
+activity, not corrections of mailsort mistakes.
 
 ### Web UI Visualization
 
-The dashboard and audit log pages should reflect these same breakdowns:
-
-- **Dashboard**: last run card shows the full inbox breakdown
-- **Audit log**: each entry shows its classification source and outcome
-- **Analyze**: correction counts split into "from inbox" and "from other"
-  to distinguish missed emails from misclassified ones
+- **Dashboard**: total processed count (all non-bootstrap audit rows, including
+  dry runs) and unique email count
+- **Audit log**: each entry shows its classification source (color-coded badge)
+  and outcome. Corrections with a `rule_id` link to the rule detail page.
+- **Analyze**: correction count = distinct emails with
+  `classification_source='correction'`. Error rate = corrections / moved × 100.
+  Excludes bootstrap and dry runs.

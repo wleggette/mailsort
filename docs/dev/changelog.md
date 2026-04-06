@@ -5,6 +5,27 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-06 — Fix: reconcile CLI analyze + docs with web page fixes
+
+**What changed:**
+- **fix:** CLI `mailsort analyze` had identical bugs to the web analysis page:
+  no dry-run exclusion, corrections query used `'manual'` instead of
+  `'correction'`, skipped-then-sorted and rule corrections queries same issue.
+  All four fixes ported from web route to CLI.
+- **fix:** `docs/design/audit.md` described a "from inbox" / "from other"
+  correction split that was never implemented. Updated to document actual
+  behavior: single correction count from `classification_source='correction'`.
+- **fix:** `docs/design/classification.md` said thread corrections are logged
+  as `'manual'` — clarified that executed moves get `'correction'`, skipped
+  moves get `'manual'`.
+
+**Files modified:**
+- `src/mailsort/main.py` — 4 query fixes in `_print_analysis`
+- `docs/design/audit.md` — correction counting section rewritten
+- `docs/design/classification.md` — thread correction source clarified
+
+---
+
 ## 2026-04-06 — Fix: exclude dry runs from analysis page
 
 **What changed:**
