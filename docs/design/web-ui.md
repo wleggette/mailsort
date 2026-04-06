@@ -77,20 +77,24 @@ All classification rules with management capabilities.
 
 Single rule with full history.
 
-- **Details card** — type, value, folder, confidence, source, active status,
-  created/updated timestamps. Confidence stays here (the final computed value).
-- **Performance card** — broken into **All Time** and **Last 30 Days** columns:
+- **Details card** — Confidence, Active (badge), Rule #, Source, Created,
+  Updated, Last Relevant. Confidence is the final computed value. Last Relevant
+  shows when the most recent matching email was sorted to the target folder.
+- **Performance card** — broken into **30 Days** and **All Time** columns
+  (30 Days first, since it drives the formula):
 
-  | Metric | All Time | Last 30 Days | Notes |
-  |--------|----------|-------------|-------|
-  | **Hit count** | Total hits | Hits in window | Display only (not used in formula) |
-  | **Last relevant at** | Timestamp | — | Most recent email matching condition sorted to target folder |
-  | **Evidence** | N emails to target / M total | — | All-time only (base confidence caps quickly; windowed breakdown not useful) |
-  | **Coherence** | % (all-time) | % (windowed) | Windowed value is what the formula uses; all-time gives trend |
-  | **Corrections** | N against − M confirming = K net | N against − M confirming = K net | Windowed value feeds the formula; all-time shows lifetime pattern |
+  | Metric | 30 Days | All Time | Notes |
+  |--------|---------|----------|-------|
+  | **Coherence** | % (windowed) | % (all-time) | Windowed value is what the formula uses; all-time gives trend |
+  | **Evidence** | N / M | N / M | Emails to target / total matching emails |
+  | **Corrections** | N | N | Corrections against this rule |
+  | **Confirming** | N | N | Manual sorts confirming the rule (excludes bootstrap runs) |
+  | **Net Corrections** | N | N | max(0, corrections − confirming) |
+  | **Hit Count** | — | Total | Display only (not used in formula) |
 
   Color coding for coherence: green ≥80%, amber ≥50%, red <50%.
-  Color coding for net corrections: green = 0, amber = 1–2, red ≥ 3.
+  Color coding for net corrections: red if >0, gray otherwise.
+  Color coding for confirming: green if >0, gray otherwise.
 
 - **Manual rule warning** — if `source='manual'` and windowed coherence is below
   `auto_rule_domain_coherence` (default 0.80), show an amber warning badge:

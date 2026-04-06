@@ -54,7 +54,7 @@ classification:
     # - "spouse@example.com"
   llm_skip_domains:                 # Never send emails from these domains to the LLM
     # - "bank.example.com"
-  correction_penalty: 0.05          # Confidence reduction per net user correction (3 stops any rule)
+  correction_penalty: 0.05          # Confidence reduction per net user correction (3 typically drops below rule_move)
   learner_lookback_days: 7          # Days back to check for skipped/corrected emails
   coherence_lookback_days: 30       # Window for coherence and correction counting
   coherence_min_sample: 3           # Min emails in window before coherence adjusts confidence
@@ -141,7 +141,7 @@ logging_config:
 | `rule_move` | `0.85` | Minimum confidence for rule-based moves |
 | `llm_move` | `0.80` | Minimum confidence for LLM-based moves |
 | `llm_move_known_contact` | `0.93` | Stricter LLM threshold for known contacts |
-| `rule_learn` | `0.70` | Minimum confidence for rule-based learning signals |
+| `rule_learn` | `0.70` | *(Currently unused)* Reserved for future rule-based learning signal threshold |
 
 ### `classification.auto_rule_thresholds`
 
@@ -161,7 +161,7 @@ logging_config:
 | `llm_use_preview` | `true` | Send email preview to LLM |
 | `llm_allow_known_contacts` | `true` | Allow LLM for known contacts |
 | `llm_suggest_rule_after_n` | `5` | Suggest regex rule after N consistent LLM classifications |
-| `correction_penalty` | `0.05` | Confidence reduction per net user correction (3 stops any rule) |
+| `correction_penalty` | `0.05` | Confidence reduction per net user correction (3 typically drops below `rule_move`) |
 | `learner_lookback_days` | `7` | How many days back to check for skipped/corrected emails |
 | `coherence_lookback_days` | `30` | Window (days) for coherence and correction counting |
 | `coherence_min_sample` | `3` | Minimum emails in window before coherence adjusts confidence |
@@ -185,6 +185,19 @@ rule type), so at scale the coherence and staleness factors dominate.
 | `sender_domain_floor` | `0.75` | Starting confidence for sender_domain with minimum evidence |
 | `sender_domain_cap` | `0.90` | Maximum confidence for sender_domain regardless of evidence count |
 | `sender_domain_per_evidence` | `0.02` | Confidence increase per additional email for sender_domain |
+
+### `manual_rules`
+
+Optional list of manually-defined rules that are exempt from computed confidence
+adjustments. If an auto rule with the same type+condition already exists at
+bootstrap time, it is upgraded to `source='manual'`.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | Yes | Rule type: `exact_sender`, `sender_domain`, `list_id`, `subject_regex` |
+| `value` | Yes | Condition value (email address, domain, list-id, regex) |
+| `folder` | Yes | Target folder path (short form like `People/Children` or full `INBOX/People/Children`) |
+| `confidence` | No | Confidence value (default `1.0`) — not recomputed by the confidence model |
 
 ### `logging_config`
 

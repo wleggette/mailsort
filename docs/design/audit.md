@@ -83,13 +83,13 @@ Key naming decisions:
 
 ### Correction Subtotals
 
-The learning step detects user sorts across four categories, but for reporting
+The learning step detects user sorts across five categories, but for reporting
 they are grouped into two user-facing buckets:
 
 | Bucket | Learner categories | Meaning |
 |--------|-------------------|---------|
 | **From inbox** | Category 1 (skipped sorts) + Category 3 (inbox departures) | User sorted an email out of the inbox themselves |
-| **From other** | Category 2 (correction sorts) + Category 4 (folder scan) | User moved an email from one non-inbox folder to another |
+| **From other** | Category 2 (correction sorts) + Category 2b (correction reversals) + Category 4 (folder scan) | User moved an email from one non-inbox folder to another |
 
 This distinction matters because "from inbox" tells you about emails mailsort
 missed or couldn't classify, while "from other" tells you about emails

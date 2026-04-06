@@ -9,7 +9,7 @@ state each cycle — incorporating coherence, staleness, and user corrections.
 
 The learner (`audit/learner.py`) runs at the start of each scan, before
 classification, so that newly learned rules are available for the current batch.
-It detects user sorts through four complementary categories:
+It detects user sorts through five complementary categories:
 
 | Category | What it catches | How it works |
 |----------|----------------|--------------|
@@ -72,12 +72,15 @@ tracking "correction withdrawals."
 
 ```python
 def detect_manual_sorts(jmap_client, previously_skipped: list[str], run_id: str):
-    """Detect user corrections in two categories:
+    """Detect user corrections in five categories:
 
-    1. Skipped emails the user moved out of the inbox (we left them, they sorted them).
-    2. Mailsort-moved emails the user relocated to a different folder (corrections).
+    1.  Skipped emails the user moved out of the inbox.
+    2.  Mailsort-moved emails the user relocated (corrections).
+    2b. Corrected emails the user moved again (sort-back recovery).
+    3.  Inbox departures (sorted before mailsort processed them).
+    4.  Daily folder scan (sorted outside any scan window).
 
-    Both are logged and fed into auto-rule generation.
+    All are logged and fed into auto-rule generation.
     """
     # --- Category 1: skipped emails the user moved out of inbox ---
     if previously_skipped:
@@ -452,10 +455,17 @@ WHERE classification_source = 'manual'
   AND from_address = ?          -- rule's condition_value
   AND target_folder = ?         -- rule's target_folder_path
   AND created_at >= datetime('now', ? || ' days')
+  AND run_id NOT IN (
+      SELECT run_id FROM runs WHERE trigger = 'bootstrap'
+  )
 
 -- For sender_domain: use from_domain = ?
 -- For list_id: use list_id = ?
 ```
+
+Bootstrap runs are excluded because bootstrap evidence rows use
+`classification_source='manual'` for historical evidence — these are not
+user corrections and should not inflate the confirming sort count.
 
 Then: `net_corrections = max(0, corrections − confirming)`.
 
@@ -624,7 +634,7 @@ def bootstrap_rules(jmap_client, max_per_folder: int = 50):
                 target_folder=folder_path,
                 confidence=1.0,
                 classification_source="manual",
-                decision_status="moved",
+                moved=True,
             )
 
         # Generate folder description if one doesn't already exist

@@ -38,7 +38,7 @@ Mailsort is a self-hosted email classification service that periodically scans r
 - LLM classification via Anthropic API
 - Thread context inheritance
 - Bootstrap from existing folder contents
-- Manual sort detection (4 categories) and auto-rule generation
+- Manual sort detection (5 categories) and auto-rule generation
 - Confidence-based gating with per-source thresholds
 - Contact enrichment from Fastmail address book
 - Web UI for monitoring and rule management

@@ -655,7 +655,7 @@ Steps:
 
 ## 6. Phase 4: Learning & Feedback
 
-Tests manual-sort detection (4 categories), computed confidence model behavior,
+Tests manual-sort detection (5 categories), computed confidence model behavior,
 dedup logic, and behavioral impact of confidence changes on classification.
 
 > **Computed confidence model:** Rule confidence is recomputed each cycle from

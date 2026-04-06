@@ -100,11 +100,12 @@ show "calls / depends on". Modules are grouped by layer.
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │     Learner                            audit/learner.py      │   │
 │  │                                                              │   │
-│  │  Manual sort detection (4 categories):                       │   │
-│  │    Cat 1: skipped emails user moved from inbox               │   │
-│  │    Cat 2: mailsort-moved emails user relocated               │   │
-│  │    Cat 3: inbox departures (snapshot diff)                   │   │
-│  │    Cat 4: daily folder scan                                  │   │
+│  │  Manual sort detection (5 categories):                       │   │
+│  │    Cat 1:  skipped emails user moved from inbox              │   │
+│  │    Cat 2:  mailsort-moved emails user relocated              │   │
+│  │    Cat 2b: corrected emails user moved again (sort-back)     │   │
+│  │    Cat 3:  inbox departures (snapshot diff)                  │   │
+│  │    Cat 4:  daily folder scan                                 │   │
 │  │                                                              │   │
 │  │  Auto-rule generation:                                       │   │
 │  │    Create all eligible: list_id + sender_domain + exact      │   │
@@ -214,6 +215,7 @@ with evidence, rules, descriptions, and contacts from existing folders.
 │            combinations)                                             │
 │  Module:   bootstrap.py → audit/learner.py → classifier/rules.py     │
 │  Output:   rules table rows (active=1, source='auto')                │
+│  Phase 2b: manual_rules from config → source='manual' (if any)      │
 │  Decisions:                                                          │
 │    • All eligible rule types created independently per sender:       │
 │      - list_id:       ≥2 emails to target, coherence ≥80%           │
@@ -284,11 +286,12 @@ calls the same path with `dry_run=False` on a timer.
   ┌─ Step 1: Pre-work ────────────────────────────────┐
   │  (pre: start_run() → run_id)                      │
   │  • reconcile_folders — deactivate stale rules     │
-  │  • detect_manual_sorts (Cat 1-3):                 │
-  │      Cat 1: skipped emails user moved from inbox  │
-  │      Cat 2: mailsort-moved emails user relocated  │
-  │      Cat 3: inbox departures (snapshot diff)      │
-  │    → log as manual + maybe_create_rule()          │
+  │  • detect_manual_sorts (Cat 1-3 + 2b):            │
+  │      Cat 1:  skipped emails user moved from inbox │
+  │      Cat 2:  mailsort-moved emails user relocated │
+  │      Cat 2b: corrected emails moved again         │
+  │      Cat 3:  inbox departures (snapshot diff)     │
+  │    → log as manual/correction + maybe_create_rule │
   │  • scan_folders_for_unknown_sorts (Cat 4, daily)  │
   │    → log as manual + maybe_create_rule()          │
   │  • compute_rule_confidence() — recompute          │
