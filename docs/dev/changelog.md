@@ -5,6 +5,33 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-06 — Fix: correction badges and analysis page queries
+
+**What changed:**
+- **fix:** Analysis page "User Corrections" card was always showing 0 — the query
+  looked for `classification_source='manual'` but corrections are stored as
+  `'correction'`. Fixed to query `'correction'` directly.
+- **fix:** "Rule Corrections" table on analysis page never appeared — same root
+  cause (joined on `'manual'` instead of `'correction'`).
+- **fix:** "Skipped Then Sorted" table missed correction-sourced rows — now checks
+  both `'manual'` and `'correction'`.
+- **feat:** Audit log source filter dropdown now includes "Correction" option.
+- **feat:** Correction badges are orange (`bg-orange-50 text-orange-700`) across
+  all three locations: audit list, audit detail, and email history table.
+  Corrections with a `rule_id` link to the rule detail page.
+- **feat:** Analysis page bar chart uses orange for correction source.
+- **fix:** System test README had `--config` after the subcommand (should be before).
+
+**Files modified:**
+- `src/mailsort/web/routes/analyze.py` — 3 query fixes
+- `src/mailsort/web/templates/audit/list.html` — correction dropdown + badge
+- `src/mailsort/web/templates/audit/detail.html` — correction badge (detail + history)
+- `src/mailsort/web/templates/analyze.html` — orange bar color
+- `tests/system/README.md` — `--config` placement
+- `docs/design/web-ui.md` — badge color reference, analysis section updated
+
+---
+
 ## 2026-04-05 — Feat: auto-bootstrap on first scheduler start
 
 **What changed:**

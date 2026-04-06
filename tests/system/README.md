@@ -20,9 +20,9 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 python tests/system/run_system_test.py --setup-only
 
 # Then interact manually:
-mailsort web --config tests/system/config.test.yaml --port 8081
-mailsort dry-run --config tests/system/config.test.yaml
-mailsort run --config tests/system/config.test.yaml
+mailsort --config tests/system/config.test.yaml web --port 8081
+mailsort --config tests/system/config.test.yaml dry-run
+mailsort --config tests/system/config.test.yaml run
 
 # Full automated sequence
 python tests/system/run_system_test.py

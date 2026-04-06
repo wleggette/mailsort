@@ -18,6 +18,7 @@
         <option value="llm" {{ 'selected' if filters.source == 'llm' }}>LLM</option>
         <option value="thread" {{ 'selected' if filters.source == 'thread' }}>Thread</option>
         <option value="manual" {{ 'selected' if filters.source == 'manual' }}>Manual</option>
+        <option value="correction" {{ 'selected' if filters.source == 'correction' }}>Correction</option>
       </select>
     </div>
     <div class="col-span-1">
@@ -150,13 +151,16 @@
             <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600 hover:underline">{{ row['subject'] or '(no subject)' }}</a>
           </td>
           <td class="px-4 py-2 whitespace-nowrap">
-            {% if row['classification_source'] == 'rule' and row['rule_id'] %}
-            <a href="/rules/{{ row['rule_id'] }}" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 hover:bg-blue-100">
-              rule #{{ row['rule_id'] }}
+            {% if row['rule_id'] and row['classification_source'] in ('rule', 'correction') %}
+            <a href="/rules/{{ row['rule_id'] }}" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium hover:bg-blue-100
+              {% if row['classification_source'] == 'correction' %}bg-orange-50 text-orange-700
+              {% else %}bg-blue-50 text-blue-700{% endif %}">
+              {{ row['classification_source'] }} #{{ row['rule_id'] }}
             </a>
             {% else %}
             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
               {% if row['classification_source'] == 'rule' %}bg-blue-50 text-blue-700
+              {% elif row['classification_source'] == 'correction' %}bg-orange-50 text-orange-700
               {% elif row['classification_source'] == 'manual' %}bg-gray-100 text-gray-700
               {% elif row['classification_source'] == 'llm' %}bg-purple-50 text-purple-700
               {% elif row['classification_source'] == 'thread' %}bg-teal-50 text-teal-700

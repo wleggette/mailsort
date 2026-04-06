@@ -58,7 +58,7 @@
     <div class="flex items-center gap-4">
       <div class="w-20 text-sm font-medium text-gray-700">{{ s.name }}</div>
       <div class="flex-1 bg-gray-100 rounded-full h-6 relative">
-        <div class="h-6 rounded-full {{ 'bg-blue-500' if s.name == 'rule' else 'bg-purple-500' if s.name == 'llm' else 'bg-teal-500' if s.name == 'thread' else 'bg-gray-400' }}"
+        <div class="h-6 rounded-full {{ 'bg-blue-500' if s.name == 'rule' else 'bg-purple-500' if s.name == 'llm' else 'bg-teal-500' if s.name == 'thread' else 'bg-orange-400' if s.name == 'correction' else 'bg-gray-400' }}"
              style="width: {{ [s.pct, 2] | max }}%"></div>
       </div>
       <div class="w-24 text-sm text-right">

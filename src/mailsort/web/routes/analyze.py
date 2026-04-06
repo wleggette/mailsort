@@ -47,16 +47,12 @@ async def analyze(request: Request, days: int = 30):
             "bar_width": int(pct),
         })
 
-    # True corrections (manual rows where email was previously moved by mailsort)
+    # True corrections (emails mailsort moved that the user relocated)
     corrections = db.execute(
         "SELECT COUNT(DISTINCT a.email_id) FROM audit_log a "
         "JOIN runs r ON r.run_id = a.run_id "
-        "WHERE r.trigger != 'bootstrap' AND a.classification_source = 'manual' "
-        "  AND a.created_at >= datetime('now', ?) "
-        "  AND a.email_id IN ("
-        "    SELECT email_id FROM audit_log "
-        "    WHERE classification_source != 'manual' AND moved = 1"
-        "  )", (window,)
+        "WHERE r.trigger != 'bootstrap' AND a.classification_source = 'correction' "
+        "  AND a.created_at >= datetime('now', ?)", (window,)
     ).fetchone()[0]
     error_rate = corrections / moved * 100 if moved > 0 else 0.0
 
@@ -99,7 +95,7 @@ async def analyze(request: Request, days: int = 30):
         "JOIN runs r2 ON r2.run_id = a2.run_id "
         "WHERE r1.trigger != 'bootstrap' AND r2.trigger != 'bootstrap' "
         "  AND a1.classification_source = 'llm' AND a1.moved = 0 "
-        "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
+        "  AND a2.classification_source IN ('manual', 'correction') AND a2.moved = 1 "
         "  AND a1.created_at >= datetime('now', ?)", (window,)
     ).fetchall()
 
@@ -120,7 +116,7 @@ async def analyze(request: Request, days: int = 30):
         "JOIN runs r2 ON r2.run_id = a2.run_id "
         "WHERE r1.trigger != 'bootstrap' AND r2.trigger != 'bootstrap' "
         "  AND a1.classification_source = 'rule' AND a1.moved = 1 "
-        "  AND a2.classification_source = 'manual' AND a2.moved = 1 "
+        "  AND a2.classification_source = 'correction' AND a2.moved = 1 "
         "  AND a1.target_folder != a2.target_folder "
         "  AND a1.created_at >= datetime('now', ?)", (window,)
     ).fetchall()

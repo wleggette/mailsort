@@ -37,12 +37,17 @@ The core inspection tool. Every classification decision mailsort has made.
 - **Filterable table** with columns: timestamp, email_id, from, subject,
   classification source, target folder, confidence, moved, skip reason
 - **Filter bar** (query params, all bookmarkable):
-  - `?source=rule|llm|thread|manual`
+  - `?source=rule|llm|thread|manual|correction`
   - `?moved=1|0`
   - `?folder=INBOX/Affairs/Banks`
   - `?sender=noreply@chase.com`
   - `?days=7|30|90`
   - `?run_id=...`
+- **Source badges** — color-coded by `classification_source`:
+  - `rule` → blue, `llm` → purple, `thread` → teal, `manual` → gray,
+    `correction` → orange
+  - Rule and correction badges with a `rule_id` link to `/rules/{id}`
+    (shows "correction #42" or "rule #42")
 - **Click a row** → detail view at `/audit/{id}` showing full email metadata,
   classification reasoning, rule ID if applicable
 - **Export CSV** button
@@ -109,12 +114,17 @@ Single rule with full history.
 Interactive version of `mailsort analyze`.
 
 - **Date range picker** (default 30 days)
-- **Classification sources** — bar chart with counts and percentages
-- **Move outcomes** — moved / skipped / corrections with error rate
+- **Classification sources** — bar chart with counts and percentages.
+  Bar colors: blue (rule), purple (llm), teal (thread), orange (correction).
+  Excludes `manual` rows (user sorts, not mailsort decisions).
+- **User Corrections card** — count of distinct emails with
+  `classification_source='correction'`. Error rate = corrections / moved × 100.
 - **LLM confidence histogram** — bucketed distribution with current threshold marked
 - **Skipped-then-sorted table** — emails where the LLM was right but threshold blocked it,
-  with average confidence and suggested threshold adjustment
-- **Rule corrections table** — emails where mailsort moved and user relocated
+  with average confidence and suggested threshold adjustment.
+  User action detected via `classification_source IN ('manual', 'correction')`.
+- **Rule corrections table** — emails where a rule moved to folder A and the user
+  relocated to folder B (`classification_source='correction'`)
 
 ### 7. Contacts (`/contacts`)
 
