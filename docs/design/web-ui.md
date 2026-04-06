@@ -128,12 +128,17 @@ Contacts synced from Fastmail.
 
 ### 8. Folders (`/folders`)
 
-Folder structure and descriptions.
+Folder structure and descriptions with regeneration.
 
 - **Tree view** or indented table showing folder hierarchy
 - Columns: folder path, description, source (auto/manual), email count (from audit_log)
 - **Excluded folders** shown grayed out with the matching pattern
-- **Inline edit** for descriptions (saves to folder_descriptions table)
+- **Per-folder regeneration** — "Regenerate" link on each row (hidden for manual
+  overrides, stale, or excluded folders). POSTs to `/folders/regenerate`, fetches
+  fresh email samples via JMAP, calls the LLM, and replaces the description.
+- **Bulk regeneration** — "Regenerate All" button in the page header with JS
+  confirmation dialog. POSTs to `/folders/regenerate-all`.
+- **Flash messages** — success/error feedback after regeneration via query param.
 
 ### 9. Settings (`/settings`)
 
@@ -285,6 +290,38 @@ is accessible on port 8080 (configurable), the health check on port 8025.
   classification source (rule/llm/thread/manual)
 - **Empty states**: Friendly message + suggested action when no data
 
+### Table Header Conventions
+
+All data tables follow these conventions for consistent column alignment:
+
+- **`whitespace-nowrap`** on all `<th>` elements — prevents header text from
+  wrapping and ensures headers stay on a single line.
+- **Matching horizontal padding** — `<th>` and `<td>` in the same column must
+  use the same `px-*` class (typically `px-4`). Never override cell padding
+  with inline `style="padding-left"` as this breaks header-to-data alignment.
+- **Depth indentation via inner element** — when rows need depth-based
+  indentation (e.g., folder tree), apply `margin-left` on an inner `<span>`
+  rather than overriding the `<td>` padding. This keeps the cell padding
+  consistent with the `<th>` above it.
+  ```html
+  <!-- Correct: inner span for indentation -->
+  <td class="px-4 py-2 ...">
+    <span style="margin-left: {{ depth * 16 }}px">{{ text }}</span>
+  </td>
+
+  <!-- Wrong: overriding cell padding breaks column alignment -->
+  <td class="px-4 py-2 ..." style="padding-left: {{ 16 + depth * 16 }}px">
+  ```
+- **`align-top`** on all `<td>` elements in tables with multi-line content
+  (e.g., descriptions). This prevents cell content from centering vertically
+  when adjacent cells wrap to multiple lines.
+- **Text alignment** — numeric columns (counts, emails) must use `text-right`
+  on **both** the `<th>` header and every `<td>` in that column. Mismatched
+  alignment between header and data is a common bug. All other columns default
+  to `text-left`.
+- **Date/time columns** — use `whitespace-nowrap` on the `<td>` and
+  `min-w-[120px]` on the `<th>` to prevent dates from wrapping mid-value.
+
 ### Filter Bar Patterns
 
 All filterable pages (audit log, rules) follow these conventions:
@@ -399,6 +436,9 @@ All filterable pages (audit log, rules) follow these conventions:
 - [x] `web/routes/folders.py` — folder list with descriptions and email counts
 - [x] `web/templates/folders.html` — indented table with depth-based padding
 - [x] Excluded folders shown grayed out with "excluded" badge
+- [x] Per-folder "Regenerate" link (POST `/folders/regenerate`)
+- [x] Bulk "Regenerate All" button with confirmation (POST `/folders/regenerate-all`)
+- [x] Flash-style success/error messages after regeneration
 
 ### Phase 8: Settings (`/settings`) ✅
 - [x] `web/routes/settings.py` — read-only config view

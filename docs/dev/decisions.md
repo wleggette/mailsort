@@ -6,6 +6,48 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-05 — Folder description regeneration via `mailsort describe`
+
+**Context:** Folder descriptions are generated once during bootstrap and never updated.
+This causes problems when bootstrap descriptions are poor (small sample), folder purpose
+evolves, or fallback descriptions persist from LLM unavailability. Since descriptions
+feed the LLM classification prompt, stale descriptions degrade classification quality.
+
+**Decision:** Add user-initiated regeneration via CLI (`mailsort describe`) and web UI
+(per-folder and bulk buttons on `/folders`).
+
+**Key design choices:**
+
+- **No fallback on regeneration.** Initial generation falls back to "Emails filed under X"
+  because something is better than nothing. Regeneration is user-initiated — replacing a
+  reasonable LLM description with a generic fallback would be a regression. On LLM failure,
+  the old description is preserved and the error is reported.
+- **CLI subcommand name: `describe`** (not `regenerate-descriptions`). Short, clear verb
+  that parallels existing short names (`run`, `analyze`, `bootstrap`). Supports `--folder`,
+  `--pattern`, `--all`, and `--dry-run`.
+- **JMAPClient per web request.** The web app doesn't hold a persistent JMAP client.
+  Creating one per regeneration request adds ~200ms overhead but avoids lifecycle complexity
+  (session expiry, cleanup). Acceptable since regeneration is infrequent.
+- **Sample strategy: most recent emails.** `query_folder_emails` already sorts
+  `receivedAt DESC`. Recent emails better represent a folder's current purpose, which is
+  exactly the motivation for regeneration. Sample size stays at 15 (LLM prompt limit).
+- **Manual overrides always skipped with warning.** Folders with
+  `folder_description_overrides` in config are never touched by regeneration. A warning
+  message tells the user which folders were skipped and why.
+- **Sync POST + redirect for web UI.** A single Haiku call takes ~500ms. Even bulk
+  regeneration of 20 folders is ~10s. No need for async/HTMX complexity on a maintenance
+  action.
+
+**Alternatives considered:**
+- *Flag on bootstrap (`--regenerate-descriptions`)*: Rejected — overloads bootstrap
+  semantics. Regeneration is destructive (overwrites); bootstrap is additive.
+- *Shared JMAPClient on app.state*: Rejected for now — adds lifecycle management
+  complexity for no practical benefit given regeneration frequency.
+- *Configurable sample size*: Rejected — 15 is the existing LLM prompt size, keeping
+  token cost minimal. Not worth a config knob for a rarely-used maintenance action.
+
+---
+
 ## 2026-04-05 — Computed confidence model replaces static penalties
 
 **Context:** Rules had static confidence set at creation, modified only by one-way

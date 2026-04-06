@@ -2,12 +2,28 @@
 {% block title %}Folders — Mailsort{% endblock %}
 
 {% block content %}
-<div class="mb-6">
-  <h1 class="text-2xl font-semibold text-gray-900">Folders</h1>
-  <p class="text-sm text-gray-500 mt-1">{{ folders|length }} folders with descriptions
-    {% if stale_count %} · <span class="text-amber-600">{{ stale_count }} no longer in Fastmail</span>{% endif %}
-    {% if exclude_patterns %} · Excluding: {{ exclude_patterns|join(', ') }}{% endif %}
-  </p>
+{% if msg %}
+<div class="mb-4 px-4 py-3 rounded-lg text-sm {{ 'bg-red-50 text-red-700 border border-red-200' if msg.startswith('Error') else 'bg-green-50 text-green-700 border border-green-200' }}">
+  {{ msg }}
+</div>
+{% endif %}
+
+<div class="mb-6 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold text-gray-900">Folders</h1>
+    <p class="text-sm text-gray-500 mt-1">{{ folders|length }} folders with descriptions
+      {% if stale_count %} · <span class="text-amber-600">{{ stale_count }} no longer in Fastmail</span>{% endif %}
+      {% if exclude_patterns %} · Excluding: {{ exclude_patterns|join(', ') }}{% endif %}
+    </p>
+  </div>
+  {% if folders %}
+  <form method="post" action="/folders/regenerate-all" onsubmit="return confirm('Regenerate descriptions for all {{ folders|length }} folders? This will call the LLM for each folder.')">
+    <button type="submit" class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors">
+      <svg class="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      Regenerate All
+    </button>
+  </form>
+  {% endif %}
 </div>
 
 <div class="bg-white rounded-lg border border-gray-200">
@@ -16,18 +32,19 @@
     <table class="min-w-full divide-y divide-gray-200 sortable">
       <thead class="bg-gray-50">
         <tr>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Folder Path</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Source</th>
-          <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Emails</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Updated</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Folder Path</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Description</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Source</th>
+          <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Emails</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap min-w-[120px]">Updated</th>
+          <th class="px-4 py-3"></th>
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-200">
         {% for f in folders %}
         <tr class="hover:bg-gray-50 {{ 'opacity-40' if f.excluded or f.stale }}">
-          <td class="px-4 py-2 text-sm font-mono text-gray-900" style="padding-left: {{ 16 + f.depth * 16 }}px">
-            {{ f.path }}
+          <td class="px-4 py-2 text-sm font-mono text-gray-900 align-top">
+            <span style="margin-left: {{ f.depth * 16 }}px">{{ f.path }}</span>
             {% if f.stale %}
               <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-600">deleted</span>
             {% endif %}
@@ -35,14 +52,22 @@
               <span class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">excluded</span>
             {% endif %}
           </td>
-          <td class="px-4 py-2 text-sm text-gray-600">{{ f.description }}</td>
-          <td class="px-4 py-2">
+          <td class="px-4 py-2 text-sm text-gray-600 align-top">{{ f.description }}</td>
+          <td class="px-4 py-2 align-top">
             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {{ 'bg-blue-50 text-blue-700' if f.source == 'manual' else 'bg-gray-100 text-gray-600' }}">
               {{ f.source }}
             </span>
           </td>
-          <td class="px-4 py-2 text-sm text-right text-gray-900">{{ f.email_count }}</td>
-          <td class="px-4 py-2 text-sm text-gray-500" data-utc="{{ f.updated_at or '' }}" data-utc-format="short">{{ f.updated_at[:16] if f.updated_at else '—' }}</td>
+          <td class="px-4 py-2 text-sm text-right text-gray-900 align-top">{{ f.email_count }}</td>
+          <td class="px-4 py-2 text-sm text-gray-500 align-top whitespace-nowrap" data-utc="{{ f.updated_at or '' }}" data-utc-format="short">{{ f.updated_at[:16] if f.updated_at else '—' }}</td>
+          <td class="px-4 py-2 text-right align-top">
+            {% if f.source != 'manual' and not f.stale and not f.excluded %}
+            <form method="post" action="/folders/regenerate" class="inline">
+              <input type="hidden" name="folder_path" value="{{ f.path }}">
+              <button type="submit" class="text-xs text-indigo-600 hover:text-indigo-800 hover:underline" title="Regenerate description for {{ f.path }}">Regenerate</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

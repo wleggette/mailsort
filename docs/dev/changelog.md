@@ -5,6 +5,35 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-05 — Feat: folder description regeneration (`mailsort describe`)
+
+**What changed:**
+- **feat:** New `mailsort describe` CLI subcommand to regenerate folder descriptions
+  using fresh email samples and the LLM. Supports `--folder`, `--pattern`, `--all`,
+  and `--dry-run` options. Folder paths accept short form (e.g., `Affairs/Banks`)
+  which auto-prefixes with `INBOX/`.
+- **feat:** Web UI `/folders` page now has per-folder "Regenerate" links and a
+  "Regenerate All" button with confirmation dialog. Both POST to new endpoints
+  (`/folders/regenerate`, `/folders/regenerate-all`) and show flash-style result
+  messages.
+- **design:** Unlike initial generation, regeneration does NOT fall back to generic
+  placeholders. If the LLM fails, the old description is preserved and the error
+  is reported.
+- **design:** Manual config overrides (`folder_description_overrides`) are always
+  skipped with a warning, protecting user-set descriptions.
+
+**Files modified:**
+- `src/mailsort/classifier/descriptions.py` — `RegenerationResult`, `BulkRegenerationReport`,
+  `regenerate_folder_description()`, `regenerate_descriptions_for_folders()`
+- `src/mailsort/main.py` — `describe` command, `_resolve_describe_targets()`,
+  `_report_describe_results()`
+- `src/mailsort/web/routes/folders.py` — POST `/folders/regenerate`,
+  `/folders/regenerate-all`
+- `src/mailsort/web/templates/folders.html` — regenerate buttons, flash messages
+- `tests/test_descriptions.py` — 9 new tests for regeneration logic
+
+---
+
 ## 2026-04-05 — Feat: system test scenarios L3a, L14, L9, L17 + supporting features
 
 **What changed:**

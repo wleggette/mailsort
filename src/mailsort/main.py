@@ -340,6 +340,124 @@ def bootstrap(ctx: click.Context, max_per_folder: int) -> None:
         click.echo(f"  Errors          : {len(report.errors)}")
 
 
+@cli.command()
+@click.option("--folder", "folders", multiple=True, help="Regenerate for a specific folder path (repeatable)")
+@click.option("--pattern", "patterns", multiple=True, help="Regenerate for folders matching a glob pattern (repeatable)")
+@click.option("--all", "all_folders", is_flag=True, help="Regenerate for all folders")
+@click.option("--dry-run", "dry_run", is_flag=True, help="Show which folders would be regenerated without doing it")
+@click.pass_context
+def describe(ctx: click.Context, folders: tuple[str, ...], patterns: tuple[str, ...], all_folders: bool, dry_run: bool) -> None:
+    """Regenerate folder descriptions using fresh email samples.
+
+    Fetches recent emails from each target folder and asks the LLM to
+    produce a new description. Manual overrides from config are skipped.
+
+    At least one of --folder, --pattern, or --all is required.
+    """
+    if not folders and not patterns and not all_folders:
+        click.echo("Error: at least one of --folder, --pattern, or --all is required.", err=True)
+        ctx.exit(1)
+        return
+
+    cfg = _safe_load_config(ctx.obj["config_path"])
+    setup_logging(cfg)
+
+    if not cfg.anthropic_api_key:
+        click.echo("Error: ANTHROPIC_API_KEY is required for description regeneration.", err=True)
+        ctx.exit(1)
+        return
+
+    with Database(cfg.db_path) as db:
+        run_migrations(db)
+
+        with JMAPClient(cfg.fastmail_api_token, cfg.fastmail.session_url) as jmap:
+            mailboxes = jmap.get_all_mailboxes()
+            tree = MailboxTree.build(mailboxes, exclude_patterns=cfg.exclude_folder_patterns)
+
+            # Resolve target folder paths
+            target_paths = _resolve_describe_targets(
+                folders, patterns, all_folders, tree.all_folder_paths(),
+            )
+
+            if not target_paths:
+                click.echo("No matching folders found.")
+                return
+
+            if dry_run:
+                click.echo(f"Would regenerate descriptions for {len(target_paths)} folder(s):")
+                for p in sorted(target_paths):
+                    override = cfg.folder_description_overrides and p in cfg.folder_description_overrides
+                    suffix = "  (skipped \u2014 manual override)" if override else ""
+                    click.echo(f"  {p}{suffix}")
+                return
+
+            from mailsort.classifier.descriptions import regenerate_descriptions_for_folders
+
+            click.echo(f"Regenerating descriptions for {len(target_paths)} folder(s)\u2026")
+            report = regenerate_descriptions_for_folders(
+                db, jmap, tree, target_paths,
+                anthropic_api_key=cfg.anthropic_api_key,
+                llm_model=cfg.classification.llm_model,
+                folder_description_overrides=cfg.folder_description_overrides,
+            )
+
+            _report_describe_results(report)
+
+
+def _resolve_describe_targets(
+    folders: tuple[str, ...],
+    patterns: tuple[str, ...],
+    all_folders: bool,
+    live_paths: set[str],
+) -> list[str]:
+    """Resolve --folder, --pattern, --all into a list of folder paths."""
+    import fnmatch
+
+    if all_folders:
+        return sorted(live_paths)
+
+    targets: set[str] = set()
+
+    for folder in folders:
+        # Try exact match, then with INBOX/ prefix
+        if folder in live_paths:
+            targets.add(folder)
+        elif f"INBOX/{folder}" in live_paths:
+            targets.add(f"INBOX/{folder}")
+        else:
+            click.echo(f"Warning: folder not found: {folder}", err=True)
+
+    for pattern in patterns:
+        matched = {p for p in live_paths if fnmatch.fnmatch(p, pattern)}
+        if not matched:
+            # Try with INBOX/ prefix
+            prefixed = f"INBOX/{pattern}"
+            matched = {p for p in live_paths if fnmatch.fnmatch(p, prefixed)}
+        if not matched:
+            click.echo(f"Warning: no folders match pattern: {pattern}", err=True)
+        targets.update(matched)
+
+    return sorted(targets)
+
+
+def _report_describe_results(report) -> None:
+    """Print CLI summary of regeneration results."""
+    for r in report.results:
+        if r.success:
+            if r.old_description:
+                click.echo(f"  \u2713 {r.folder_path}")
+                click.echo(f"      was: {r.old_description}")
+                click.echo(f"      now: {r.new_description}")
+            else:
+                click.echo(f"  \u2713 {r.folder_path}: {r.new_description}")
+        elif r.skipped:
+            click.echo(f"  \u2013 {r.folder_path} (skipped: {r.skip_reason})")
+        else:
+            click.echo(f"  \u2717 {r.folder_path} (error: {r.error})")
+
+    click.echo(f"\n{report.succeeded} regenerated, {report.skipped} skipped, {report.failed} failed")
+
+
 @cli.command("export-rules")
 @click.option("--inactive", is_flag=True, help="Include inactive/suggested rules")
 @click.pass_context

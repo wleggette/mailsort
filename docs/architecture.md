@@ -145,9 +145,10 @@ show "calls / depends on". Modules are grouped by layer.
 │  │  main.py        │ │  web/                                    │    │
 │  │                 │ │  Dashboard, audit log, rules, contacts,  │    │
 │  │  bootstrap,     │ │  folders, settings views.                │    │
-│  │  dry-run, run,  │ │  Read-only monitoring + manual rule      │    │
-│  │  analyze,       │ │  creation/toggle.                        │    │
-│  │  check-config,  │ │                                          │    │
+│  │  describe,      │ │  Read-only monitoring + manual rule      │    │
+│  │  dry-run, run,  │ │  creation/toggle.                        │    │
+│  │  analyze,       │ │  Folder description regeneration         │    │
+│  │  check-config,  │ │  (per-folder + bulk).                    │    │
 │  │  export-rules   │ │                                          │    │
 │  │                 │ │                                          │    │
 │  │  Docker deleg:  │ │                                          │    │
