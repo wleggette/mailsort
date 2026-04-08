@@ -559,7 +559,7 @@ the rules and contacts created during bootstrap.
 | **S8** | Known contact, LLM between normal and known-contact threshold | llm | below_threshold_known_contact | Inbox gen: S8 (`testcontact@example.com`) |
 | **S9** | No rule, no LLM configured | — | llm_unavailable | No-LLM dry run (§4.3) |
 | **S10** | LLM cache hit on second dry run | llm | same as first run, `cached=1` | Run full dry run twice with no config change; second run's audit rows for LLM-classified emails have `cached=1` |
-| **S11** | Ineligible email still gets LLM classification | llm | `skip_reason=flagged`, `source='llm'` | Inbox gen: S11 (`updates@newinsurance.com`) — flagged, no rule match, LLM classifies, audit shows target folder |
+| **S11** | Ineligible email still gets LLM classification | llm | `source='llm'`, `skip_reason=flagged` or `below_threshold` (depends on LLM confidence vs threshold) | Inbox gen: S11 (`updates@newinsurance.com`) — flagged, no rule match, LLM classifies, audit shows target folder |
 
 ### 4.3 No-LLM Dry Run Verification Checklist
 

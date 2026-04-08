@@ -520,7 +520,7 @@ def _update_classification_version(
         # branch is unreachable in normal operation.  Fall through to
         # re-write both keys with now_iso (no cache hits).
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     db.execute(
         "INSERT OR REPLACE INTO learner_state (key, value) VALUES (?, ?)",
         ("classification_version", version_hash),

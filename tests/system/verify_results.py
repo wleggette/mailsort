@@ -506,9 +506,13 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
                      f"S6 Ambiguous below threshold: source={src}")
 
         # --- S11: Ineligible email still gets LLM classification ---
+        # skip_reason may be 'flagged' (if LLM confidence >= threshold, then
+        # eligibility gate fires) or 'below_threshold' (if LLM confidence <
+        # threshold, confidence gate fires before eligibility gate).
         elif "newinsurance" in subject.lower():
             v.check(src == "llm", f"S11 NewInsurance flagged: source=llm (got {src})")
-            v.check(skip == "flagged", f"S11 NewInsurance: skip_reason=flagged (got {skip})")
+            v.check(skip in ("flagged", "below_threshold"),
+                     f"S11 NewInsurance: skip_reason=flagged or below_threshold (got {skip})")
             v.check(folder and folder != "INBOX",
                      f"S11 NewInsurance: target_folder is non-INBOX (got {folder})")
 

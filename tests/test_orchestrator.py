@@ -813,7 +813,7 @@ def test_classification_version_brownfield_no_prior_state(db: Database):
     ts = _update_classification_version(db, "desc", "model")
 
     # ts should be very recent (not 1970 or 2025)
-    assert ts >= "2026-"  # current year at minimum
+    assert ts >= "2026-"  # current year at minimum (format: YYYY-MM-DD HH:MM:SS)
 
     # The old audit row should NOT be a cache hit — it predates the version
     result = _get_cached_llm_result(db, "email-old", ts)
