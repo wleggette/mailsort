@@ -142,3 +142,13 @@ def test_build_decision_no_classification():
     )
     assert decision.should_move is False
     assert decision.skip_reason == "llm_skip_sender"
+    assert decision.classification.source == "system"
+
+
+def test_build_decision_no_classification_default_reason():
+    """When classification is None and no skip_reason, uses 'no_classification'."""
+    decision = build_move_decision(_make_features(), None, {}, _thresholds())
+    assert decision.should_move is False
+    assert decision.skip_reason == "no_classification"
+    assert decision.classification.source == "system"
+    assert decision.classification.folder_path == "INBOX"

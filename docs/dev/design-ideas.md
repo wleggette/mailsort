@@ -554,9 +554,10 @@ target (localhost dev, Docker, reverse proxy).
 
 ---
 
-## Reduce Redundant LLM Calls
+## ~~Reduce Redundant LLM Calls~~ → Implemented
 
-**Status:** Not started (2026-04-08)
+**Implemented 2026-04-08.** See `docs/dev/decisions.md` §"LLM classification
+cache (cache only, no eligibility gate)" for the decision record.
 
 ### Problem
 

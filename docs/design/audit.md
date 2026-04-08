@@ -48,6 +48,7 @@ Every email in the audit log has one of these outcomes:
 | **no classification** | `no classification` (gray) | No rule/thread/LLM match |
 | **llm unavailable** | `llm unavailable` (gray) | LLM not configured or API error |
 | **unknown folder** | `unknown folder` (gray) | Target folder no longer exists |
+| **system** | `system` (amber) | Classification fallback when all tiers failed (source="system") |
 
 The UI shows just the reason — no "left in inbox /" prefix.
 
@@ -64,6 +65,7 @@ Classification: 49 emails
   Thread match:     8
   LLM match:       23
   No match:         1
+  LLM cache: 12 hit(s)
 Outcome:
   Moved:           35  (rule: 17, thread: 8, llm: 10)
   Unread:           5

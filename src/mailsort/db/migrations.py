@@ -230,6 +230,57 @@ CREATE INDEX IF NOT EXISTS idx_audit_run     ON audit_log(run_id);
 PRAGMA foreign_keys=ON;
 """
 
+_M12_SYSTEM_SOURCE_AND_CACHE = """
+-- Add 'system' to classification_source CHECK and add 'cached' column.
+-- 'system' is used by build_move_decision fallback when classification is None.
+-- 'cached' tracks whether an LLM result was reused from a prior run.
+PRAGMA foreign_keys=OFF;
+DROP TABLE IF EXISTS audit_log_new;
+CREATE TABLE audit_log_new (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                  TEXT,
+    email_id                TEXT NOT NULL,
+    thread_id               TEXT,
+    from_address            TEXT,
+    from_domain             TEXT,
+    subject                 TEXT,
+    list_id                 TEXT,
+    source_folder           TEXT NOT NULL DEFAULT 'INBOX',
+    target_folder           TEXT NOT NULL,
+    confidence              REAL NOT NULL,
+    classification_source   TEXT NOT NULL
+                                CHECK(classification_source IN ('thread','rule','llm','manual','correction','system')),
+    rule_id                 INTEGER,
+    llm_reasoning           TEXT,
+    moved                   BOOLEAN NOT NULL,
+    skip_reason             TEXT,
+    created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+    email_received_at       TEXT,
+    cached                  BOOLEAN NOT NULL DEFAULT 0,
+
+    FOREIGN KEY (rule_id) REFERENCES rules(id)
+);
+INSERT INTO audit_log_new (id, run_id, email_id, thread_id, from_address,
+                           from_domain, subject, list_id, source_folder,
+                           target_folder, confidence, classification_source,
+                           rule_id, llm_reasoning, moved, skip_reason,
+                           created_at, email_received_at)
+SELECT id, run_id, email_id, thread_id, from_address,
+       from_domain, subject, list_id, source_folder,
+       target_folder, confidence, classification_source,
+       rule_id, llm_reasoning, moved, skip_reason,
+       created_at, email_received_at
+FROM audit_log;
+DROP TABLE audit_log;
+ALTER TABLE audit_log_new RENAME TO audit_log;
+CREATE INDEX IF NOT EXISTS idx_audit_email   ON audit_log(email_id);
+CREATE INDEX IF NOT EXISTS idx_audit_thread  ON audit_log(thread_id);
+CREATE INDEX IF NOT EXISTS idx_audit_domain  ON audit_log(from_domain);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_run     ON audit_log(run_id);
+PRAGMA foreign_keys=ON;
+"""
+
 _MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "create_schema_version",      _M1_SCHEMA_VERSION),
     (2, "create_rules",               _M2_RULES),
@@ -242,6 +293,7 @@ _MIGRATIONS: list[tuple[int, str, str]] = [
     (9, "add_runs_error_status",      _M9_RUNS_ERROR_STATUS),
     (10, "add_runs_dry_run",           _M10_RUNS_DRY_RUN),
     (11, "computed_confidence",        _M11_COMPUTED_CONFIDENCE),
+    (12, "system_source_and_cache",   _M12_SYSTEM_SOURCE_AND_CACHE),
 ]
 
 # ---------------------------------------------------------------------------

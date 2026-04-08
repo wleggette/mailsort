@@ -6,6 +6,45 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-08 — LLM classification cache (cache only, no eligibility gate)
+
+**Context:** Every run makes LLM API calls for emails that sit in the inbox
+across multiple cycles — even if the classification hasn't changed. This wastes
+tokens and adds latency.
+
+**Options considered:**
+1. **Eligibility gate before LLM** — skip LLM calls for unread/flagged/too-new
+   emails by classifying them as `source="system"` immediately. Pro: fewer API
+   calls. Con: loses audit visibility — ineligible emails show no classification.
+2. **LLM cache only** — classify everything (thread → rules → LLM), but cache
+   LLM results in the audit log keyed by a classification version hash. Reuse
+   cached results on subsequent runs if the version hasn't changed. Pro: full
+   audit visibility preserved. Con: first run still makes all LLM calls.
+3. **Both** — eligibility gate + cache.
+
+**Decision:** Option 2 — LLM cache only.
+
+**Rationale:** Audit visibility is a core design principle. The eligibility gate
+in option 1 means ineligible emails show `source="system"` with no real
+classification, preventing analysis of what mailsort *would* do. The cache alone
+provides the major cost saving (no repeated calls for the same email) without
+sacrificing visibility.
+
+**Key sub-decisions:**
+- **Cache key:** `email_id` + `created_at >= classification_version_changed_at`.
+  Uses the existing audit_log as storage — no separate cache table.
+- **Version hash:** SHA-256 of `folder_descriptions + "\n" + llm_model`. Stored
+  in `learner_state`. Timestamp updated only when the hash changes.
+- **Pipeline split:** `classify_without_llm()` + `classify_llm()` so the
+  orchestrator can interpose the cache check between rules and LLM.
+- **`source="system"` fallback:** `build_move_decision` uses `source="system"`
+  (not `"llm"`) when classification is None. This makes it clear in the audit
+  log that no real classification occurred.
+- **`cached` column:** `audit_log.cached BOOLEAN NOT NULL DEFAULT 0` tracks
+  cache hits. `MoveDecision.cached` propagates to the writer.
+
+---
+
 ## 2026-04-06 — Deduplicate analysis metrics by email_id
 
 **Context:** The analysis page (`/analyze`) and CLI `mailsort analyze` count

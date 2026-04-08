@@ -8,25 +8,30 @@ a tiered approach: thread context → rule engine → LLM. First match wins.
 ```
 1. Assign a unique run_id for this scan
 2. Extract features from all inbox emails (including threadId)
-3. Resolve classification: thread context → rule engine → LLM
-4. Build a MoveDecision for each email (confidence gate)
-5. Apply post-classification eligibility gates (unread, flagged, too_new)
-6. Persist decisions to audit_log (moved boolean + skip_reason)
-7. Execute a batched Email/set for all eligible moves
-8. Reconcile per-email move results from JMAP into audit_log
-9. Update run summary metrics and mark the run completed
+3. Compute classification_version (hash of folder descriptions + LLM model)
+4. Resolve classification: thread context → rule engine → LLM cache → LLM
+5. Build a MoveDecision for each email (confidence gate)
+6. Apply post-classification eligibility gates (unread, flagged, too_new)
+7. Persist decisions to audit_log (moved boolean + skip_reason + cached)
+8. Execute a batched Email/set for all eligible moves
+9. Reconcile per-email move results from JMAP into audit_log
+10. Update run summary metrics and mark the run completed
 ```
 
-Classification resolution (step 3) tries sources in order:
+Classification resolution (step 4) tries sources in order:
 
 ```
-3a. Check thread context
+4a. Check thread context
     - If another email in this thread was previously sorted → inherit that folder
     - Otherwise → continue
-3b. Check the rule engine
-    - If a rule matches → return it (confidence gate applied later in step 4)
-    - If no rule matches → fall through to LLM
-3c. Call the LLM classifier (if privacy gate allows)
+4b. Check the rule engine
+    - If a rule matches → return it (confidence gate applied later in step 5)
+    - If no rule matches → fall through to LLM cache
+4c. Check LLM cache (audit_log lookup)
+    - If a prior LLM result for this email_id exists with created_at ≥
+      classification_version_changed_at → reuse it (cached=True)
+    - Otherwise → fall through to fresh LLM call
+4d. Call the LLM classifier (if privacy gate allows)
     - If LLM returns a valid folder → return it (confidence gate applied later)
     - If LLM fails or is gated → skip_reason set (llm_unavailable, llm_skip_*)
 ```
@@ -397,6 +402,47 @@ signals are already in `EmailFeatures` as structured headers:
   (e.g., `domain=substack.com + has_unsubscribe=True → Social/Newsletters`)
 
 Body preview (`preview`) is used only by the LLM classifier, not rule matching.
+
+---
+
+## LLM Classification Cache
+
+When thread context and rules miss, the orchestrator checks for a cached LLM
+result before calling the API. This avoids redundant LLM calls for emails that
+remain in the inbox across multiple runs.
+
+### Mechanism
+
+1. At the start of each run, the orchestrator computes a **classification
+   version** — a SHA-256 hash of the folder descriptions string and the LLM
+   model name. This is stored in `learner_state` alongside a
+   `classification_version_changed_at` timestamp.
+2. For each email that needs LLM classification, the orchestrator queries
+   `audit_log` for a prior row with `classification_source = 'llm'` and
+   `created_at ≥ classification_version_changed_at`.
+3. If found, the cached `Classification` is reused and `MoveDecision.cached`
+   is set to `True`. The `audit_log.cached` column is set to 1.
+4. If not found, a fresh LLM API call is made.
+
+### Cache Invalidation
+
+The cache is invalidated when:
+- **Folder descriptions change** (e.g., a folder is added/removed/renamed, or
+  a description is updated) → new hash → new version timestamp.
+- **LLM model changes** (e.g., `llm_model` config updated) → new hash.
+
+Both cause `classification_version_changed_at` to update, so all prior LLM
+audit rows become stale (their `created_at < classification_version_changed_at`).
+
+### Pipeline Split
+
+The classification pipeline exposes two methods used by the orchestrator:
+
+- `classify_without_llm(features)` — thread + rules only (cheap, no API calls)
+- `classify_llm(features)` — LLM only (called only on cache miss)
+
+The original `classify()` method remains as a convenience wrapper that calls
+both in sequence.
 
 ---
 

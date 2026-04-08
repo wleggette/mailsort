@@ -140,7 +140,7 @@ class Classification(BaseModel):
     folder_path: str
     folder_id: Optional[str] = None
     confidence: float
-    source: str  # "thread" | "rule" | "llm" | "manual"
+    source: str  # "thread" | "rule" | "llm" | "manual" | "correction" | "system"
     rule_id: Optional[int] = None
     reasoning: Optional[str] = None
 
@@ -152,3 +152,4 @@ class MoveDecision(BaseModel):
     classification: Classification
     should_move: bool
     skip_reason: Optional[str] = None
+    cached: bool = False

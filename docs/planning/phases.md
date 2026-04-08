@@ -75,3 +75,15 @@
 
 ## Phase 7: Web UI
 See [design/web-ui.md](../design/web-ui.md) for detailed implementation checklist.
+
+## Phase 8: LLM Call Optimization
+- [x] Migration 12: `'system'` source + `cached` column on `audit_log`
+- [x] Pipeline split: `classify_without_llm()` + `classify_llm()`
+- [x] Classification version hash (`_update_classification_version`)
+- [x] LLM cache lookup (`_get_cached_llm_result`)
+- [x] `MoveDecision.cached` flag + `AuditWriter` writes `cached` column
+- [x] Orchestrator loop: thread/rules → cache → LLM, with `cache_hits` counter
+- [x] `build_move_decision` fallback: `source="system"` when classification is None
+- [x] Query updates: dedup CTEs exclude `'system'` alongside `'manual'`
+- [x] UI updates: amber badge for `system`, source dropdown
+- [x] Documentation: architecture, classification, data-models, audit, decisions, changelog

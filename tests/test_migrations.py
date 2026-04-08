@@ -10,7 +10,7 @@ def test_migrations_apply_once(db: Database):
     """Running migrations twice should be idempotent."""
     run_migrations(db)  # second call
     version = db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert version == 11
+    assert version == 12
 
 
 def test_all_tables_created(db: Database):
@@ -62,7 +62,34 @@ def test_audit_log_schema(db: Database):
     assert row["skip_reason"] is None
 
 
+def test_audit_log_system_source_accepted(db: Database):
+    """Migration 12 adds 'system' to classification_source CHECK."""
+    db.execute("""
+        INSERT INTO audit_log
+            (email_id, target_folder, confidence, classification_source, moved)
+        VALUES
+            ('email-sys', 'INBOX', 0.0, 'system', 0)
+    """)
+    db.commit()
+    row = db.execute("SELECT * FROM audit_log WHERE email_id = 'email-sys'").fetchone()
+    assert row["classification_source"] == "system"
+    assert row["cached"] == 0
+
+
+def test_audit_log_cached_column(db: Database):
+    """Migration 12 adds cached column defaulting to 0."""
+    db.execute("""
+        INSERT INTO audit_log
+            (email_id, target_folder, confidence, classification_source, moved, cached)
+        VALUES
+            ('email-cached', 'INBOX/Affairs/Banks', 0.85, 'llm', 0, 1)
+    """)
+    db.commit()
+    row = db.execute("SELECT * FROM audit_log WHERE email_id = 'email-cached'").fetchone()
+    assert row["cached"] == 1
+
+
 def test_schema_version_tracked(db: Database):
     rows = db.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
     versions = [r[0] for r in rows]
-    assert versions == list(range(1, 12))
+    assert versions == list(range(1, 13))

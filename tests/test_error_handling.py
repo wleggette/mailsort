@@ -162,11 +162,10 @@ def test_classification_error_isolates_to_single_email(db: Database):
     mock_jmap.move_emails.return_value = {"email-good": True}
     mock_jmap.is_read_only = False
 
-    # Patch the pipeline's classify to throw on the first email only.
+    # Patch the pipeline's classify_without_llm to throw on the first email only.
     # This tests the orchestrator's per-email try/except.
-    original_import = __import__
     call_count = {"n": 0}
-    original_classify = ClassificationPipeline.classify
+    original_classify = ClassificationPipeline.classify_without_llm
 
     def classify_with_crash(self, features):
         call_count["n"] += 1
@@ -174,7 +173,7 @@ def test_classification_error_isolates_to_single_email(db: Database):
             raise RuntimeError("Simulated classification crash")
         return original_classify(self, features)
 
-    with patch.object(ClassificationPipeline, "classify", classify_with_crash):
+    with patch.object(ClassificationPipeline, "classify_without_llm", classify_with_crash):
         run_id = run_classification_pass(cfg, db, mock_jmap, tree, trigger="test").run_id
 
     # The bad email should be logged as skipped (classification_error)

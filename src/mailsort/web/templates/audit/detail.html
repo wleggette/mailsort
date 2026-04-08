@@ -81,6 +81,7 @@
           {% elif row['classification_source'] == 'manual' %}bg-gray-100 text-gray-700
           {% elif row['classification_source'] == 'llm' %}bg-purple-50 text-purple-700
           {% elif row['classification_source'] == 'thread' %}bg-teal-50 text-teal-700
+          {% elif row['classification_source'] == 'system' %}bg-amber-50 text-amber-700
           {% endif %}">
           {{ row['classification_source'] }}
         </span>
@@ -181,6 +182,7 @@
               {% elif h['classification_source'] == 'manual' %}bg-gray-100 text-gray-700
               {% elif h['classification_source'] == 'llm' %}bg-purple-50 text-purple-700
               {% elif h['classification_source'] == 'thread' %}bg-teal-50 text-teal-700
+              {% elif h['classification_source'] == 'system' %}bg-amber-50 text-amber-700
               {% endif %}">
               {{ h['classification_source'] }}
             </span>

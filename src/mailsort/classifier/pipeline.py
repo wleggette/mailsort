@@ -47,11 +47,23 @@ class ClassificationPipeline:
         self._folder_descriptions = folder_descriptions
 
     def classify(self, features: EmailFeatures) -> tuple[Optional[Classification], Optional[str]]:
-        """Classify a single email.
+        """Classify a single email (thread → rules → LLM).
 
         Returns:
             (classification, skip_reason) — classification is None only if
             all tiers failed or were gated, in which case skip_reason explains why.
+        """
+        clf, skip = self.classify_without_llm(features)
+        if clf:
+            return clf, skip
+        return self.classify_llm(features)
+
+    def classify_without_llm(self, features: EmailFeatures) -> tuple[Optional[Classification], Optional[str]]:
+        """Thread context + rule engine only. No network calls (except thread JMAP fallback).
+
+        Returns:
+            (classification, skip_reason) — classification is None if neither
+            thread context nor rules matched.
         """
         # 1. Thread context
         clf = self._resolve_thread_context(features)
@@ -65,7 +77,15 @@ class ClassificationPipeline:
             logger.debug("Rule hit for %s → %s (rule %s)", features.email_id, clf.folder_path, clf.rule_id)
             return clf, None
 
-        # 3. LLM classifier
+        return None, None
+
+    def classify_llm(self, features: EmailFeatures) -> tuple[Optional[Classification], Optional[str]]:
+        """LLM classification only. Assumes thread + rules already missed.
+
+        Returns:
+            (classification, skip_reason) — classification is None if the LLM
+            is unavailable, gated by privacy checks, or returns an API error.
+        """
         if self._llm is None:
             return None, "llm_unavailable"
 

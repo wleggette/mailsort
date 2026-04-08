@@ -157,6 +157,7 @@
               {% elif row['classification_source'] == 'llm' %}bg-purple-50 text-purple-700
               {% elif row['classification_source'] == 'thread' %}bg-teal-50 text-teal-700
               {% elif row['classification_source'] == 'correction' %}bg-red-50 text-red-700
+              {% elif row['classification_source'] == 'system' %}bg-amber-50 text-amber-700
               {% endif %}">
               {{ row['classification_source'] }}
             </span>

@@ -67,7 +67,7 @@ def build_move_decision(
             classification=Classification(
                 folder_path="INBOX",
                 confidence=0.0,
-                source="llm",
+                source="system",
                 reasoning=skip_reason or "no_classification",
             ),
             should_move=False,

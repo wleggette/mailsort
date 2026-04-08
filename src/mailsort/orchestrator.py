@@ -13,6 +13,7 @@ Implements the Phase 3 pipeline:
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -37,7 +38,7 @@ from mailsort.config import Config
 from mailsort.db.database import Database
 from mailsort.jmap.client import JMAPClient
 from mailsort.jmap.mailbox_tree import MailboxTree
-from mailsort.jmap.models import MoveDecision
+from mailsort.jmap.models import Classification, MoveDecision
 from mailsort.mover.mover import build_move_decision
 
 logger = logging.getLogger(__name__)
@@ -291,14 +292,36 @@ def _execute_run(
     )
 
     # ------------------------------------------------------------------
-    # 4. Classify + build move decisions
+    # 4. Classification version (for LLM cache invalidation)
+    # ------------------------------------------------------------------
+    version_changed_at = _update_classification_version(
+        db, folder_descriptions, cfg.classification.llm_model,
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Classify + build move decisions
     # ------------------------------------------------------------------
     decisions: list[MoveDecision] = []
     source_counts: Counter = Counter()
+    cache_hits = 0
 
     for features in eligible:
+        is_cache_hit = False
         try:
-            classification, skip_reason = pipeline.classify(features)
+            # 5a. Cheap classification (thread + rules)
+            classification, skip_reason = pipeline.classify_without_llm(features)
+
+            if not classification:
+                # 5b. Check LLM cache before calling API
+                cached_clf = _get_cached_llm_result(db, features.email_id, version_changed_at)
+                if cached_clf:
+                    classification = cached_clf
+                    skip_reason = None
+                    is_cache_hit = True
+                    cache_hits += 1
+                else:
+                    # 5c. Fresh LLM call
+                    classification, skip_reason = pipeline.classify_llm(features)
         except Exception:
             logger.exception("Classification failed for %s, skipping", features.email_id)
             classification, skip_reason = None, "classification_error"
@@ -310,6 +333,9 @@ def _execute_run(
             thresholds=cfg.classification.thresholds,
             skip_reason=skip_reason,
         )
+        if is_cache_hit:
+            decision.cached = True
+
         # Resolve folder_id
         if decision.should_move and decision.classification.folder_path != "INBOX":
             folder_id = tree.id_for(decision.classification.folder_path)
@@ -368,6 +394,8 @@ def _execute_run(
     source_parts = "  ".join(f"{src}: {n}" for src, n in source_counts.most_common())
     logger.info("Classification: %d emails", len(decisions))
     logger.info("  %s", source_parts)
+    if cache_hits:
+        logger.info("  LLM cache: %d hit(s)", cache_hits)
 
     # Outcome breakdown by skip reason
     move_by_source: Counter = Counter()
@@ -461,3 +489,77 @@ def _normalise_folder_path(path: str, valid_paths: set[str]) -> str | None:
     if prefixed in valid_paths:
         return prefixed
     return None
+
+
+def _update_classification_version(
+    db: Database,
+    folder_descriptions: str,
+    llm_model: str,
+) -> str:
+    """Compute and persist the classification version hash.
+
+    Returns the ISO timestamp of the last version change (i.e. the cache
+    boundary).  If the version hasn't changed, the existing timestamp is
+    returned.
+    """
+    version_hash = hashlib.sha256(
+        f"{folder_descriptions}\n{llm_model}".encode()
+    ).hexdigest()
+
+    row = db.execute(
+        "SELECT value FROM learner_state WHERE key = 'classification_version'"
+    ).fetchone()
+
+    if row and row["value"] == version_hash:
+        ts_row = db.execute(
+            "SELECT value FROM learner_state WHERE key = 'classification_version_changed_at'"
+        ).fetchone()
+        if ts_row:
+            return ts_row["value"]
+        # Defensive: both keys are always written together, so this
+        # branch is unreachable in normal operation.  Fall through to
+        # re-write both keys with now_iso (no cache hits).
+
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    db.execute(
+        "INSERT OR REPLACE INTO learner_state (key, value) VALUES (?, ?)",
+        ("classification_version", version_hash),
+    )
+    db.execute(
+        "INSERT OR REPLACE INTO learner_state (key, value) VALUES (?, ?)",
+        ("classification_version_changed_at", now_iso),
+    )
+    db.commit()
+    logger.info("Classification version updated → %s…", version_hash[:12])
+    return now_iso
+
+
+def _get_cached_llm_result(
+    db: Database,
+    email_id: str,
+    version_changed_at: str,
+) -> Optional[Classification]:
+    """Look up a prior LLM classification from the audit log.
+
+    Returns a :class:`Classification` if a valid cached result exists
+    (created after the last version change), otherwise ``None``.
+    """
+    row = db.execute(
+        "SELECT target_folder, confidence, llm_reasoning "
+        "FROM audit_log "
+        "WHERE email_id = ? "
+        "  AND classification_source = 'llm' "
+        "  AND created_at >= ? "
+        "ORDER BY id DESC LIMIT 1",
+        (email_id, version_changed_at),
+    ).fetchone()
+
+    if not row:
+        return None
+
+    return Classification(
+        folder_path=row["target_folder"],
+        confidence=row["confidence"],
+        source="llm",
+        reasoning=row["llm_reasoning"],
+    )

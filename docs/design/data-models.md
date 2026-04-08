@@ -62,7 +62,7 @@ CREATE TABLE audit_log (
     target_folder           TEXT NOT NULL,
     confidence              REAL NOT NULL,
     classification_source   TEXT NOT NULL
-                                CHECK(classification_source IN ('thread','rule','llm','manual','correction')),
+                                CHECK(classification_source IN ('thread','rule','llm','manual','correction','system')),
     rule_id                 INTEGER,
     llm_reasoning           TEXT,
     moved                   BOOLEAN NOT NULL,
@@ -71,7 +71,9 @@ CREATE TABLE audit_log (
                                            -- | llm_unavailable | llm_api_error
                                            -- | llm_skip_sender | llm_skip_domain
                                            -- | llm_skip_known_contact | classification_error
+                                           -- | no_classification
     email_received_at       TEXT,            -- original receivedAt from JMAP (added in migration 8)
+    cached                  BOOLEAN NOT NULL DEFAULT 0,  -- 1 if LLM result reused from cache (migration 12)
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
 
     FOREIGN KEY (rule_id) REFERENCES rules(id)
@@ -158,6 +160,8 @@ Known keys:
 - `last_folder_scan` — ISO timestamp of the most recent Category 4 daily scan
 - `last_contacts_refresh` — ISO timestamp of the most recent contact refresh
 - `live_folder_paths` — JSON array of folder paths from the most recent run
+- `classification_version` — SHA-256 hash of folder descriptions + LLM model
+- `classification_version_changed_at` — ISO timestamp of last version change
 
 ### Schema Version
 
@@ -197,7 +201,7 @@ class Classification(BaseModel):
     folder_path: str
     folder_id: Optional[str] = None  # Resolved JMAP mailbox ID
     confidence: float
-    source: str                      # "thread" | "rule" | "llm" | "manual"
+    source: str                      # "thread" | "rule" | "llm" | "manual" | "correction" | "system"
     rule_id: Optional[int] = None
     reasoning: Optional[str] = None
 
@@ -210,6 +214,8 @@ class MoveDecision(BaseModel):
     skip_reason: Optional[str] = None  # below_threshold | below_threshold_known_contact
                                        # | too_new | unread | flagged | unknown_folder
                                        # | llm_unavailable | llm_skip_* | classification_error
+                                       # | no_classification
+    cached: bool = False               # True if LLM result reused from cache
 ```
 
 ---
@@ -233,5 +239,7 @@ MIGRATIONS = [
     (10, "add_runs_dry_run"),            # dry_run BOOLEAN on runs table
     (11, "computed_confidence"),          # last_hit_at → last_relevant_at,
                                          # 'correction' added to audit_log classification_source CHECK
+    (12, "system_source_and_cache"),     # 'system' added to classification_source CHECK,
+                                         # 'cached' BOOLEAN column added to audit_log
 ]
 ```

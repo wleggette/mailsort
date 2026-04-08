@@ -170,3 +170,66 @@ def test_no_llm_available(db: Database):
     clf, skip = pipeline.classify(features)
     assert clf is None
     assert skip == "llm_unavailable"
+
+
+# ------------------------------------------------------------------
+# classify_without_llm / classify_llm split
+# ------------------------------------------------------------------
+
+def test_classify_without_llm_returns_rule_match(db: Database):
+    pipeline = _make_pipeline(db)
+    pipeline._rules.create_rule(
+        rule_type="exact_sender",
+        condition_value="noreply@chase.com",
+        target_folder_path="INBOX/Affairs/Banks",
+        confidence=0.95,
+        source="bootstrap",
+    )
+    features = _make_features()
+    clf, skip = pipeline.classify_without_llm(features)
+    assert clf is not None
+    assert clf.source == "rule"
+
+
+def test_classify_without_llm_returns_none_when_no_match(db: Database):
+    pipeline = _make_pipeline(db)
+    features = _make_features(from_address="unknown@unknown.com", from_domain="unknown.com")
+    clf, skip = pipeline.classify_without_llm(features)
+    assert clf is None
+    assert skip is None
+    # LLM should not have been called
+    pipeline._llm.classify.assert_not_called()
+
+
+def test_classify_llm_calls_llm(db: Database):
+    llm_result = Classification(
+        folder_path="INBOX/Shopping/Orders", confidence=0.88, source="llm", reasoning="shipping"
+    )
+    pipeline = _make_pipeline(db, llm_response=llm_result)
+    features = _make_features(from_address="orders@amazon.com", from_domain="amazon.com")
+    clf, skip = pipeline.classify_llm(features)
+    assert clf is not None
+    assert clf.source == "llm"
+    pipeline._llm.classify.assert_called_once()
+
+
+def test_classify_llm_returns_unavailable_when_no_llm(db: Database):
+    rule_engine = RuleEngine(db, ThresholdsConfig())
+    mock_jmap = MagicMock()
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_tree = MagicMock()
+    mock_tree.inbox_id = "mb-inbox"
+
+    pipeline = ClassificationPipeline(
+        db=db,
+        rule_engine=rule_engine,
+        llm_classifier=None,
+        jmap_client=mock_jmap,
+        mailbox_tree=mock_tree,
+        contacts={},
+        folder_descriptions="",
+    )
+    features = _make_features()
+    clf, skip = pipeline.classify_llm(features)
+    assert clf is None
+    assert skip == "llm_unavailable"

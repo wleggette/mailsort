@@ -5,6 +5,30 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-08 — Feat: LLM classification cache + system source
+
+**What changed:**
+- **feat:** LLM classification cache avoids redundant API calls for emails that
+  stay in the inbox across runs. On each run, a classification version (SHA-256
+  of folder descriptions + LLM model) is computed. If a prior LLM audit row
+  exists for the same email after the version timestamp, its result is reused.
+- **feat:** `build_move_decision` fallback uses `source="system"` (was `"llm"`)
+  when classification is None (LLM unavailable/error/gated).
+- **feat:** `audit_log.cached` column tracks cache hits (migration 12). The
+  `MoveDecision.cached` flag propagates through to the audit writer.
+- **feat:** Pipeline split: `classify_without_llm()` (thread + rules) and
+  `classify_llm()` (LLM only), with the orchestrator interposing the cache check.
+- **refactor:** Dedup CTEs in analyze.py and main.py now exclude `'system'` rows
+  alongside `'manual'`.
+- **ui:** Amber badge for `system` source in audit list/detail and rules detail;
+  system added to source filter dropdown.
+
+**Files:** `migrations.py`, `pipeline.py`, `orchestrator.py`, `mover.py`,
+`models.py`, `writer.py`, `analyze.py`, `main.py`, `audit/list.html`,
+`audit/detail.html`, `rules/detail.html`, `analyze.html`
+
+---
+
 ## 2026-04-06 — Fix: deduplicate analysis metrics by email_id
 
 **What changed:**

@@ -12,8 +12,11 @@ from mailsort.jmap.client import ReadOnlyTokenError
 from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
 from mailsort.jmap.mailbox_tree import MailboxTree
-from mailsort.jmap.models import JMAPEmail, JMAPMailbox
-from mailsort.orchestrator import run_classification_pass, RunResult, _acquire_run_lock, _release_run_lock
+from mailsort.jmap.models import Classification, JMAPEmail, JMAPMailbox
+from mailsort.orchestrator import (
+    run_classification_pass, RunResult, _acquire_run_lock, _release_run_lock,
+    _update_classification_version, _get_cached_llm_result,
+)
 
 
 def _make_config() -> Config:
@@ -345,7 +348,7 @@ def test_run_output_numbers_all_add_up(db: Database, monkeypatch):
     sources = {r["email_id"]: r["classification_source"] for r in audit_rows}
     assert sources["e-chase"] == "rule"
     assert sources["e-amazon"] == "rule"
-    assert sources["e-unknown"] == "llm"  # falls through to LLM (unavailable)
+    assert sources["e-unknown"] == "system"  # falls through to LLM (unavailable) → system fallback
 
     # Verify skip reasons — rule matches have no skip, unknown has llm_unavailable
     skip_reasons = {r["email_id"]: r["skip_reason"] for r in audit_rows}
@@ -747,3 +750,128 @@ def test_read_only_downgrade_skips_record_hits(test_config, db, monkeypatch):
     # hit_count should not be incremented (record_hits=False for dry runs)
     rule = db.execute("SELECT hit_count FROM rules WHERE condition_value='noreply@chase.com'").fetchone()
     assert rule["hit_count"] == 0
+
+
+# ------------------------------------------------------------------
+# _update_classification_version tests
+# ------------------------------------------------------------------
+
+
+def test_classification_version_first_call_stores(db: Database):
+    """First call stores version hash and returns a timestamp."""
+    ts = _update_classification_version(db, "folder descriptions", "claude-haiku")
+    assert ts  # non-empty string
+    row = db.execute("SELECT value FROM learner_state WHERE key='classification_version'").fetchone()
+    assert row is not None
+    assert len(row["value"]) == 64  # SHA-256 hex
+
+
+def test_classification_version_unchanged_returns_same_ts(db: Database):
+    """Same inputs → same timestamp (no version change)."""
+    ts1 = _update_classification_version(db, "same desc", "same-model")
+    ts2 = _update_classification_version(db, "same desc", "same-model")
+    assert ts1 == ts2
+
+
+def test_classification_version_changed_input_invalidates(db: Database):
+    """Different inputs → new version hash, potentially new timestamp."""
+    _update_classification_version(db, "desc v1", "model-a")
+    hash1 = db.execute("SELECT value FROM learner_state WHERE key='classification_version'").fetchone()["value"]
+    _update_classification_version(db, "desc v2", "model-a")
+    hash2 = db.execute("SELECT value FROM learner_state WHERE key='classification_version'").fetchone()["value"]
+    assert hash1 != hash2
+
+
+def test_classification_version_model_change_invalidates(db: Database):
+    """Changing the LLM model → new version hash."""
+    _update_classification_version(db, "same desc", "model-a")
+    hash1 = db.execute("SELECT value FROM learner_state WHERE key='classification_version'").fetchone()["value"]
+    _update_classification_version(db, "same desc", "model-b")
+    hash2 = db.execute("SELECT value FROM learner_state WHERE key='classification_version'").fetchone()["value"]
+    assert hash1 != hash2
+
+
+def test_classification_version_brownfield_no_prior_state(db: Database):
+    """First run after migration: no prior learner_state entries.
+
+    Hash doesn't match (None != computed), so version_changed_at = now.
+    This means prior audit rows predate the version change and won't be
+    used as cache hits — all emails get fresh LLM calls.
+    """
+    # Seed a "prior" LLM audit row from before this function runs
+    db.execute(
+        "INSERT INTO audit_log (email_id, target_folder, confidence, "
+        "classification_source, llm_reasoning, moved, created_at) "
+        "VALUES (?, ?, ?, 'llm', ?, 0, ?)",
+        ("email-old", "INBOX/Banks", 0.90, "old reasoning", "2025-06-01T00:00:00"),
+    )
+    db.commit()
+
+    # No learner_state entries exist — brownfield scenario
+    assert db.execute("SELECT * FROM learner_state WHERE key='classification_version'").fetchone() is None
+
+    ts = _update_classification_version(db, "desc", "model")
+
+    # ts should be very recent (not 1970 or 2025)
+    assert ts >= "2026-"  # current year at minimum
+
+    # The old audit row should NOT be a cache hit — it predates the version
+    result = _get_cached_llm_result(db, "email-old", ts)
+    assert result is None
+
+
+# ------------------------------------------------------------------
+# _get_cached_llm_result tests
+# ------------------------------------------------------------------
+
+
+def test_cached_llm_result_hit(db: Database):
+    """Returns Classification when a valid LLM result exists after version change."""
+    db.execute(
+        "INSERT INTO audit_log (email_id, target_folder, confidence, "
+        "classification_source, llm_reasoning, moved, created_at) "
+        "VALUES (?, ?, ?, 'llm', ?, 0, ?)",
+        ("email-1", "INBOX/Banks", 0.92, "some reasoning", "2025-01-01T12:00:00"),
+    )
+    db.commit()
+
+    result = _get_cached_llm_result(db, "email-1", "2025-01-01T00:00:00")
+    assert result is not None
+    assert result.folder_path == "INBOX/Banks"
+    assert result.confidence == 0.92
+    assert result.source == "llm"
+    assert result.reasoning == "some reasoning"
+
+
+def test_cached_llm_result_miss_no_row(db: Database):
+    """Returns None when no audit row exists for the email."""
+    result = _get_cached_llm_result(db, "nonexistent", "2025-01-01T00:00:00")
+    assert result is None
+
+
+def test_cached_llm_result_miss_before_version(db: Database):
+    """Returns None when audit row exists but is older than version change."""
+    db.execute(
+        "INSERT INTO audit_log (email_id, target_folder, confidence, "
+        "classification_source, llm_reasoning, moved, created_at) "
+        "VALUES (?, ?, ?, 'llm', ?, 0, ?)",
+        ("email-1", "INBOX/Banks", 0.92, "old reasoning", "2025-01-01T00:00:00"),
+    )
+    db.commit()
+
+    result = _get_cached_llm_result(db, "email-1", "2025-06-01T00:00:00")
+    assert result is None
+
+
+def test_cached_llm_result_ignores_non_llm(db: Database):
+    """Returns None when only non-LLM (rule/thread) rows exist."""
+    db.execute(
+        "INSERT INTO audit_log (email_id, target_folder, confidence, "
+        "classification_source, moved, created_at) "
+        "VALUES (?, ?, ?, 'rule', 1, ?)",
+        ("email-1", "INBOX/Banks", 0.95, "2025-06-01T12:00:00"),
+    )
+    db.commit()
+
+    result = _get_cached_llm_result(db, "email-1", "2025-01-01T00:00:00")
+    assert result is None

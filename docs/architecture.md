@@ -338,6 +338,11 @@ calls the same path with `dry_run=False` on a timer.
   │  yes → Classification(source="rule", rule_id=N)                │
   │  │                                                             │
   │  no ▼                                                          │
+  │  ◇ LLM cache hit? (audit_log, same email, created_at ≥         │
+  │  │  classification_version change)                              │
+  │  yes → Classification(source="llm", cached=True)               │
+  │  │                                                             │
+  │  no ▼                                                          │
   │  ◇ LLM available?                                              │
   │  no → skip_reason="llm_unavailable"                            │
   │  │                                                             │

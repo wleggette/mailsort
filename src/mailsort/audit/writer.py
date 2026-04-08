@@ -102,8 +102,8 @@ class AuditWriter:
             "(run_id, email_id, thread_id, from_address, from_domain, "
             " subject, list_id, source_folder, target_folder, confidence, "
             " classification_source, rule_id, llm_reasoning, moved, skip_reason, "
-            " email_received_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " email_received_at, cached) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id,
                 decision.email_id,
@@ -121,6 +121,7 @@ class AuditWriter:
                 moved,
                 decision.skip_reason,
                 received_at,
+                decision.cached,
             ),
         )
 
