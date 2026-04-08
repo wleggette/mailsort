@@ -798,3 +798,382 @@ Half-day implementation including tests.
 - §4.4: refine "LLM called only when no rule/thread match" →
   "…AND no valid cache."
 - §8.3: consider scenario for cache version invalidation.
+
+---
+
+## Analysis Page Improvements — "Skipped Emails You Later Sorted"
+
+**Status:** Investigating (2026-04-06)
+
+### Bug: Inflated counts in skipped-then-sorted query
+
+The "Skipped Emails You Later Sorted" section reports **1534 skipped LLM emails**
+and **131 same-folder matches**. These are audit_log rows, not distinct emails.
+
+**Root cause:** The query in `analyze.py` (lines 107-119) joins `audit_log a1`
+(LLM skip rows) against `audit_log a2` (manual/correction rows) on `email_id`.
+An email that sat in the inbox for N cycles has N `source='llm', moved=0` audit
+rows. Each joins against the manual sort row, producing N output rows per email.
+
+**Actual numbers (30-day window):**
+
+| Metric | Reported (rows) | Actual (distinct emails) | Inflation |
+|--------|-----------------|--------------------------|-----------|
+| Total skipped-then-sorted | 1,534 | 41 | ~37× |
+| Same-folder matches | 131 | 5 | ~26× |
+
+**Fix:** Deduplicate per `email_id`, keeping only the most recent LLM audit row.
+Use `ROW_NUMBER() OVER (PARTITION BY a1.email_id ORDER BY a1.id DESC)`.
+
+### Full accounting: 173 LLM-source emails
+
+The analysis page's dedup CTE shows 173 LLM emails, 110 moved, 63 skipped.
+The "skipped-then-sorted" section only covers the 41 that the user later
+manually sorted. The full breakdown of all 63 skipped:
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| User later sorted (skipped-then-sorted) | 41 | Shown on analysis page |
+| Still in inbox — flagged | 13 | User intentionally keeping these |
+| Still in inbox — below_threshold | 5 | LLM unsure, user hasn't acted |
+| Still in inbox — known_contact threshold | 3 | Pending user action |
+| Still in inbox — too_new | 1 | Waiting for age gate |
+| **Total skipped** | **63** | |
+
+Eligibility-gated emails (flagged/unread/too_new) should not count toward
+actionable items since they'll auto-sort once the gate clears. However, the
+totals should account for all 63 so numbers add up to the 173 shown at the
+top of the page. Show eligibility-gated counts as a footnote or collapsed
+"informational" section.
+
+### Skip reason breakdown (41 later-sorted emails)
+
+| Skip Reason | Count |
+|-------------|-------|
+| `below_threshold` | 21 |
+| `below_threshold_known_contact` | 12 |
+| `unread` | 3 |
+| `too_new` | 3 |
+| `flagged` | 2 |
+
+### Confusion analysis
+
+**Wrong-folder patterns (36 of 41 later-sorted had wrong LLM folder):**
+
+| LLM said → User moved to | Count | Pattern |
+|---------------------------|-------|---------|
+| `INBOX` → `Affairs/Stores` | 14 | LLM returned conf 0.15–0.35. "I don't know." |
+| `INBOX` → `Affairs/Medical` | 5 | Same — LLM doesn't recognize these senders/topics |
+| `People/Friends` → `People/Family` | 4 | All `yzhuang1@gmail.com` — folder disambiguation |
+| `INBOX` → `People/Family` | 2 | Low-confidence known contact emails |
+| Various → `Affairs/Stores` | 5 | Alerts, Support, Gardening → all treated as "stores" |
+| Various → `People/Family` | 4 | Uncommon, Stores, Gardening → actually family |
+| Other one-offs | 2 | |
+
+**Known-contact confusion is almost entirely one sender.**
+Of 14 known-contact-threshold emails, 12 are `yzhuang1@gmail.com` (user's
+husband). He writes on many topics (taxes, gardening, suction cups, hospital
+updates, real estate, AI), so the LLM scatters his emails across
+`People/Friends`, `People/Family`, `Affairs/Residence`, `Projects/*`,
+`Affairs/Stores`, `Affairs/Uncommon`, and `INBOX`. This is an inherently hard
+problem — the correct folder depends on *content*, but the contact threshold
+gates the move. The `People/Friends` → `People/Family` confusion (4 emails)
+is the most common specific error.
+
+This is **expected behavior for a multi-topic contact** and will not improve
+with threshold tuning alone. The folder descriptions for `People/Friends` vs
+`People/Family` could be refined to better distinguish them. Over time, as
+rules are created from evidence, many of these will be caught by thread-context
+or sender rules before hitting the LLM.
+
+**`Affairs/Stores` is functioning as a catch-all for misc commercial/civic
+email.** 14 emails classified as `INBOX` (low confidence) were later moved
+there. The fix is to improve the `Affairs/Stores` folder description so the
+LLM understands its scope — newsletters, municipal notices, one-off commercial
+emails, civic communications, etc.
+
+### Redesigned analysis page — action-oriented cards
+
+Replace the current flat "Skipped Emails You Later Sorted" section with
+multiple cards, each answering a specific question and prompting a specific
+action. Each card should cover one aspect of system performance.
+
+**Principle:** Every card answers "what happened?", "why?", and "what should
+I do about it?" The user shouldn't have to interpret raw data.
+
+#### Card 1: "Folder Description Gaps"
+
+**Question:** Which folders is the LLM failing to classify emails into?
+
+**Data:** Emails where the LLM returned low confidence (< 0.60) or classified
+to `INBOX` (meaning "I don't know"), but the user later moved them to a
+specific folder. Grouped by **destination folder** (where the user moved them).
+
+**Layout — folder group cards with inline links:**
+
+Each folder group is a mini-card (white bg, border) with:
+
+```
+┌─ Affairs/Stores ─────────────────────────────────────────────────┐
+│  14 emails the LLM couldn't classify  →  Review description      │
+│                                                                   │
+│  LLM said: INBOX (10), Affairs/Alerts (2), Projects/* (2)        │
+│                                                                   │
+│  From               Subject                        Confidence     │
+│  chicagoelec…       Use Any of 52 Secure Drop…     0.15    [→]   │
+│  chicagoelec…       Return Your Vote By Mail…      0.15    [→]   │
+│  chicagoelec…       Last Chance to Return…          0.15    [→]   │
+│  wordpress.com      Gap Week, March 27…            0.30    [→]   │
+│  wordpress.com      Miscellanea: The War…          0.15    [→]   │
+│  …                                                                │
+│  ▸ Show 9 more                                                    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Navigation links (reusing existing pages):**
+
+- **"Review description"** → `/folders` with `?highlight=Affairs/Stores`
+  (or anchor link `#folder-affairs-stores`). The folders page already shows
+  descriptions with per-folder regenerate links.
+- **`[→]` per row** → `/audit?sender=chicagoelections.gov&source=llm&days=30`
+  — reuses the existing audit log filter page to show all LLM classifications
+  for that sender. The audit list already supports sender/source/days filters.
+- **Subject link** → If the audit_log row id is available, link directly to
+  `/audit/{id}` for the full classification detail (LLM reasoning, confidence,
+  thread context, email history across runs).
+- **Sender link** → If a rule exists for that sender, link to `/rules/{id}`
+  showing the rule's evidence and performance. If no rule exists, link to
+  `/audit?sender=X` to show all history.
+
+**Collapsible rows:** Show top 5 emails per folder by default. "Show N more"
+expands the rest. Keeps the page scannable when multiple folders have gaps.
+
+**Existing patterns reused:**
+- Table styling from rules detail "Evidence Emails" section (same columns:
+  From, Subject, source badge, confidence)
+- Source badges from `audit/detail.html` (llm=purple, rule=blue, etc.)
+- Link patterns from `audit/list.html` (filter by sender, source, days)
+- Card layout from dashboard (white bg, border, header with action link)
+
+#### Card 2: "Known Contact Sorting"
+
+**Question:** How are emails from known contacts being handled — and what
+mechanisms are working to sort them correctly?
+
+**Data:** For each known contact that has `below_threshold_known_contact`
+skips, show the full picture: threshold blocks, thread-context sorts that
+succeeded, existing rules that cover them, and folder coherence.
+
+**Layout — per-contact card:**
+
+```
+┌─ yzhuang1@gmail.com ─────────────────────────────────────────────┐
+│  Known contact · Relationship: spouse                             │
+│                                                                   │
+│  ┌── How emails are being sorted (30d) ──────────────────────┐   │
+│  │  Thread context:  8 emails auto-sorted                     │   │
+│  │  Rules:           0 (no active rule for this sender)       │   │
+│  │  LLM moved:       2 emails (above 0.93 threshold)         │   │
+│  │  Threshold-blocked: 12 emails (conf 0.75–0.85, need 0.93) │   │
+│  └────────────────────────────────────────────────────────────┘   │
+│                                                                   │
+│  Folder coherence for this sender:                                │
+│    People/Family   ████████████░░  72% (18 of 25 emails)         │
+│    People/Friends  ███░░░░░░░░░░░  12% (3 emails)                │
+│    Affairs/*       ██░░░░░░░░░░░░   8% (2 emails)                │
+│    Other           ██░░░░░░░░░░░░   8% (2 emails)                │
+│                                                                   │
+│  ⚠ Coherence is below the auto-rule threshold (80%).              │
+│    The LLM often picks People/Friends instead of People/Family.   │
+│    Thread context is the most effective sorting mechanism for      │
+│    this contact — it sorted 8 emails correctly this period.       │
+│                                                                   │
+│  Threshold-blocked emails:                                        │
+│  Subject                           LLM said         User moved    │
+│  Re: Johnny in hospital            People/Family    People/Family  │  [→]
+│  when you have a moment…           People/Family    People/Family  │  [→]
+│  Costco planter - on sale…         Gardening        People/Family  │  [→]
+│  Re: Suction cup                   People/Friends   People/Family  │  [→]
+│  ▸ Show 8 more                                                    │
+│                                                                   │
+│  What's working: Thread context sorts handle 8 of this contact's  │
+│  emails automatically. The 0.93 threshold is preventing incorrect  │
+│  moves — the LLM picks the wrong folder for 10 of 12 blocked     │
+│  emails.                                                          │
+│                                                                   │
+│  Actions:                                                         │
+│    → Compare People/Friends vs People/Family descriptions          │
+│    → View all audit entries for this sender                        │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Key additions beyond the original design:**
+
+1. **Thread context visibility** — show how many emails were successfully
+   sorted by thread context. This is often the primary mechanism for
+   multi-topic contacts. Query: `classification_source='thread'` for the
+   sender in the period.
+
+2. **Folder coherence bar** — shows where this sender's emails actually go.
+   If coherence is below the auto-rule threshold (80%), explain why no rule
+   exists. If above, note that a rule could/should exist.
+   Uses the same coherence calculation as `maybe_create_rule` in the learner.
+
+3. **Existing rules** — show any active rules that match (exact_sender,
+   sender_domain). Link to `/rules/{id}`. If none exist and coherence is
+   high, explain what threshold is missing.
+
+4. **"What's working" summary** — synthesized text explaining the interplay:
+   - Thread context sorted N emails (good — this works for reply chains)
+   - Threshold blocked N emails, of which M were wrong-folder (good —
+     threshold is protecting)
+   - N emails were correctly classified but blocked (potential improvement)
+
+**Navigation links:**
+- **Contact name** → `/contacts?search=yzhuang1` (existing contacts page)
+- **Folder names** → `/folders#folder-path` or `/audit?folder=X`
+- **Per-email `[→]`** → `/audit/{id}` (existing audit detail)
+- **"View all audit entries"** → `/audit?sender=yzhuang1@gmail.com&days=30`
+- **"Compare descriptions"** → `/folders` (could add anchor links)
+
+**When to show this card:** Only when there are ≥3 `below_threshold_known_contact`
+skips for a sender in the period. If all known-contact blocks are from one
+sender, show one card. Multiple senders get multiple cards.
+
+#### Card 3: "Folder Disambiguation"
+
+**Question:** Is the LLM confusing two similar folders?
+
+**Data:** Emails where the LLM had moderate-to-high confidence (≥ 0.60) but
+picked the wrong folder. Grouped by **(llm_folder → user_folder)** pairs.
+
+**Display:**
+```
+People/Friends → People/Family (4 emails)
+  All from yzhuang1@gmail.com
+  The LLM can't distinguish these folders for this sender.
+  → Compare folder descriptions (link to both)
+
+Affairs/Uncommon/Support → Affairs/Stores (2 emails)
+  → Compare folder descriptions
+```
+
+**Action:** "Compare folder descriptions" — link to `/folders` or show the
+two descriptions side-by-side so the user can spot overlap.
+
+#### Card 4: "Learning Effectiveness"
+
+**Question:** How well is the system learning from your manual sorts?
+
+The learner already auto-creates rules when evidence thresholds are met
+(`maybe_create_rule` in `learner.py`). Suggesting rules manually would be
+redundant. Instead, this card reports on how effective that learning loop is.
+
+**Data:**
+- Rules created post-bootstrap (learned from your manual sorts)
+- How many emails those learned rules have subsequently sorted
+- Bootstrap rules vs learned rules comparison
+- Evidence sources that triggered rule creation
+
+**Layout:**
+
+```
+┌─ Learning Effectiveness ─────────────────────────────────────────┐
+│                                                                   │
+│  ┌── Rule creation ────────────────────────────────────────────┐ │
+│  │  Bootstrap rules:    120 rules → 1,182 emails sorted        │ │
+│  │  Learned rules:        6 rules →   411 emails sorted        │ │
+│  │  Manual rules:         0                                     │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  Rules learned from your manual sorts:                            │
+│                                                                   │
+│  Rule                          Folder             Hits  Status   │
+│  wordpress.com                 Affairs/Stores      197  active   │  [→]
+│  chicagopubliclibrary.org      Affairs/Stores      195  active   │  [→]
+│  milla@besttherapies.org       Affairs/Medical      19  active   │  [→]
+│  allycbentz@gmail.com          Affairs/Medical       0  active   │  [→]
+│  HomeDepot@order.homedepot.com Affairs/Stores        0  active   │  [→]
+│  chicagoelections.gov          Affairs/Stores        0  active   │  [→]
+│                                                                   │
+│  All 6 rules were created from manual sort evidence.              │
+│  Top performers: wordpress.com and chicagopubliclibrary.org       │
+│  alone account for 392 emails sorted automatically.               │
+│                                                                   │
+│  ▸ View all rules by source                                      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**What this shows the user:**
+- The system is learning: your manual sorts create rules that subsequently
+  automate classification for similar emails.
+- Quantifies the payoff: "you sorted 3 wordpress.com emails → the system
+  created a rule that has since sorted 197 emails for you."
+- If no rules have been learned recently, it indicates either: (a) manual
+  sorts don't repeat enough to meet thresholds, or (b) rules already cover
+  the senders you sort. Both are okay — the card explains which.
+
+**Navigation links:**
+- **Rule name `[→]`** → `/rules/{id}` (existing rule detail with evidence,
+  coherence, performance stats)
+- **"View all rules by source"** → `/rules?filter=all&search=` with a new
+  filter option for `source=auto` to separate bootstrap vs learned rules
+  (requires adding a source filter to the rules page — minor enhancement)
+- **Hit count** → `/audit?source=rule&days=30` filtered to that rule's
+  matches
+
+**Evidence source breakdown** (shown on hover or in expanded view):
+For each learned rule, show what triggered its creation:
+- `manual: 3` = you sorted 3 emails from this sender
+- `rule: 2` = the rule has since sorted 2 more (confirming evidence)
+- `thread: 5` = thread context added evidence
+
+This reuses the same evidence query from the rules detail page.
+
+#### Card 5: "Eligibility-Gated Emails" (informational/collapsed)
+
+**Question:** How many skipped emails were held back by eligibility gates
+rather than confidence?
+
+**Data:** Count of emails skipped for `unread`, `flagged`, `too_new`. These
+require no action — they'll auto-sort on the next eligible cycle.
+
+**Display:** A single collapsed line:
+```
+▸ 20 emails held by eligibility gates (flagged: 13, unread: 3, too_new: 4)
+  These will be sorted automatically once the gate condition clears.
+```
+
+**Action:** None. Purely informational to explain why the numbers add up.
+
+#### Card 6: "LLM Accuracy Summary" (replaces current recommendation)
+
+**Question:** Overall, how well is the LLM performing?
+
+**Data:** Of 173 LLM-classified emails:
+- 110 moved successfully (correction rate from existing card)
+- 63 skipped: 20 eligibility-gated, 43 threshold-gated
+- Of 41 later sorted by user: 5 same-folder (LLM was right), 36 wrong-folder
+
+**Display:** Compact summary with key ratios. No "consider lowering threshold"
+recommendation unless the same-folder count is significant (e.g., > 10 emails
+AND > 20% of threshold-blocked emails).
+
+**Action:** Links to the other cards for specific actions.
+
+### Implementation approach
+
+1. **Fix the dedup bug first** — straightforward query change in `analyze.py`.
+   Add `skip_reason` to the query. This is a prerequisite for everything else.
+
+2. **Restructure the template** — replace the single flat table with the card
+   layout above. The backend query can be a single query that returns all
+   skipped-then-sorted emails with skip_reason; the grouping/categorization
+   happens in the route handler or template.
+
+3. **Add the "still in inbox" accounting** — query for LLM-skipped emails
+   that were NOT later sorted, to make the totals add up.
+
+4. **Learning effectiveness card** — query rules by creation date relative
+   to bootstrap, compute hit counts, and fetch evidence source breakdown
+   per learned rule. Minor enhancement: add `source` filter to rules page.
