@@ -349,23 +349,24 @@ def _execute_run(
                 decision.should_move = False
                 decision.skip_reason = "unknown_folder"
 
-        # Eligibility gate: classify all emails but only move eligible ones
-        if decision.should_move:
-            if "$seen" not in features.keywords:
-                decision.should_move = False
-                decision.skip_reason = "unread"
-            elif "$flagged" in features.keywords:
-                decision.should_move = False
-                decision.skip_reason = "flagged"
+        # Eligibility gates: always run, override confidence-gate skip_reason.
+        # User-intent signals (unread/flagged/too_new) take precedence over
+        # classification-quality reasons (below_threshold) in the audit log.
+        if "$seen" not in features.keywords:
+            decision.should_move = False
+            decision.skip_reason = "unread"
+        elif "$flagged" in features.keywords:
+            decision.should_move = False
+            decision.skip_reason = "flagged"
+        else:
+            age_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cfg.scheduler.min_age_minutes)
+            if features.received_at.tzinfo is None:
+                received_utc = features.received_at.replace(tzinfo=timezone.utc)
             else:
-                age_cutoff = datetime.now(timezone.utc) - timedelta(minutes=cfg.scheduler.min_age_minutes)
-                if features.received_at.tzinfo is None:
-                    received_utc = features.received_at.replace(tzinfo=timezone.utc)
-                else:
-                    received_utc = features.received_at
-                if received_utc > age_cutoff:
-                    decision.should_move = False
-                    decision.skip_reason = "too_new"
+                received_utc = features.received_at
+            if received_utc > age_cutoff:
+                decision.should_move = False
+                decision.skip_reason = "too_new"
 
         # Track source for summary
         source_counts[decision.classification.source] += 1

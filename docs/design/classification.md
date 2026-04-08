@@ -51,10 +51,19 @@ known thread context is more reliable than any pattern match.
 post-classification gates determine whether the move actually happens:
 
 - **Confidence gate** — classification confidence must meet threshold
-- **Unread** (`$seen` keyword absent) → `skip_reason="unread"`
-- **Flagged** (`$flagged` keyword present) → `skip_reason="flagged"`
-- **Too new** (`receivedAt` within `min_age_minutes`) → `skip_reason="too_new"`
-- **Unknown folder** (target folder not in mailbox tree) → `skip_reason="unknown_folder"`
+- **Folder resolution** (only if confident enough to move) — target folder must
+  exist in the mailbox tree → `skip_reason="unknown_folder"` if missing
+- **Eligibility gates** (always run, override prior skip_reason):
+  - **Unread** (`$seen` keyword absent) → `skip_reason="unread"`
+  - **Flagged** (`$flagged` keyword present) → `skip_reason="flagged"`
+  - **Too new** (`receivedAt` within `min_age_minutes`) → `skip_reason="too_new"`
+
+**Precedence:** Eligibility gates (unread, flagged, too_new) always run and
+override the confidence gate's `skip_reason` when they apply. These represent
+user-intent signals (e.g., the user flagged an email to keep it visible) and
+should be clearly reflected in the audit log regardless of classification
+confidence. For example, a flagged email with below-threshold LLM confidence
+will show `skip_reason="flagged"`, not `"below_threshold"`.
 
 This means the audit log shows what mailsort *would* do with every email,
 giving full visibility into classification quality even for emails that aren't

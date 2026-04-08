@@ -559,7 +559,7 @@ the rules and contacts created during bootstrap.
 | **S8** | Known contact, LLM between normal and known-contact threshold | llm | below_threshold_known_contact | Inbox gen: S8 (`testcontact@example.com`) |
 | **S9** | No rule, no LLM configured | — | llm_unavailable | No-LLM dry run (§4.3) |
 | **S10** | LLM cache hit on second dry run | llm | same as first run, `cached=1` | Run full dry run twice with no config change; second run's audit rows for LLM-classified emails have `cached=1` |
-| **S11** | Ineligible email still gets LLM classification | llm | `source='llm'`, `skip_reason=flagged` or `below_threshold` (depends on LLM confidence vs threshold) | Inbox gen: S11 (`updates@newinsurance.com`) — flagged, no rule match, LLM classifies, audit shows target folder |
+| **S11** | Ineligible email still gets LLM classification | llm | `source='llm'`, `skip_reason=flagged` (eligibility gates override confidence gate) | Inbox gen: S11 (`updates@newinsurance.com`) — flagged, no rule match, LLM classifies, audit shows target folder |
 
 ### 4.3 No-LLM Dry Run Verification Checklist
 
@@ -888,6 +888,7 @@ Behaviors that depend on state accumulated across multiple phases.
 | **X24** | Cache hit preserves confidence gate behavior | Cached LLM result with confidence below threshold → still skipped (`below_threshold`). Cached result above threshold → still moved. Cache reuse doesn't bypass the confidence gate | *Deferred to unit test* (`test_cached_result_still_applies_confidence_gate`) — verifiable by checking `should_move` matches expectation for cached row |
 | **X25** | New rule supersedes cached LLM result | Email was LLM-classified last run. A rule is created that matches it. Next run: rule fires (`source='rule'`), LLM cache never consulted | *Deferred to unit test* (`test_new_rule_supersedes_llm_cache`) — requires adding rule between runs |
 | **X26** | `audit_log.cached` defaults to 0 for non-LLM sources | Thread and rule classifications always have `cached=0` | Verified by existing scenarios (S1–S4) — add assertion to Phase 2/3 verification checklist |
+| **X27** | Eligibility gates override confidence gate skip_reason | Flagged email with below-threshold LLM confidence → `skip_reason="flagged"` (not `"below_threshold"`). Unread email with below-threshold → `skip_reason="unread"`. Too-new email with below-threshold → `skip_reason="too_new"`. Eligibility signals always take precedence in the audit log | *Deferred to unit test* (`test_eligibility_overrides_below_threshold_*`) — verifiable by constructing decisions with both conditions |
 
 ---
 

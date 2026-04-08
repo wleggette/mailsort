@@ -1011,3 +1011,108 @@ def test_non_llm_decisions_have_cached_false(db: Database):
     )
     decision_thread = build_move_decision(features, thread_clf, {}, ThresholdsConfig())
     assert decision_thread.cached is False
+
+
+# ------------------------------------------------------------------
+# X27: Eligibility gates override confidence gate skip_reason
+# ------------------------------------------------------------------
+
+
+def test_eligibility_overrides_below_threshold_flagged(db: Database, monkeypatch):
+    """Flagged email with below-threshold LLM → skip_reason='flagged'.
+
+    Covers system test plan X27: eligibility gates take precedence in audit log.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_config()
+    tree = _make_tree()
+
+    # No rules — forces LLM path, which falls back to system (no API key)
+    email = _make_jmap_email(email_id="e-flagged-low")
+    # Override keywords: seen + flagged
+    email.keywords = {"$seen": True, "$flagged": True}
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.side_effect = [
+        ["e-flagged-low"],
+        ["e-flagged-low"],
+    ]
+    mock_jmap.get_emails.return_value = [email]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
+
+    row = db.execute(
+        "SELECT skip_reason FROM audit_log WHERE email_id='e-flagged-low'"
+    ).fetchone()
+    assert row["skip_reason"] == "flagged"
+
+
+def test_eligibility_overrides_below_threshold_unread(db: Database, monkeypatch):
+    """Unread email with below-threshold LLM → skip_reason='unread'.
+
+    Covers system test plan X27.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_config()
+    tree = _make_tree()
+
+    email = _make_jmap_email(email_id="e-unread-low")
+    email.keywords = {}  # no $seen → unread
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.side_effect = [
+        ["e-unread-low"],
+        ["e-unread-low"],
+    ]
+    mock_jmap.get_emails.return_value = [email]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
+
+    row = db.execute(
+        "SELECT skip_reason FROM audit_log WHERE email_id='e-unread-low'"
+    ).fetchone()
+    assert row["skip_reason"] == "unread"
+
+
+def test_eligibility_overrides_below_threshold_too_new(db: Database, monkeypatch):
+    """Too-new email with below-threshold LLM → skip_reason='too_new'.
+
+    Covers system test plan X27.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = _make_config()
+    tree = _make_tree()
+
+    email = _make_jmap_email(email_id="e-new-low")
+    # Set received_at to now (within min_age_minutes)
+    from datetime import datetime as dt, timezone as tz
+    email.received_at = dt.now(tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    mock_jmap = MagicMock()
+    mock_jmap.query_inbox_emails.side_effect = [
+        ["e-new-low"],
+        ["e-new-low"],
+    ]
+    mock_jmap.get_emails.return_value = [email]
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_jmap.get_contacts.return_value = []
+    mock_jmap.query_folder_emails.return_value = []
+    mock_jmap.session_capabilities = set()
+    mock_jmap.is_read_only = False
+
+    run_classification_pass(cfg, db, mock_jmap, tree, dry_run=True, trigger="test")
+
+    row = db.execute(
+        "SELECT skip_reason FROM audit_log WHERE email_id='e-new-low'"
+    ).fetchone()
+    assert row["skip_reason"] == "too_new"

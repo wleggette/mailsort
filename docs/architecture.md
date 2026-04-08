@@ -368,15 +368,14 @@ calls the same path with `dry_run=False` on a timer.
   │  │  thread:        always passes                               │
   │  no → skip_reason="below_threshold" (or "…_known_contact")    │
   │  │                                                             │
-  │  yes ▼                                                         │
-  │  ◇ Eligibility gates                                           │
+  │  ▼ (always, regardless of confidence gate result)              │
+  │  ◇ Eligibility gates (override skip_reason when triggered)     │
   │  │  $seen absent?       → skip_reason="unread"                 │
   │  │  $flagged present?   → skip_reason="flagged"                │
   │  │  receivedAt too new? → skip_reason="too_new"                │
-  │  │  folder not in tree? → skip_reason="unknown_folder"         │
-  │  any fail → should_move=false                                  │
+  │  any triggered → should_move=false, skip_reason overridden     │
   │  │                                                             │
-  │  all pass ▼                                                    │
+  │  none triggered + confidence passed ▼                          │
   │  MoveDecision(should_move=true)                                │
   └────────────────────────────────────────────────────────────────┘
           │
