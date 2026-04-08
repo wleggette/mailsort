@@ -556,93 +556,48 @@ target (localhost dev, Docker, reverse proxy).
 
 ## Reduce Redundant LLM Calls
 
-**Status:** Not started (2026-04-07)
+**Status:** Not started (2026-04-08)
 
 ### Problem
 
 Every cycle, every inbox email goes through the full classification pipeline
-(thread → rules → LLM) even when:
-
-1. **It can't be moved** — flagged, unread, or too-new emails are rejected by
-   eligibility gates *after* classification, so the LLM call was wasted.
-2. **It was already classified** with the same result last cycle — e.g., the
-   LLM returned confidence 0.65 (below threshold 0.80). Nothing changed, but
-   the LLM is called again every cycle for the same email.
+(thread → rules → LLM) even when it was already classified with the same
+result last cycle — e.g., the LLM returned confidence 0.65 (below threshold
+0.80). Nothing changed, but the LLM is called again every cycle.
 
 With 50 inbox emails and 5-minute cycles, this can generate hundreds of
 wasted LLM API calls per hour.
 
-### Root cause
+### Design decision: classify everything, cache LLM results
 
-In `orchestrator.py`, the per-email loop runs:
+An earlier draft considered gating LLM calls for ineligible emails (flagged,
+unread, too_new) by checking eligibility *before* classification. This was
+rejected because it loses audit visibility: a flagged email with no rule match
+would show `source="system"` instead of what the LLM would have classified it
+as. Seeing "the LLM thinks this flagged email belongs in Affairs/Stores" is
+useful — you know what will happen when you unflag it.
 
-```
-classify (thread → rules → LLM)  →  build_move_decision  →  eligibility gates
-```
+The LLM cache alone handles the repeated-call problem. After the first LLM
+classification of an email, subsequent runs reuse the cached result. The
+eligibility gate would only have saved one LLM call per email — the cache
+eliminates all the rest.
 
-Eligibility gates (unread, flagged, too_new) are checked *after*
-classification. The LLM — the only expensive step — runs unconditionally for
-every email that doesn't match a thread or rule.
+**Approach: classify everything (thread → rules → cache → LLM), gate moves
+after.** The existing flow is preserved; only an LLM cache layer is inserted
+between the rule check and the actual LLM API call.
 
-### Approach: two layers
+### LLM classification cache
 
-#### Layer 1 — Check eligibility before LLM
-
-Move the eligibility check earlier: run thread + rules (cheap DB lookups)
-for every email, but only invoke the LLM for emails that are actually
-eligible to move.
-
-For ineligible emails (flagged, unread, too_new) where thread + rules miss:
-the audit row is still logged, but the LLM is never called.
-
-**What classification_source for ineligible-and-unclassified emails?**
-
-Currently, when classification is `None`, `build_move_decision` fabricates a
-Classification with `source="llm"` — this is already misleading (no LLM call
-occurred). With the new design, we need an honest source for "we saw the
-email but didn't classify it."
-
-**Option A — Keep source="llm" with confidence=0.0, folder="INBOX":**
-- Pro: No schema change.
-- Con: Pollutes LLM confidence metrics. Misleading in audit log — suggests
-  the LLM was called when it wasn't. Analysis queries that filter on
-  `source='llm'` would include phantom rows.
-
-**Option B — New source `"system"`:**
-- Pro: Semantically accurate — answers "who made this decision?" with "the
-  system's built-in eligibility rules." Consistent with the other source
-  values (thread, rule, llm, manual, correction) which all name the actor.
-  Clean separation from real classifications. Existing analysis queries that
-  filter on specific sources (`= 'llm'`, `= 'rule'`, etc.) naturally exclude
-  these rows. The `skip_reason` field captures the specific reason (flagged,
-  unread, too_new).
-- Con: Schema change — need to add `'system'` to the `classification_source`
-  CHECK constraint (migration required). Queries using `!= 'manual'` in the
-  dedup CTE would include system rows, but the dedup selects the latest row
-  per email, so a real classification supersedes the system row if the email
-  later becomes eligible.
-- **Downstream impact:** The learner's Cat 1 detection (`_detect_skipped_sorts`)
-  queries `WHERE moved = 0` — system-source rows satisfy this, so the
-  learner still detects when a user manually sorts an email that mailsort
-  had skipped. No learner change needed.
-
-**Recommendation: Option B (`"system"` source).** It's the only honest
-representation, and the migration is trivial. "System" was chosen over
-"skipped" because "skipped" conflicts with the existing skip_reason
-vocabulary — many emails are "skipped" for various reasons (below_threshold,
-llm_skip_senders, etc.) but still have a real classification source.
-
-#### Layer 2 — Cache prior LLM classifications
-
-For eligible emails where thread + rules miss, check whether a prior LLM
+For emails where thread + rules miss, check whether a prior LLM
 classification exists in `audit_log` before making a new API call.
 
-**Lookup:** Before calling the LLM, query:
+**Cache lookup** — before calling the LLM, query:
 ```sql
-SELECT target_folder, confidence, llm_reasoning, skip_reason
+SELECT target_folder, confidence, llm_reasoning
 FROM audit_log
 WHERE email_id = ?
   AND classification_source = 'llm'
+  AND created_at >= ?  -- classification_version_changed_at
 ORDER BY id DESC LIMIT 1
 ```
 
@@ -672,21 +627,12 @@ LLM model name), computed once at the start of each run. Two keys in the
 
 At each run start: compute the hash, compare to stored value. If different,
 update both keys. The cache lookup only considers audit rows created after
-the last version change:
-
-```sql
-SELECT target_folder, confidence, llm_reasoning, skip_reason
-FROM audit_log
-WHERE email_id = ?
-  AND classification_source = 'llm'
-  AND created_at >= ?  -- classification_version_changed_at
-ORDER BY id DESC LIMIT 1
-```
+the last version change.
 
 **On version change** (description regeneration, model change): all cached
-LLM results are invalidated. The next cycle calls the LLM for every eligible
-email — exactly the same cost as today's behavior. After that one cycle, all
-results are cached again. Zero regression from today in the worst case.
+LLM results are invalidated. The next cycle calls the LLM for every email
+that falls through to the LLM tier — exactly the same cost as today. After
+that one cycle, results are cached again. Zero regression in the worst case.
 
 **No TTL needed.** Given the same email content, folder descriptions, and
 model, the LLM will produce essentially the same classification. The version
@@ -696,13 +642,12 @@ naturally leave the cache when they leave the inbox (no longer fetched).
 **Cache scope:** The `audit_log` table IS the cache. No new table needed,
 no new columns on `audit_log`. Only the two `learner_state` keys are added.
 
-#### Pipeline refactor — split into two methods
+### Pipeline refactor — split into two methods
 
 Currently `pipeline.classify()` is a single method running all three tiers.
-With this change, the orchestrator needs to run thread + rules first (for all
-emails), then conditionally call the LLM (only for eligible, non-cached
-emails). A single method with a `skip_llm` flag would cause thread + rules to
-run twice — once to check, then again inside the full pipeline call.
+With the cache, the orchestrator needs to run thread + rules first, then
+check the cache, then conditionally call the LLM. A single method with a
+`skip_llm` flag would cause thread + rules to run twice.
 
 **Split into two methods:**
 
@@ -710,90 +655,70 @@ run twice — once to check, then again inside the full pipeline call.
 class ClassificationPipeline:
     def classify_without_llm(self, features) -> tuple[Classification | None, str | None]:
         """Thread context + rule engine only. No network calls."""
-        clf = self._resolve_thread_context(features)
-        if clf:
-            return clf, None
-        clf = self._rules.classify(features)
-        if clf:
-            return clf, None
-        return None, None
+        ...
 
     def classify_llm(self, features) -> tuple[Classification | None, str | None]:
         """LLM classification only. Assumes thread + rules already missed."""
-        if self._llm is None:
-            return None, "llm_unavailable"
-        allowed, skip_reason = self._llm.should_call(features, self._contacts)
-        if not allowed:
-            return None, skip_reason
-        contact = get_contact_for_sender(features, self._contacts)
-        clf = self._llm.classify(features, self._folder_descriptions, contact=contact)
-        if clf.reasoning == "api_error":
-            return None, "llm_api_error"
-        return clf, None
+        ...
 ```
 
-The existing `classify()` method can remain as a convenience wrapper that
-calls both, preserving backward compatibility for any callers.
+The existing `classify()` method remains as a convenience wrapper that calls
+both, preserving backward compatibility.
 
 ### Revised per-email flow
 
 ```python
-for features in eligible:
-    # 1. Check eligibility once (reused in steps 3 and 6)
-    ineligible_reason = _check_eligibility(features, cfg)
-
-    # 2. Always run thread + rules (cheap)
+for features in all_emails:
+    # 1. Cheap classification (thread + rules)
     classification, skip_reason = pipeline.classify_without_llm(features)
 
     if not classification:
-        if ineligible_reason:
-            # 3. Ineligible, no cheap match — record as system gate
-            classification = Classification(
-                folder_path="INBOX", confidence=0.0,
-                source="system", reasoning=ineligible_reason,
-            )
-            skip_reason = ineligible_reason
+        # 2. Check LLM cache before calling API
+        cached = _get_cached_llm_result(db, features.email_id, version_changed_at)
+        if cached:
+            classification = cached
+            skip_reason = None
+            cache_hits += 1
         else:
-            # 4. Eligible — check LLM cache before calling API
-            cached = _get_cached_llm_result(db, features.email_id, version)
-            if cached:
-                classification = cached
-                skip_reason = None  # build_move_decision re-derives from confidence
-            else:
-                classification, skip_reason = pipeline.classify_llm(features)
+            # 3. Fresh LLM call
+            classification, skip_reason = pipeline.classify_llm(features)
 
-    # 5. Build move decision (confidence gate applied here)
-    decision = build_move_decision(
-        features=features,
-        classification=classification,
-        contacts=contacts,
-        thresholds=cfg.classification.thresholds,
-        skip_reason=skip_reason,
-    )
+    # 4. Build move decision (confidence gate)
+    decision = build_move_decision(features, classification, contacts, thresholds, skip_reason)
 
-    # 6. Eligibility gate — apply to ALL paths (thread/rule/cached/fresh)
-    if decision.should_move and ineligible_reason:
-        decision.should_move = False
-        decision.skip_reason = ineligible_reason
+    # 5. Eligibility gates (unread, flagged, too_new) — same as today
+    # These are applied post-classification so the audit log shows
+    # what the classification *would* be, even for ineligible emails.
 ```
 
-**Note on `build_move_decision`:** Currently fabricates `source="llm"` when
-`classification is None`. With the new flow, classification should never be
-`None` by step 4 (the system gate always constructs one). The fallback should
-still be updated to `source="system"` for safety.
+### Cache hit tracking
 
-### Configuration
+Add a `cached BOOLEAN NOT NULL DEFAULT 0` column to `audit_log` (in migration
+12, alongside the `'system'` source). When a cache hit is used, the
+orchestrator sets a `cached=True` flag on the `MoveDecision`, which the
+`AuditWriter` writes through to the column.
 
-No new config fields. The cache is always active and invalidated by
-`classification_version` changes. No TTL to configure.
+This enables future queries like:
+```sql
+-- LLM API calls vs cache hits over the last 7 days
+SELECT cached, COUNT(*) FROM audit_log
+WHERE classification_source = 'llm' AND created_at >= datetime('now', '-7 days')
+GROUP BY cached
+```
 
-### What stays the same
+No UI changes needed now — the data is available for dashboards later.
 
-- Thread and rule classification — always runs, unchanged.
-- Audit logging — every email gets an audit row, including system-gated ones.
-- Learner Cat 1 detection — still finds system-gated emails that the user moved.
-- Move execution — unchanged.
-- Dry run — same optimization applies (classification cost, not move cost).
+### `build_move_decision` fallback — `source="system"`
+
+Currently fabricates `source="llm"` when `classification is None` (LLM
+unavailable, API error, privacy gate). This is misleading — no LLM call
+occurred. Change to `source="system"` which honestly represents "the system
+produced this decision, not the LLM."
+
+This requires adding `'system'` to the `classification_source` CHECK
+constraint (migration 12). The `source="system"` rows only appear when
+classification truly fails — not for eligibility gating (since all emails
+are now fully classified).
 
 ### Schema change
 
@@ -803,116 +728,72 @@ Add `'system'` to the `classification_source` CHECK constraint:
 CHECK(classification_source IN ('thread','rule','llm','manual','correction','system'))
 ```
 
-**No backfill needed.** Existing audit rows with `skip_reason` of flagged,
-unread, or too_new have real LLM classifications (the LLM was called under
-the old flow). Those rows are honest `source='llm'` and should stay as-is.
-The `'system'` source only applies to new rows going forward where the LLM
-is never called.
+**No backfill needed.** Existing rows are all legitimate.
 
 ### Query impact analysis
 
-Most existing queries use positive filters (`= 'llm'`, `= 'rule'`, etc.)
-and naturally exclude `'system'` rows. Learner queries that use `!= 'manual'`
-or `NOT IN ('manual','correction')` also pair with `moved = 1`, which
-excludes system rows since they always have `moved = 0`.
+`source="system"` rows are rare (only LLM-unavailable/error cases) and always
+have `moved = 0`. Most existing queries use positive filters (`= 'llm'`,
+`= 'rule'`, etc.) and naturally exclude them.
 
 **Two places need code changes:**
 
-1. **Dedup CTE** (`analyze.py` lines 28,35 and `main.py` lines 526,533):
-   Currently `classification_source != 'manual'`. A system row could become
-   the "latest" row for an email_id, hiding a prior real classification.
-   Change to `NOT IN ('manual', 'system')`.
+1. **Dedup CTE** (`analyze.py` and `main.py`):
+   `!= 'manual'` → `NOT IN ('manual', 'system')` to prevent a system row
+   from hiding a prior real classification.
 
-2. **Source breakdown** (`analyze.py` line 53 and `main.py` equivalent):
-   Currently `GROUP BY classification_source` with no filter. System rows
-   would appear as a "system" bucket in the breakdown. Add
-   `WHERE classification_source != 'system'` (or `NOT IN`).
+2. **Source breakdown**: system rows would appear as a bucket. Add exclusion.
 
-**Safe as-is (no changes needed):**
-
-- `analyze.py` / `main.py`: LLM confidence distribution (`= 'llm'`),
-  corrections count (`= 'correction'`), skipped-then-sorted
-  (`= 'llm' AND moved = 0`), rule corrections (`= 'rule' AND moved = 1`)
-  — all positive filters.
-- `rules.py`: rule detail stats (`= 'correction'`, `= 'manual'`) — positive
-  filters.
-- `audit.py`: source filter (`= ?`) — user-selected, just add to dropdown.
-- `learner.py`: Cat 1 (`!= 'manual' AND moved = 1`), Cat 2
-  (`NOT IN ('manual','correction') AND moved = 1`), `_already_handled`
-  (`NOT IN ('manual','correction') AND moved = 1`), re-sort checks — all
-  guarded by `moved = 1`, which system rows never satisfy.
+**Safe as-is:** all learner queries are guarded by `moved = 1` (system rows
+never satisfy this). All other queries use positive source filters.
 
 ### UI changes
 
-**Audit log page** (`audit/list.html`): Add `"system"` to the source filter
-dropdown. Add a badge color for system rows (e.g., `bg-amber-50
-text-amber-700`). Same badge addition in `audit/detail.html` and
-`rules/detail.html` source badges.
-
-**Analysis page:** No changes needed. System-gated emails represent
-transient states (flagged, unread, too_new) — the email will eventually
-become eligible and get a real classification, or the user will act on it.
-They are not meaningful for classification accuracy metrics. The existing
-analysis queries filter on specific sources (`'llm'`, `'rule'`, etc.) and
-naturally exclude system rows.
+- **Audit log page**: Add `"system"` to source filter dropdown and amber
+  badge color in list, detail, and rule detail templates.
+- **Analysis page**: No changes — system rows are excluded by existing
+  positive filters.
 
 ### Impact estimate
 
-- **Layer 1** eliminates LLM calls for flagged + unread + too_new emails.
-- **Layer 2** eliminates repeat LLM calls for below_threshold emails.
-- **Combined:** ~60–80% reduction in LLM API calls per cycle for a typical
-  inbox with long-lived flagged/unread messages.
+The cache eliminates repeat LLM calls for **all** emails that remain in the
+inbox across runs — flagged, unread, too_new, and below_threshold alike.
+After the first classification of each email, no further LLM API calls are
+made unless the classification version changes.
+
+~60–80% reduction in LLM API calls per cycle for a typical inbox.
 
 ### Scope estimate
 
-~50–80 lines of new/changed Python across orchestrator + pipeline + config +
-migration. Half-day implementation including tests.
+~50–80 lines of new/changed Python across orchestrator + pipeline + migration.
+Half-day implementation including tests.
 
 ### Documentation changes required
 
 **`docs/architecture.md`** — Per-Run Sequence diagram:
-- Step 4 (Classify): restructure to show `classify_without_llm` for all
-  emails, then eligibility gate before LLM, then cache check before API call.
-  Add `source="system"` outcome path.
-- Step 5 (Build Move Decision): eligibility gates section (lines 367-372)
-  needs to reflect that eligibility is checked once at the top and reused in
-  two places (gate LLM + prevent move).
+- Step 4 (Classify): show `classify_without_llm` then cache check then
+  `classify_llm`. No eligibility change.
 
 **`docs/design/classification.md`**:
-- Pipeline Steps (lines 1-18): reorder to reflect eligibility before LLM.
-- Eligibility & Gating (lines 39-56): update the claim "all remaining inbox
-  emails are classified (thread → rules → LLM)" — LLM is now conditional.
 - New section: LLM classification cache (`classification_version` mechanism,
   `learner_state` keys, cache lookup query).
-- New section: `classify_without_llm` / `classify_llm` method split.
+- Pipeline steps: note cache check between rules and LLM.
 
 **`docs/design/data-models.md`**:
-- `audit_log` CHECK constraint (line 65): add `'system'`.
-- `skip_reason` comment (lines 69-73): note that system source uses
-  flagged/unread/too_new.
-- `Classification` model (line 200): add `"system"` and `"correction"` to
-  source comment.
-- `learner_state` known keys (lines 157-160): add
-  `classification_version` and `classification_version_changed_at`.
-- Migration list (lines 223-236): add migration 12 for `'system'` CHECK.
+- `audit_log` CHECK constraint: add `'system'`.
+- `audit_log`: add `cached BOOLEAN NOT NULL DEFAULT 0` column.
+- `MoveDecision` model: add `cached: bool = False`.
+- `Classification` model: add `"system"` and `"correction"` to source comment.
+- `learner_state` known keys: add `classification_version` and
+  `classification_version_changed_at`.
+- Migration list: add migration 12.
 
 **`docs/design/audit.md`**:
-- Outcome Categories table (lines 38-51): note system-gated emails appear
-  with `source=system` and skip_reason of flagged/unread/too_new.
-- Log format (lines 56-75): add "System gate:" line to classification
-  breakdown, or note how system-gated counts are reported.
-
-**`docs/configuration.md`**: No changes (no new config fields).
+- Outcome categories: add system row (LLM-unavailable/error only).
+- Log format: add LLM cache hits to classification summary.
 
 **`docs/planning/system-test-plan.md`**:
-- §4.1 Eligibility Gate Scenarios (lines 531-542): E2/E3/E4/E5 should
-  show `classification_source='system'` for ineligible emails with no
-  rule match. Add scenario: ineligible email WITH rule match still gets
-  `source=rule`.
-- §4.2 Classification Source Scenarios (lines 544-559): add scenarios for
-  LLM cache hit and system gate.
-- §4.4 Dry Run Checklist (line 582): refine "LLM called only when no
-  rule/thread match" → "…AND email is eligible AND no valid cache."
-- §4.5 Dynamic Inbox Emails (lines 584-617): E2/E3/E4/E5 expected
-  outcomes should show `source=system` for no-rule-match cases.
-- §8.3: consider adding scenario for cache version invalidation.
+- §4.2: add scenario for LLM cache hit.
+- §4.4: refine "LLM called only when no rule/thread match" →
+  "…AND no valid cache."
+- §8.3: consider scenario for cache version invalidation.

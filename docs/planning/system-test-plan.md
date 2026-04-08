@@ -530,16 +530,17 @@ Each dry-run pass gets its own `run_id` so verifiers can query by run.
 
 ### 4.1 Eligibility Gate Scenarios
 
-Pre-classification filters determine whether an email is even considered for
-classification. These are checked before the classification pipeline runs.
+Eligibility gates are applied **after** classification. Every inbox email is
+fully classified (thread → rules → LLM), so the audit log shows what mailsort
+*would* do. Then ineligible emails have `should_move` overridden to false.
 
 | ID | Scenario | Keywords | receivedAt | Expected Outcome | Tested By |
 |----|----------|----------|------------|-----------------|----------|
 | **E1** | Read, unflagged, old enough | `$seen` | 5h ago | classified (moved or below_threshold) | Inbox gen: E1 (`noreply@chase.com`) |
-| **E2** | Unread | (none) | 5h ago | skip_reason=unread | Inbox gen: E2 (`orders@amazon.com`) |
-| **E3** | Read + flagged | `$seen`, `$flagged` | 5h ago | skip_reason=flagged | Inbox gen: E3 (`noreply@chase.com`) |
-| **E4** | Read, unflagged, too new | `$seen` | now | skip_reason=too_new | Inbox gen: E4 (`alerts@bankofamerica.com`) |
-| **E5** | Unread + flagged + new | `$flagged` | now | skip_reason=unread (checked first) | Inbox gen: E5 (`noreply@target.com`) |
+| **E2** | Unread | (none) | 5h ago | classified (source=rule or llm), skip_reason=unread | Inbox gen: E2 (`orders@amazon.com`) |
+| **E3** | Read + flagged | `$seen`, `$flagged` | 5h ago | classified (source=rule or llm), skip_reason=flagged | Inbox gen: E3 (`noreply@chase.com`) |
+| **E4** | Read, unflagged, too new | `$seen` | now | classified (source=rule or llm), skip_reason=too_new | Inbox gen: E4 (`alerts@bankofamerica.com`) |
+| **E5** | Unread + flagged + new | `$flagged` | now | classified (source=rule or llm), skip_reason=unread (checked first) | Inbox gen: E5 (`noreply@target.com`) |
 
 ### 4.2 Classification Source Scenarios
 
@@ -557,6 +558,8 @@ the rules and contacts created during bootstrap.
 | **S7** | Known contact, LLM above known-contact threshold | llm | moved | Inbox gen: S7 (`testcontact@example.com`, strong banking content) |
 | **S8** | Known contact, LLM between normal and known-contact threshold | llm | below_threshold_known_contact | Inbox gen: S8 (`testcontact@example.com`) |
 | **S9** | No rule, no LLM configured | — | llm_unavailable | No-LLM dry run (§4.3) |
+| **S10** | LLM cache hit on second dry run | llm | same as first run, `cached=1` | Run full dry run twice with no config change; second run's audit rows for LLM-classified emails have `cached=1` |
+| **S11** | Ineligible email still gets LLM classification | llm | `skip_reason=flagged`, `source='llm'` | Inbox gen: S11 (`updates@newinsurance.com`) — flagged, no rule match, LLM classifies, audit shows target folder |
 
 ### 4.3 No-LLM Dry Run Verification Checklist
 
@@ -579,7 +582,9 @@ The no-LLM dry run temporarily unsets `ANTHROPIC_API_KEY` and runs
 - [ ] **Rule matches use correct rule type**: exact_sender, sender_domain, or list_id
 - [ ] **Classification priority — exact_sender over sender_domain**: `statements@bigbank.com` matches `exact_sender` rule (not `sender_domain` for `bigbank.com`)
 - [ ] **Classification priority — list_id over exact_sender**: email with list-id `<updates.ymca.org>` from `activities@ymca.org` matches `list_id` rule (not `exact_sender`)
-- [ ] **LLM called only when no rule/thread match**: classification_source=llm only for fallback cases
+- [ ] **LLM called only when no rule/thread match AND no valid cache**: classification_source=llm only for fallback cases; second run should show `cached=1` for repeat LLM emails
+- [ ] **Cache hits recorded**: second dry run has `cached=1` rows for previously-LLM-classified emails that are still in inbox
+- [ ] **Non-LLM sources not cached**: thread and rule classification rows have `cached=0`
 
 ### 4.5 Dynamic Inbox Emails
 
@@ -590,10 +595,11 @@ at runtime.
 | Scenario | From | Keywords | receivedAt | Expected |
 |----------|------|----------|------------|----------|
 | E1: Rule match, eligible | `noreply@chase.com` | `$seen` | 5h ago | moved → Banks (rule) |
-| E2: Rule match, unread | `orders@amazon.com` | (none) | 5h ago | unread |
-| E3: Rule match, flagged | `noreply@chase.com` | `$seen`, `$flagged` | 5h ago | flagged |
-| E4: Rule match, too new | `alerts@bankofamerica.com` | `$seen` | now | too_new |
-| E5: Unread + flagged + new | `noreply@target.com` | `$flagged` | now | unread |
+| E2: Rule match, unread | `orders@amazon.com` | (none) | 5h ago | source=rule, skip_reason=unread |
+| E3: Rule match, flagged | `noreply@chase.com` | `$seen`, `$flagged` | 5h ago | source=rule, skip_reason=flagged |
+| E4: Rule match, too new | `alerts@bankofamerica.com` | `$seen` | now | source=rule, skip_reason=too_new |
+| E5: Unread + flagged + new | `noreply@target.com` | `$flagged` | now | source=rule, skip_reason=unread |
+| S11: Flagged, no rule, LLM classifies | `updates@newinsurance.com` | `$seen`, `$flagged` | 5h ago | source=llm, skip_reason=flagged, target_folder shows LLM's choice |
 | S2: Domain rule match | `support@bigbank.com` | `$seen` | 5h ago | moved → Banks (rule) |
 | S3: List-Id rule match | `newsletter@lincolnelementary.org` | `$seen` | 5h ago | moved → Children (list_id rule) |
 | S4: Thread match | `rare@oneoff.com` (In-Reply-To) | `$seen` | 5h ago | moved → Banks (thread context) |
@@ -877,6 +883,11 @@ Behaviors that depend on state accumulated across multiple phases.
 | **X19** | Concurrent live run prevented by lock | Two `mailsort run` invocations on the same database | Second run returns immediately with "another live run in progress" warning; no duplicate audit entries | *Deferred to unit test* (`test_live_run_acquires_lock`) — requires spawning concurrent processes on same DB |
 | **X20** | Dry run bypasses lock | `mailsort dry-run` while a live run holds the lock | Dry run proceeds normally, no blocking | *Deferred to unit test* (`test_dry_run_does_not_acquire_lock`) — requires concurrent process orchestration |
 | **X21** | Correction dedup allows re-correction after new rule move | Rule moves email to Banks → user corrects to Stores → email returns to inbox → rule moves to Banks again → user corrects to Stores again | Second correction row created (dedup sees new rule move is newer than previous correction). Two corrections counted by `compute_rule_confidence()`. Tests the `_already_handled_email_ids` fix for move-correct-move-correct cycles | *Deferred to unit test* (`test_re_correction_after_new_rule_move`) — requires multi-step audit_log sequence |
+| **X22** | Cache invalidation on folder description change | Regenerate descriptions (e.g., add a folder) → `classification_version` changes → all LLM cache misses on next run → fresh API calls. `cached=0` for all LLM rows | *Deferred to unit test* (`test_cache_invalidated_on_description_change`) — requires modifying folder descriptions between runs |
+| **X23** | Cache invalidation on LLM model change | Change `llm_model` config between runs → version hash changes → cache misses, `cached=0` | *Deferred to unit test* (`test_cache_invalidated_on_model_change`) — requires config change between runs |
+| **X24** | Cache hit preserves confidence gate behavior | Cached LLM result with confidence below threshold → still skipped (`below_threshold`). Cached result above threshold → still moved. Cache reuse doesn't bypass the confidence gate | *Deferred to unit test* (`test_cached_result_still_applies_confidence_gate`) — verifiable by checking `should_move` matches expectation for cached row |
+| **X25** | New rule supersedes cached LLM result | Email was LLM-classified last run. A rule is created that matches it. Next run: rule fires (`source='rule'`), LLM cache never consulted | *Deferred to unit test* (`test_new_rule_supersedes_llm_cache`) — requires adding rule between runs |
+| **X26** | `audit_log.cached` defaults to 0 for non-LLM sources | Thread and rule classifications always have `cached=0` | Verified by existing scenarios (S1–S4) — add assertion to Phase 2/3 verification checklist |
 
 ---
 
