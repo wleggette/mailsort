@@ -1177,3 +1177,153 @@ AND > 20% of threshold-blocked emails).
 4. **Learning effectiveness card** — query rules by creation date relative
    to bootstrap, compute hit counts, and fetch evidence source breakdown
    per learned rule. Minor enhancement: add `source` filter to rules page.
+
+### UI testing strategy
+
+There are no existing web UI tests in the codebase. The analysis page
+redesign introduces complex query logic, data grouping, and cross-card
+navigation — all of which need automated coverage. Testing is split into
+three layers.
+
+#### Layer 1: Route-level tests (pytest + FastAPI TestClient)
+
+Test the `/analyze` route handler directly — seed a Database with known
+audit_log rows, call the route via `TestClient`, and assert on the
+template context dict. No browser needed. This is the primary test layer.
+
+**File:** `tests/test_web_analyze.py`
+
+**Fixture:** A shared `seeded_db` fixture that inserts a controlled set of
+audit_log + runs rows covering every card's data needs:
+
+| Seed data | Cards covered |
+|-----------|---------------|
+| 3 LLM-skipped emails later manually sorted (2 wrong folder, 1 same folder) | Card 1, Card 6 |
+| 2 LLM-skipped emails from known contact (`below_threshold_known_contact`) | Card 2 |
+| 2 LLM emails with moderate confidence, wrong folder (LLM said A, user moved to B) | Card 3 |
+| 1 bootstrap rule + 1 learned rule (with hits) | Card 4 |
+| 2 eligibility-gated emails (1 flagged, 1 unread) | Card 5 |
+| 5 LLM-moved emails (no correction) | Card 6 totals |
+
+**Tests per card:**
+
+- **Card 1 (Folder Description Gaps)**
+  - `test_folder_gap_groups_by_destination` — 2 wrong-folder emails to
+    `Affairs/Stores` grouped into one card; context has correct count
+  - `test_folder_gap_excludes_same_folder` — same-folder match not in
+    gap cards
+  - `test_folder_gap_shows_llm_folder` — each row has the LLM's folder
+    and the user's folder
+
+- **Card 2 (Known Contact Sorting)**
+  - `test_known_contact_card_appears` — context includes contact card
+    when ≥3 `below_threshold_known_contact` skips exist
+  - `test_known_contact_card_absent_below_threshold` — no card when <3
+    skips
+  - `test_known_contact_includes_thread_context_count` — thread-context
+    sorted count for the same sender is present
+  - `test_known_contact_coherence_calculation` — folder coherence
+    percentages match expected values
+
+- **Card 3 (Folder Disambiguation)**
+  - `test_disambiguation_pairs` — (LLM folder → user folder) pairs
+    grouped correctly
+  - `test_disambiguation_excludes_low_confidence` — emails with
+    confidence < 0.60 not included (those go to Card 1)
+
+- **Card 4 (Learning Effectiveness)**
+  - `test_learned_vs_bootstrap_counts` — context separates bootstrap
+    rules from learned rules
+  - `test_learned_rule_hit_counts` — each learned rule shows its
+    subsequent hit count
+  - `test_no_learned_rules_message` — when no post-bootstrap rules
+    exist, card shows appropriate message
+
+- **Card 5 (Eligibility-Gated)**
+  - `test_eligibility_gate_counts` — correct breakdown by skip_reason
+    (flagged, unread, too_new)
+  - `test_eligibility_not_in_actionable_total` — gated emails excluded
+    from actionable skipped count
+
+- **Card 6 (LLM Accuracy Summary)**
+  - `test_accuracy_totals_add_up` — moved + skipped = total; skipped =
+    gated + threshold-blocked; threshold-blocked ≥ later-sorted
+  - `test_threshold_recommendation_suppressed` — no "lower threshold"
+    suggestion when same-folder count ≤ 10 or < 20% of blocked
+
+- **Dedup bug regression**
+  - `test_dedup_no_inflation` — insert 5 audit rows for same email_id
+    across 5 runs; assert skipped_then_sorted count is 1, not 5
+  - `test_dedup_keeps_latest_row` — the kept row is the most recent
+    (highest `id`)
+
+#### Layer 2: Query-level tests (pytest, Database only)
+
+Extract complex SQL queries (dedup CTE, skipped-then-sorted join,
+coherence calculation) into named functions in `analyze.py` that return
+raw data. Test these functions directly against a seeded SQLite database
+without going through the HTTP layer.
+
+**Rationale:** The queries are the riskiest part — they have subtle join
+conditions, window functions, and dedup logic. Testing them in isolation
+makes failures easier to diagnose than debugging through template context.
+
+**Tests:**
+
+- `test_dedup_cte_one_row_per_email` — N audit rows per email → 1 output
+- `test_dedup_cte_excludes_bootstrap_and_dry_runs`
+- `test_skipped_then_sorted_join_correctness` — only LLM-skip + manual/
+  correction pairs, not rule-skip + manual
+- `test_coherence_for_sender` — known distribution → expected percentages
+
+#### Layer 3: Visual smoke tests (manual, with optional Playwright)
+
+The template layout, card rendering, collapsible rows, and link targets
+are hard to test without a browser. Two approaches, chosen based on
+project maturity:
+
+**Approach A — Manual checklist (initial):**
+
+Run `mailsort web --port 8080` against the production DB (read-only) and
+walk through:
+
+- [ ] Each card renders with non-zero data
+- [ ] Collapsible "Show N more" expands/collapses
+- [ ] Navigation links (`[→]`, "Review description", "View all audit
+  entries") resolve to correct pages with correct query params
+- [ ] `?days=7` and `?days=90` change all card data
+- [ ] Empty-state: no LLM emails → page shows "no data" gracefully
+
+**Approach B — Playwright (if web tests grow beyond this page):**
+
+Add `tests/test_web_e2e.py` using Playwright with a test database:
+
+1. Start the FastAPI app in-process via `TestClient` or `uvicorn` on a
+   random port.
+2. Seed a test DB with the same fixture as Layer 1.
+3. Navigate to `/analyze`, assert card headings are visible.
+4. Click "Show N more" → assert expanded rows appear.
+5. Click a navigation link → assert URL contains expected query params.
+6. Screenshot comparison (optional) for layout regression.
+
+**When to adopt Playwright:** When there are ≥3 pages with interactive
+elements (collapsible sections, filters, dynamic navigation). Until then,
+Layer 1 + manual checklist is sufficient.
+
+#### Test data factory
+
+To avoid duplicating seed data across layers, create a shared factory:
+
+```python
+# tests/factories/analyze_fixtures.py
+
+def seed_analyze_scenario(db: Database) -> dict:
+    """Seed a complete analysis scenario. Returns IDs for assertions."""
+    # Creates runs, audit_log rows, rules, contacts
+    # Returns {"email_ids": [...], "rule_ids": [...], "run_ids": [...]}
+```
+
+This factory is used by both Layer 1 (route tests) and Layer 2 (query
+tests). The factory creates a self-consistent dataset — all foreign keys
+valid, timestamps in correct order, skip_reasons matching eligibility
+gate logic.
