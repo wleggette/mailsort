@@ -12,7 +12,7 @@ from mailsort.jmap.client import ReadOnlyTokenError
 from mailsort.db.database import Database
 from mailsort.db.migrations import run_migrations
 from mailsort.jmap.mailbox_tree import MailboxTree
-from mailsort.jmap.models import Classification, JMAPEmail, JMAPMailbox
+from mailsort.jmap.models import Classification, EmailFeatures, JMAPEmail, JMAPMailbox
 from mailsort.orchestrator import (
     run_classification_pass, RunResult, _acquire_run_lock, _release_run_lock,
     _update_classification_version, _get_cached_llm_result,
@@ -773,8 +773,8 @@ def test_classification_version_unchanged_returns_same_ts(db: Database):
     assert ts1 == ts2
 
 
-def test_classification_version_changed_input_invalidates(db: Database):
-    """Different inputs → new version hash, potentially new timestamp."""
+def test_cache_invalidated_on_description_change(db: Database):
+    """X22: Different folder descriptions → new version hash, new timestamp."""
     _update_classification_version(db, "desc v1", "model-a")
     hash1 = db.execute("SELECT value FROM learner_state WHERE key='classification_version'").fetchone()["value"]
     _update_classification_version(db, "desc v2", "model-a")
@@ -782,8 +782,8 @@ def test_classification_version_changed_input_invalidates(db: Database):
     assert hash1 != hash2
 
 
-def test_classification_version_model_change_invalidates(db: Database):
-    """Changing the LLM model → new version hash."""
+def test_cache_invalidated_on_model_change(db: Database):
+    """X23: Changing the LLM model → new version hash."""
     _update_classification_version(db, "same desc", "model-a")
     hash1 = db.execute("SELECT value FROM learner_state WHERE key='classification_version'").fetchone()["value"]
     _update_classification_version(db, "same desc", "model-b")
@@ -875,3 +875,139 @@ def test_cached_llm_result_ignores_non_llm(db: Database):
 
     result = _get_cached_llm_result(db, "email-1", "2025-01-01T00:00:00")
     assert result is None
+
+
+# ------------------------------------------------------------------
+# X24: Cached result still applies confidence gate
+# ------------------------------------------------------------------
+
+
+def test_cached_result_still_applies_confidence_gate(db: Database):
+    """A cached LLM result below the move threshold is still skipped.
+
+    Covers system test plan X24: cache reuse doesn't bypass the confidence gate.
+    """
+    from mailsort.mover.mover import build_move_decision
+    from mailsort.config import ThresholdsConfig
+
+    features = EmailFeatures(
+        email_id="email-low-conf", thread_id="t1",
+        from_address="test@example.com", from_domain="example.com",
+        to_addresses=["user@fastmail.com"], subject="Test",
+        received_at="2026-03-10T10:00:00+00:00", preview="test",
+        keywords=["$seen"], current_mailbox_ids={"mb-inbox": True},
+    )
+
+    # Simulate a cached LLM result with low confidence (below 0.80 threshold)
+    cached_clf = Classification(
+        folder_path="INBOX/Affairs/Banks", confidence=0.55, source="llm",
+        reasoning="cached low confidence",
+    )
+    decision = build_move_decision(features, cached_clf, {}, ThresholdsConfig())
+    assert decision.should_move is False
+    assert decision.skip_reason == "below_threshold"
+
+    # High confidence → moved
+    cached_clf_high = Classification(
+        folder_path="INBOX/Affairs/Banks", confidence=0.95, source="llm",
+        reasoning="cached high confidence",
+    )
+    decision_high = build_move_decision(features, cached_clf_high, {}, ThresholdsConfig())
+    assert decision_high.should_move is True
+    assert decision_high.skip_reason is None
+
+
+# ------------------------------------------------------------------
+# X25: New rule supersedes cached LLM result
+# ------------------------------------------------------------------
+
+
+def test_new_rule_supersedes_llm_cache(db: Database):
+    """If a rule matches, the LLM cache is never consulted.
+
+    Covers system test plan X25: classify_without_llm returns a rule hit,
+    so the orchestrator never reaches the cache lookup.
+    """
+    from mailsort.classifier.pipeline import ClassificationPipeline
+    from mailsort.classifier.rules import RuleEngine
+    from mailsort.config import ThresholdsConfig
+    from unittest.mock import MagicMock
+
+    # Seed a "cached" LLM row in audit_log
+    db.execute(
+        "INSERT INTO audit_log (email_id, target_folder, confidence, "
+        "classification_source, llm_reasoning, moved, created_at) "
+        "VALUES (?, ?, ?, 'llm', ?, 0, ?)",
+        ("email-ruled", "INBOX/Shopping", 0.88, "llm said shopping", "2026-01-01T00:00:00"),
+    )
+    db.commit()
+
+    # Create a rule that now matches this sender
+    rule_engine = RuleEngine(db, ThresholdsConfig())
+    rule_engine.create_rule(
+        rule_type="exact_sender",
+        condition_value="orders@amazon.com",
+        target_folder_path="INBOX/Shopping/Orders",
+        confidence=0.95,
+        source="bootstrap",
+    )
+
+    mock_jmap = MagicMock()
+    mock_jmap.get_thread_email_ids.return_value = []
+    mock_tree = MagicMock()
+    mock_tree.inbox_id = "mb-inbox"
+    mock_tree.path_for.return_value = None
+
+    pipeline = ClassificationPipeline(
+        db=db, rule_engine=rule_engine, llm_classifier=None,
+        jmap_client=mock_jmap, mailbox_tree=mock_tree,
+        contacts={}, folder_descriptions="",
+    )
+
+    features = EmailFeatures(
+        email_id="email-ruled", thread_id="t1",
+        from_address="orders@amazon.com", from_domain="amazon.com",
+        to_addresses=["user@fastmail.com"], subject="Your order",
+        received_at="2026-03-10T10:00:00+00:00", preview="shipped",
+        keywords=["$seen"], current_mailbox_ids={"mb-inbox": True},
+    )
+    clf, skip = pipeline.classify_without_llm(features)
+
+    # Rule fires — cache is never reached
+    assert clf is not None
+    assert clf.source == "rule"
+    assert clf.folder_path == "INBOX/Shopping/Orders"
+
+
+# ------------------------------------------------------------------
+# X26: Non-LLM sources always have cached=0
+# ------------------------------------------------------------------
+
+
+def test_non_llm_decisions_have_cached_false(db: Database):
+    """Thread and rule classifications always have cached=False on the decision.
+
+    Covers system test plan X26: audit_log.cached defaults to 0 for non-LLM.
+    """
+    from mailsort.mover.mover import build_move_decision
+    from mailsort.config import ThresholdsConfig
+
+    features = EmailFeatures(
+        email_id="email-1", thread_id="t1",
+        from_address="test@example.com", from_domain="example.com",
+        to_addresses=["user@fastmail.com"], subject="Test",
+        received_at="2026-03-10T10:00:00+00:00", preview="test",
+        keywords=["$seen"], current_mailbox_ids={"mb-inbox": True},
+    )
+
+    rule_clf = Classification(
+        folder_path="INBOX/Affairs/Banks", confidence=0.95, source="rule", rule_id=1,
+    )
+    decision = build_move_decision(features, rule_clf, {}, ThresholdsConfig())
+    assert decision.cached is False
+
+    thread_clf = Classification(
+        folder_path="INBOX/Affairs/Banks", confidence=0.90, source="thread",
+    )
+    decision_thread = build_move_decision(features, thread_clf, {}, ThresholdsConfig())
+    assert decision_thread.cached is False

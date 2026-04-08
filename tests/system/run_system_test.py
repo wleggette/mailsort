@@ -233,6 +233,48 @@ def phase_dry_run(config: str) -> tuple[bool, str]:
         db.close()
 
 
+def phase_dry_run_cached(config: str, first_run_id: str) -> tuple[bool, str]:
+    """Phase 3b: Second dry run to verify LLM cache hits (S10).
+
+    Runs a second dry-run with identical config. LLM-classified emails
+    from the first run should be served from cache (cached=1).
+    """
+    print("\n" + "=" * 60)
+    print("Phase 3b: Cached Dry Run (S10)")
+    print("=" * 60)
+
+    result = run_mailsort("dry-run", config)
+    if result.returncode != 0:
+        print("  ERROR: Second dry run failed")
+        return False, ""
+
+    import yaml
+    with open(config) as f:
+        cfg = yaml.safe_load(f)
+    db_path = cfg.get("db_path", "data/test.db")
+
+    from mailsort.db.database import Database
+    from mailsort.db.migrations import run_migrations
+    from tests.system.verify_results import verify_dry_run_cached
+
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        row = db.execute(
+            "SELECT run_id FROM runs WHERE trigger != 'bootstrap' "
+            "ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            print("  ERROR: No second run found in database")
+            return False, ""
+        second_run_id = row["run_id"]
+        v = verify_dry_run_cached(db, first_run_id, second_run_id)
+        return v.failed == 0, second_run_id
+    finally:
+        db.close()
+
+
 def phase_age_gate(config: str, to_email: str = "") -> tuple[bool, str]:
     """Phase 4: Verify age gate blocks too-new emails, then verify they move after waiting.
 
@@ -823,6 +865,12 @@ def main():
     dry_ok, dry_run_id = phase_dry_run(args.config)
     if not dry_ok:
         print("\nDRY RUN VERIFICATION FAILED — continuing anyway")
+
+    # Phase 3b: Cached Dry Run (S10)
+    if dry_run_id:
+        cache_ok, _ = phase_dry_run_cached(args.config, dry_run_id)
+        if not cache_ok:
+            print("\nCACHED DRY RUN VERIFICATION FAILED — continuing anyway")
 
     # Phase 4: Age Gate Test
     age_ok, live_run_id = phase_age_gate(args.config, to_email=args.to_email or "")

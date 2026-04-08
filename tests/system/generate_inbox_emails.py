@@ -275,6 +275,18 @@ def generate_inbox_emails() -> list[dict]:
             "description": "L3a-2: Chase correction target #3 — corrected to Stores in Phase 4",
         },
 
+        # S11: Ineligible (flagged) but still LLM-classified — no rule match
+        {
+            "from_email": "updates@newinsurance.com",
+            "from_name": "New Insurance Updates",
+            "subject": f"[TEST] NewInsurance policy renewal {ts}",
+            "body": "Your home insurance policy is up for renewal next month. Review your coverage options.",
+            "keywords": {"$seen": True, "$flagged": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "flagged",
+            "description": "S11: Flagged, no rule — LLM classifies but skip_reason=flagged",
+        },
+
         # P2: list_id should beat exact_sender
         # activities@ymca.org has BOTH an exact_sender rule AND <updates.ymca.org> has a list_id rule.
         # list_id (priority 1) should fire, not exact_sender (priority 2).

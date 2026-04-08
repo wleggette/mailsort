@@ -48,9 +48,14 @@ Every email in the audit log has one of these outcomes:
 | **no classification** | `no classification` (gray) | No rule/thread/LLM match |
 | **llm unavailable** | `llm unavailable` (gray) | LLM not configured or API error |
 | **unknown folder** | `unknown folder` (gray) | Target folder no longer exists |
-| **system** | `system` (amber) | Classification fallback when all tiers failed (source="system") |
 
 The UI shows just the reason — no "left in inbox /" prefix.
+
+**Note on `source="system"`:** When all classification tiers fail (LLM
+unavailable, gated, or API error), `build_move_decision` creates a fallback
+classification with `source="system"`. The skip_reason is the specific cause
+(e.g., `llm_unavailable`, `no_classification`). The UI shows an amber badge
+for the system source in the classification source column.
 
 ### Log Format
 

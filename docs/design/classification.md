@@ -1,7 +1,7 @@
 # Classification Pipeline
 
 The classification pipeline determines which folder an email belongs in. It uses
-a tiered approach: thread context → rule engine → LLM. First match wins.
+a tiered approach: thread context → rule engine → LLM cache → LLM. First match wins.
 
 ## Pipeline Steps
 
@@ -36,7 +36,7 @@ Classification resolution (step 4) tries sources in order:
     - If LLM fails or is gated → skip_reason set (llm_unavailable, llm_skip_*)
 ```
 
-Thread context (step 2) handles replies and forwarded messages where the sender
+Thread context (step 4a) handles replies and forwarded messages where the sender
 changes but the conversation topic doesn't — e.g., your husband replying to a
 vendor email, or a family member reply-chain. It runs before rules because a
 known thread context is more reliable than any pattern match.
@@ -47,7 +47,7 @@ known thread context is more reliable than any pattern match.
 - `skip_senders` — never classify these senders (filtered out entirely)
 - Deduplication — skip emails already processed in this run
 
-**All remaining inbox emails are classified** (thread → rules → LLM), then
+**All remaining inbox emails are classified** (thread → rules → LLM cache → LLM), then
 post-classification gates determine whether the move actually happens:
 
 - **Confidence gate** — classification confidence must meet threshold

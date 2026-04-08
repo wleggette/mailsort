@@ -505,6 +505,24 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
             v.check(src == "llm" or src is None,
                      f"S6 Ambiguous below threshold: source={src}")
 
+        # --- S11: Ineligible email still gets LLM classification ---
+        elif "newinsurance" in subject.lower():
+            v.check(src == "llm", f"S11 NewInsurance flagged: source=llm (got {src})")
+            v.check(skip == "flagged", f"S11 NewInsurance: skip_reason=flagged (got {skip})")
+            v.check(folder and folder != "INBOX",
+                     f"S11 NewInsurance: target_folder is non-INBOX (got {folder})")
+
+    # ------------------------------------------------------------------
+    # X26: Non-LLM rows always have cached=0
+    # ------------------------------------------------------------------
+    non_llm_cached = db.execute(
+        "SELECT COUNT(*) FROM audit_log WHERE run_id = ? "
+        "AND classification_source != 'llm' AND cached != 0",
+        (run_id,),
+    ).fetchone()[0]
+    v.check(non_llm_cached == 0,
+            f"X26 Non-LLM rows have cached=0 (violations: {non_llm_cached})")
+
     # ------------------------------------------------------------------
     # Hit counts — dry run must not record hits
     # ------------------------------------------------------------------
@@ -522,6 +540,64 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
     v.check(rules_with_last_relevant == total_rules,
             f"All rules have last_relevant_at set after dry run "
             f"(set: {rules_with_last_relevant}, total: {total_rules})")
+
+    v.print_report()
+    return v
+
+
+def verify_dry_run_cached(
+    db: Database, first_run_id: str, second_run_id: str,
+) -> VerificationResult:
+    """S10: Verify second dry run uses LLM cache hits.
+
+    The second dry run reuses the same DB with no config changes, so
+    LLM-classified emails from the first run should be cache hits.
+    """
+    v = VerificationResult()
+    print(f"\n=== Verifying Cached Dry Run ({second_run_id[:8]}) ===")
+
+    # Get LLM rows from the first run (these are the cache sources)
+    first_llm = db.execute(
+        "SELECT email_id, target_folder, confidence FROM audit_log "
+        "WHERE run_id = ? AND classification_source = 'llm'",
+        (first_run_id,),
+    ).fetchall()
+    first_llm_by_email = {r["email_id"]: dict(r) for r in first_llm}
+
+    v.check(len(first_llm_by_email) > 0,
+            f"S10 First run has LLM rows to cache (got {len(first_llm_by_email)})")
+
+    # Get all rows from the second run
+    second_rows = db.execute(
+        "SELECT * FROM audit_log WHERE run_id = ?", (second_run_id,),
+    ).fetchall()
+
+    v.check(len(second_rows) > 0,
+            f"S10 Second run has audit rows (got {len(second_rows)})")
+
+    # Check LLM rows in the second run
+    second_llm = [r for r in second_rows if r["classification_source"] == "llm"]
+    cached_count = sum(1 for r in second_llm if r["cached"])
+    v.check(cached_count > 0,
+            f"S10 Second run has LLM cache hits (cached=1: {cached_count})")
+
+    for r in second_llm:
+        eid = r["email_id"]
+        if eid in first_llm_by_email:
+            v.check(r["cached"] == 1,
+                     f"S10 {eid}: cached=1 on second run (got {r['cached']})")
+            first = first_llm_by_email[eid]
+            v.check(r["target_folder"] == first["target_folder"],
+                     f"S10 {eid}: same target_folder "
+                     f"({r['target_folder']} vs {first['target_folder']})")
+
+    # Non-LLM rows should NOT be cached
+    non_llm_cached = sum(
+        1 for r in second_rows
+        if r["classification_source"] != "llm" and r["cached"]
+    )
+    v.check(non_llm_cached == 0,
+            f"S10 Non-LLM rows have cached=0 (violations: {non_llm_cached})")
 
     v.print_report()
     return v

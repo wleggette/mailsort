@@ -574,7 +574,7 @@ The no-LLM dry run temporarily unsets `ANTHROPIC_API_KEY` and runs
 ### 4.4 Dry Run Verification Checklist
 
 - [ ] **Run record created**: `runs` table has a row with `status='completed'` and `emails_moved=0` for the dry-run `run_id`
-- [ ] **Hit counts unchanged**: all rules have `hit_count=0` and `last_relevant_at IS NULL` after dry run (dry run does not record hits; `last_relevant_at` is updated by `compute_rule_confidence()` only on live runs)
+- [ ] **Hit counts unchanged**: all rules have `hit_count=0` after dry run (dry run does not record hits). `last_relevant_at` IS NOT NULL — `compute_rule_confidence()` runs during the learning step even on dry runs and populates it from bootstrap audit_log evidence
 - [ ] **Audit log populated**: every inbox email has an `audit_log` row for each dry-run pass (query by `run_id`)
 - [ ] **Classification sources correct**: rule, thread, llm, or none as expected
 - [ ] **Skip reasons correct**: unread, flagged, too_new where expected
