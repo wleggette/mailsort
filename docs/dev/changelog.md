@@ -5,6 +5,22 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-08 — Fix: Eligibility gates override confidence gate skip_reason
+
+**What changed:**
+- **fix:** Eligibility gates (unread, flagged, too_new) now run unconditionally,
+  overriding confidence-gate `skip_reason`. A flagged email with below-threshold
+  LLM confidence shows `skip_reason="flagged"` in the audit log, not
+  `"below_threshold"`. User-intent signals always take precedence.
+- **fix:** LLM cache timestamp format mismatch — `_update_classification_version`
+  used ISO `T` separator but `audit_log.created_at` uses SQLite's space-separated
+  format. Cache lookups always missed. Fixed to space-separated format.
+
+**Files:** `orchestrator.py`, `architecture.md`, `classification.md`,
+`system-test-plan.md`, `verify_results.py`, `test_orchestrator.py`
+
+---
+
 ## 2026-04-08 — Feat: LLM classification cache + system source
 
 **What changed:**

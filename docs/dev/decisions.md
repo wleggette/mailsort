@@ -6,6 +6,40 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-08 — Eligibility gates override confidence gate skip_reason
+
+**Context:** When a flagged email had below-threshold LLM confidence, the
+confidence gate fired first (`skip_reason="below_threshold"`), and the
+eligibility gate only ran when `should_move` was still True. The audit log
+showed `below_threshold` instead of `flagged`, hiding the user-intent signal.
+
+**Options considered:**
+1. **Keep current order** (confidence gate → eligibility gate only if
+   `should_move`). Simpler, but the audit log misleads: a flagged email
+   looks like a confidence problem.
+2. **Run eligibility gates unconditionally**, overriding any prior
+   `skip_reason`. The audit log always reflects the user-intent signal.
+3. **Run eligibility gates first**, before the confidence gate. Would prevent
+   the confidence gate from running for ineligible emails — but then the audit
+   log loses the confidence assessment for flagged/unread emails.
+
+**Decision:** Option 2 — eligibility gates always run and override.
+
+**Rationale:**
+- User-intent signals (unread, flagged, too_new) represent observable state
+  the user controls. They should be clearly visible in the audit log.
+- The confidence gate still runs (classification quality is still assessed),
+  but its `skip_reason` is overridden when an eligibility gate also applies.
+- Option 3 was rejected because it loses the "what would mailsort do if this
+  email were eligible?" information — the same audit visibility principle that
+  drove the LLM cache decision.
+
+**Affected files:** `orchestrator.py` (removed `if decision.should_move:` guard
+on eligibility gates), `architecture.md` (Step 5 diagram), `classification.md`
+(precedence paragraph), `system-test-plan.md` (S11 + X27).
+
+---
+
 ## 2026-04-08 — LLM classification cache (cache only, no eligibility gate)
 
 **Context:** Every run makes LLM API calls for emails that sit in the inbox
