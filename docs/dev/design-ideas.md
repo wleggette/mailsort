@@ -1039,3 +1039,164 @@ This factory is used by both Layer 1 (route tests) and Layer 2 (query
 tests). The factory creates a self-consistent dataset — all foreign keys
 valid, timestamps in correct order, skip_reasons matching eligibility
 gate logic.
+
+---
+
+## Rules Detail Page — Duplicate Inflation in Evidence & Matches
+
+**Status:** Bug, not started (2026-04-16)
+
+### Problem
+
+The rules detail page (`/rules/{id}`) shows inflated counts and duplicate
+rows in the **Evidence Emails** and **Recent Matches** panels. An email
+that sits in the inbox for N classification cycles produces N audit_log
+rows. Each row appears as a separate entry in both tables, and the panel
+header counts (e.g., "EVIDENCE EMAILS (21)") reflect raw row counts rather
+than unique emails.
+
+**Example:** Rule 80 (`exact_sender: REV.DoNotReply@illinois.gov →
+Projects/2025/2024 Taxes`) shows "EVIDENCE EMAILS (21)" and "RECENT
+MATCHES (17)". The actual email count is 5 — each email has been
+classified across multiple cycles.
+
+**Hit Count** (`rules.hit_count`) is also inflated. It's incremented once
+per rule match per classification pass (`_record_hit` in `rules.py`).
+An email in the inbox for 10 cycles contributes 10 to `hit_count`.
+
+### Root cause
+
+Three queries in `rules.py` (route handler) return raw audit_log rows
+without deduplication:
+
+1. **Evidence Emails** (line 211):
+   ```python
+   SELECT * FROM audit_log WHERE {col} COLLATE NOCASE = ?
+   ORDER BY created_at DESC LIMIT 100
+   ```
+   Returns every audit row matching the rule's condition (sender, domain,
+   or list_id). No dedup by `email_id`.
+
+2. **Recent Matches** (line 122):
+   ```python
+   SELECT * FROM audit_log WHERE rule_id = ?
+   ORDER BY created_at DESC LIMIT 50
+   ```
+   Returns every audit row where this rule fired. Same email appears once
+   per cycle it was classified.
+
+3. **Performance stats** (lines 147–208): `COUNT(*)` on audit_log for
+   coherence and evidence totals. These happen to look correct for emails
+   that were moved (only 1 `moved=1` row per email), but `moved=0` rows
+   (skipped due to eligibility gates) accumulate across cycles and inflate
+   the denominator.
+
+4. **Hit Count** (`rules.hit_count`, `classifier/rules.py` line 93):
+   `UPDATE rules SET hit_count = hit_count + 1` on every match. Not
+   deduplicated — repeated classifications of the same email inflate it.
+
+### Fix
+
+Apply the same dedup pattern used on the analysis page: keep only the
+most recent audit row per `email_id`. Three approaches depending on
+the query:
+
+#### Evidence Emails & Recent Matches — dedup CTE
+
+```sql
+WITH latest AS (
+  SELECT a.* FROM audit_log a
+  WHERE a.{col} COLLATE NOCASE = ?
+    AND a.id = (
+      SELECT MAX(a2.id) FROM audit_log a2
+      WHERE a2.email_id = a.email_id
+        AND a2.{col} COLLATE NOCASE = ?
+    )
+)
+SELECT * FROM latest ORDER BY created_at DESC LIMIT 100
+```
+
+Same pattern for Recent Matches but filtered by `rule_id` instead.
+
+The panel count changes from `evidence_rows|length` (raw rows) to the
+number of unique emails.
+
+#### Performance stats — COUNT(DISTINCT email_id)
+
+Replace `COUNT(*)` with `COUNT(DISTINCT email_id)` for coherence and
+evidence totals. Corrections and confirming sorts are already 1-per-email
+(the learner deduplicates), so they don't need changes.
+
+#### Hit Count — two options
+
+**Option A — Dedup at query time.** Don't change `hit_count` tracking.
+Instead, show `COUNT(DISTINCT email_id) FROM audit_log WHERE rule_id = ?`
+on the detail page. Rename the metric to "Unique Emails Matched" for
+clarity. The `hit_count` column becomes an internal counter only.
+
+**Option B — Dedup at write time.** Before incrementing `hit_count`, check
+if this `email_id` was already counted for this rule in the current run.
+Track via a set in the `RuleEngine` instance (reset per run). This gives
+an accurate `hit_count` across runs but requires a minor refactor.
+
+**Recommendation:** Option A — simpler, no write-path changes, and the
+query is already needed for the detail page. The `hit_count` column can
+be deprecated or repurposed later.
+
+### Affected code
+
+- `src/mailsort/web/routes/rules.py` — `rule_detail()`: dedup evidence_rows,
+  audit_rows, and performance stats queries
+- `src/mailsort/web/templates/rules/detail.html` — panel counts now reflect
+  unique emails (header text unchanged, just accurate)
+- `src/mailsort/classifier/rules.py` — hit_count tracking (if Option B)
+- No schema changes required
+
+### Testing strategy
+
+#### Route-level tests (pytest + FastAPI TestClient)
+
+**File:** `tests/test_web_rules.py`
+
+**Fixture:** Seed a DB with:
+- 1 rule (exact_sender, active, target folder = `Projects/2025/2024 Taxes`)
+- 5 unique emails from the matching sender
+- 3 of those emails classified across 4 cycles each (12 extra audit rows)
+- 1 email classified once and moved
+- 1 email classified once, skipped (eligibility gate)
+- Total raw audit rows: ~17; unique emails: 5
+
+**Tests:**
+
+- **`test_evidence_emails_deduplicated`** — evidence_rows in template
+  context has exactly 5 entries, not 17+
+- **`test_evidence_count_matches_unique_emails`** — header count (passed
+  in context or derived from `evidence_rows|length`) equals 5
+- **`test_evidence_shows_latest_row`** — for a multi-cycle email, the
+  evidence row shown is the most recent (highest `id` / latest
+  `created_at`)
+- **`test_recent_matches_deduplicated`** — audit_rows in context has one
+  entry per email, not one per cycle
+- **`test_recent_matches_count`** — header count matches unique emails
+  classified by this rule
+- **`test_performance_coherence_uses_distinct`** — coherence stat uses
+  unique email count, not row count
+- **`test_performance_evidence_total_uses_distinct`** — evidence total
+  in stats matches unique emails
+- **`test_hit_count_or_unique_metric`** — the displayed metric reflects
+  unique emails matched (Option A) or accurate per-email count (Option B)
+
+#### Regression test for the analysis page pattern
+
+- **`test_dedup_pattern_consistent`** — verify that the dedup CTE used in
+  rules detail follows the same pattern as the analysis page (max `id` per
+  `email_id`). This prevents the two pages from diverging.
+
+#### Manual smoke test
+
+After the fix, load the same rule (Rule 80) and verify:
+- [ ] Evidence Emails shows ~5 rows, not 21
+- [ ] Recent Matches shows ~5 rows, not 17
+- [ ] Performance stats (Evidence column) are consistent with unique counts
+- [ ] No visual regressions on other rules with low-volume senders (where
+  dedup doesn't change anything)
