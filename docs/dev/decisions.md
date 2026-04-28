@@ -6,6 +6,67 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-28 — Phase 9: Google SSO Authentication
+
+**Context:** The web UI was completely unauthenticated — anyone who could reach
+the server could view audit logs, manage rules, and influence classification.
+Acceptable on localhost, but risky for LAN/reverse-proxy deployments.
+
+**Key decisions:**
+
+1. **Authentication as a gate, not identity.** Single-user design with no
+   `users` table. The `sessions` table stores the Google profile info but
+   there's no per-user `user_id` on `audit_log` or `rules`. Multi-user can
+   be layered on later.
+
+2. **Server-side sessions over signed cookies.** Stores session data in
+   SQLite (`sessions` table) with an opaque cookie ID. Enables immediate
+   revocation, "log out everywhere", and a sessions panel on `/settings`.
+   The extra SQLite lookup per request is negligible — the DB connection is
+   already opened by the existing middleware.
+
+3. **Authlib for OAuth.** First-class Starlette/FastAPI integration, handles
+   the OAuth dance, token exchange, and JWKS validation. Reduces auth routes
+   to ~170 lines. Less surface area for subtle OAuth bugs compared to rolling
+   it manually with httpx + PyJWT.
+
+4. **Disabled by default.** When `auth.google_client_id` is absent, the auth
+   middleware is a complete no-op — no redirects, no session checks. Zero
+   behavioral change for existing deployments.
+
+5. **Lazy session cleanup.** 1-in-100 requests delete expired rows. Works in
+   both `mailsort start` (scheduler mode) and `mailsort web` (standalone).
+   No separate cleanup cron needed.
+
+6. **Starlette SessionMiddleware for OAuth CSRF state.** Ephemeral secret
+   (regenerated on restart) protects the short-lived OAuth dance. Long-lived
+   user sessions use the custom `sessions` table, not this middleware.
+
+7. **Middleware ordering.** DB (outermost) → auth → template_context
+   (innermost). The last-defined `@app.middleware` in FastAPI is outermost.
+   Auth middleware needs `request.state.db`, so DB must wrap it.
+
+8. **Separate /auth/login (page) and /auth/start (redirect).** The login page
+   shows a "Sign in with Google" button rather than auto-redirecting to Google.
+   This provides a clear error state (forbidden message) and avoids redirect
+   loops.
+
+**Alternatives considered:**
+- *Signed cookie sessions (no DB):* Simpler but no revocation, no visibility
+  into active sessions. Rejected — revocation matters for a tool with email
+  access.
+- *FastAPI dependency injection for auth:* Would require adding the dependency
+  to every route. Middleware approach is centralized and less error-prone.
+- *`httpx` + `PyJWT` instead of Authlib:* More control but more surface area
+  for OAuth bugs (nonce validation, JWKS rotation, token expiry).
+
+**Files:** `web/routes/auth.py`, `web/app.py` (middleware), `config.py`
+(`AuthConfig`), `db/migrations.py` (M13), `templates/login.html`,
+`templates/components/nav.html`, `templates/settings.html`,
+`routes/settings.py` (session management). 24 tests in `tests/test_auth.py`.
+
+---
+
 ## 2026-04-28 — Rules detail page: dedup evidence, matches, and stats
 
 **Context:** The rules detail page (`/rules/{id}`) showed inflated counts.

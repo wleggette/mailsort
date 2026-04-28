@@ -88,13 +88,13 @@ See [design/web-ui.md](../design/web-ui.md) for detailed implementation checklis
 - [x] UI updates: amber badge for `system`, source dropdown
 - [x] Documentation: architecture, classification, data-models, audit, decisions, changelog
 
-## Phase 9: Authentication (Google SSO)
+## Phase 9: Authentication (Google SSO) ✅
 See [design/web-ui.md](../design/web-ui.md) Phase 9 checklist for detailed items.
 
-- [ ] `authlib` dependency + `AuthConfig` pydantic model
-- [ ] `GOOGLE_CLIENT_SECRET` env var loading (same pattern as other secrets)
-- [ ] Migration 13: `sessions` table
-- [ ] Auth routes (`web/routes/auth.py`): login, callback, logout
-- [ ] Auth middleware: session validation, redirect, no-op when disabled
-- [ ] Template integration: login page, avatar/logout in base, sessions panel
-- [ ] Tests: middleware, session CRUD, allowlist, callback flow, template rendering
+- [x] `authlib` dependency + `AuthConfig` pydantic model
+- [x] `GOOGLE_CLIENT_SECRET` env var loading (same pattern as other secrets)
+- [x] Migration 13: `sessions` table
+- [x] Auth routes (`web/routes/auth.py`): login, callback, logout
+- [x] Auth middleware: session validation, redirect, no-op when disabled
+- [x] Template integration: login page, avatar/logout in base, sessions panel
+- [x] Tests: middleware, session CRUD, allowlist, callback flow, template rendering
