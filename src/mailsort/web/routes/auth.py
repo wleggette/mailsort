@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import logging
 import secrets
+import warnings
 from datetime import datetime, timedelta, timezone
+
+from authlib.deprecate import AuthlibDeprecationWarning
+warnings.filterwarnings("ignore", message="authlib.jose module is deprecated",
+                        category=AuthlibDeprecationWarning)
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Request

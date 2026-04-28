@@ -265,7 +265,8 @@ GET /folders              → Folder descriptions
 GET /settings             → Config view
 
 # Authentication (excluded from auth middleware)
-GET  /auth/login          → Redirect to Google OAuth
+GET  /auth/login          → Login page ("Sign in with Google" button)
+GET  /auth/start          → Redirect to Google OAuth
 GET  /auth/callback       → OAuth callback, create session
 POST /auth/logout         → Delete session, clear cookie
 
@@ -279,6 +280,8 @@ POST /api/rules/{id}/toggle    → Activate/deactivate rule
 POST /api/rules/{id}/edit      → Update rule confidence/folder
 POST /api/rules/create         → Create new rule
 POST /api/contacts/refresh     → Trigger contact refresh
+POST /settings/revoke-session/{id}  → Revoke a specific session
+POST /settings/revoke-other-sessions → Revoke all sessions except current
 ```
 
 ### File Structure
@@ -520,20 +523,19 @@ All filterable pages (audit log, rules) follow these conventions:
 - [x] `web/templates/settings.html` — organized cards: Fastmail, Scheduler,
       Thresholds, Auto-Rule, LLM, Filters & Exclusions, Logging
 
-### Phase 9: Authentication (Google SSO)
-- [ ] Add `authlib` to `pyproject.toml` dependencies
-- [ ] Add `AuthConfig` model to `config.py` (google_client_id, allowed_emails,
+### Phase 9: Authentication (Google SSO) ✅
+- [x] Add `authlib`, `itsdangerous` to `pyproject.toml` dependencies
+- [x] Add `AuthConfig` model to `config.py` (google_client_id, allowed_emails,
       session_lifetime_hours, redirect_uri) + GOOGLE_CLIENT_SECRET env loading
-- [ ] Migration 13: `sessions` table (id, email, name, picture_url, user_agent,
+- [x] Migration 13: `sessions` table (id, email, name, picture_url, user_agent,
       ip_address, created_at, expires_at)
-- [ ] `web/routes/auth.py` — login, callback, logout routes (Authlib)
-- [ ] Auth middleware in `web/app.py` — session validation, redirect to login,
+- [x] `web/routes/auth.py` — login page, OAuth start, callback, logout routes (Authlib)
+- [x] Auth middleware in `web/app.py` — session validation, redirect to login,
       no-op when disabled, excluded paths (/auth/*, /static/*)
-- [ ] `web/templates/login.html` — "Sign in with Google" button
-- [ ] `web/templates/base.html` — avatar + name + logout form when session exists
-- [ ] `web/templates/components/nav.html` — avatar in sidebar bottom
-- [ ] `web/templates/settings.html` — Sessions panel (active sessions, revoke)
-- [ ] Lazy session cleanup (1-in-100 requests: delete expired rows)
-- [ ] `config.yaml.example` — commented `auth` block
-- [ ] Tests: middleware, session CRUD, allowlist, config parsing, OAuth callback
-      (mocked Authlib), logout, template rendering
+- [x] `web/templates/login.html` — "Sign in with Google" button
+- [x] `web/templates/components/nav.html` — avatar + sign-out in sidebar bottom
+- [x] `web/templates/settings.html` — Sessions panel (active sessions, revoke)
+- [x] Lazy session cleanup (1-in-100 requests: delete expired rows)
+- [x] `config.yaml.example` — commented `auth` block
+- [x] Tests: middleware, session CRUD, allowlist, config parsing, logout,
+      session revocation, template rendering (24 tests)

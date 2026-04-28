@@ -39,3 +39,6 @@ packages = ["src/mailsort"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--tb=short"
+filterwarnings = [
+    "ignore:authlib.jose module is deprecated:authlib.deprecate.AuthlibDeprecationWarning",
+]
