@@ -67,10 +67,11 @@ Single audit log entry with full context.
 
 All classification rules with management capabilities.
 
-- **Table** with columns: type, value, folder, confidence, source, hits, last relevant, active
+- **Table** with columns: type, value, folder, confidence, source, hits, created, last relevant, active
 - **Filter tabs**: All / Active / Inactive / Suggested
 - **Sort** by any column (click header)
 - **Search** by value or folder
+- **Filter by creation date** — `?created_days=30` shows rules created in last N days
 - **Actions per rule**:
   - Toggle active/inactive
   - Edit confidence
@@ -114,18 +115,34 @@ Single rule with full history.
 Interactive version of `mailsort analyze`.
 
 - **Date range picker** (default 30 days)
+- **Summary cards** — Emails Classified, Moved, Skipped, User Corrections
 - **Classification sources** — bar chart with counts and percentages.
   Bar colors: blue (rule), purple (llm), teal (thread), orange (correction).
   Excludes bootstrap runs, dry runs, and `manual` rows (user sorts).
   Deduplicated by `email_id` — each email counts once with its final outcome.
-- **User Corrections card** — count of distinct emails with
-  `classification_source='correction'`. Error rate = corrections / moved × 100.
 - **LLM confidence histogram** — bucketed distribution with current threshold marked
-- **Skipped-then-sorted table** — emails where the LLM was right but threshold blocked it,
-  with average confidence and suggested threshold adjustment.
-  User action detected via `classification_source IN ('manual', 'correction')`.
+- **Rule confidence distribution** — bucketed by confidence range, linked to
+  `/rules` with confidence filters
+- **Classification Analysis section** — 5 action-oriented cards:
+  - **LLM Accuracy Summary** — tree structure (LLM classified → moved/skipped →
+    corrected/later-sorted → agreed/disagreed) + 3 precision metrics (System
+    Effectiveness, Move Precision, Threshold Precision) with adaptive color
+    thresholds (green ≥80%, amber 50–79%, red <50%)
+  - **Folder Description Gaps** — wrong-folder skipped-then-sorted emails grouped
+    by destination folder, with LLM guess + confidence per row, "Review description"
+    links to `/folders?highlight=`, per-row `→` to `/audit/{id}`, collapsible rows
+  - **Known Contact Sorting** — per-contact cards for senders with ≥N
+    `below_threshold_known_contact` skips (configurable via
+    `classification.min_known_contact_skips`). Shows sorting mechanism counts
+    (thread/rules/LLM/blocked), folder coherence bars, conditional coherence note,
+    threshold-blocked email table
+  - **Learning Effectiveness** — total auto rules, emails sorted by rules, rules
+    created in selected period (links to `/rules?filter=all&created_days=N`),
+    recently created rules table with hit counts
+  - **Eligibility-Gated Emails** — total/flagged/unread/too_new breakdown
 - **Rule corrections table** — emails where a rule moved to folder A and the user
-  relocated to folder B (`classification_source='correction'`)
+  relocated to folder B
+- **Recommendations** — threshold adjustment suggestions
 
 ### 7. Contacts (`/contacts`)
 
@@ -143,6 +160,8 @@ Folder structure and descriptions with regeneration.
 
 - **Tree view** or indented table showing folder hierarchy
 - Columns: folder path, description, source (auto/manual), email count (from audit_log)
+- **Highlight support** — `?highlight=FolderA,FolderB` scrolls to and highlights
+  specified folders (yellow background). Used by analysis page cross-links.
 - **Excluded folders** shown grayed out with the matching pattern
 - **Per-folder regeneration** — "Regenerate" link on each row (hidden for manual
   overrides, stale, or excluded folders). POSTs to `/folders/regenerate`, fetches

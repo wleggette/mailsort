@@ -6,6 +6,55 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-27 — Analysis page redesign: cards, metrics, and dedup
+
+**Context:** The analysis page had a flat "Skipped Emails You Later Sorted"
+table with inflated counts (N×1 cross-join per email across classification
+cycles). The page provided data but no actionable guidance.
+
+**Decisions:**
+
+1. **Dedup by email_id, keep latest row.** The skipped-then-sorted query now
+   uses a CTE that keeps only the most recent LLM skip row per `email_id`
+   before joining to the manual/correction row. Same pattern as the overall
+   dedup CTE used for summary stats.
+
+2. **Merge "folder description gaps" and "folder disambiguation" into one card.**
+   The original design split wrong-folder emails at confidence 0.60 (low = "LLM
+   doesn't know", high = "LLM confused between folders"). The split doesn't
+   matter to the user — in both cases the action is "review folder descriptions."
+   Single card grouped by destination folder with "LLM said" column inline.
+
+3. **No generated narrative text.** The design originally included synthesized
+   paragraphs ("Thread context is the most effective sorting mechanism...").
+   This is hard to implement deterministically — every combination of data
+   states needs a hand-written template. Replaced with structured data
+   (mechanism counts, coherence bars, email tables) and at most one conditional
+   one-liner for coherence notes.
+
+4. **System effectiveness > classification accuracy.** The LLM accuracy metric
+   measures "did the system do the right thing" (move correctly OR correctly
+   block), not "did the LLM pick the right folder." An LLM that says "I'm not
+   sure" (low confidence, wrong folder) and gets blocked is a system success,
+   not a failure. Three metrics: System Effectiveness = (moved correctly +
+   correctly blocked) / all with outcomes. Move Precision = correct moves /
+   total moves. Threshold Precision = justified blocks / total blocks.
+
+5. **No bootstrap vs. learned rule distinction.** Both use `source='auto'`
+   (per decision 2026-03-21). Instead of a fragile heuristic, show all auto
+   rules + rules created in the selected time period.
+
+6. **Display thresholds configurable.** `min_known_contact_skips` (default 3)
+   controls when the known contact card appears. Read from
+   `classification.min_known_contact_skips` in config.
+
+**Affected files:** `web/routes/analyze.py` (rewrite), `web/templates/analyze.html`,
+`web/routes/rules.py` (`created_days` filter), `web/templates/rules/list.html`
+(`Created` column + filter), `web/templates/folders.html` (`?highlight=` support),
+`config.py`, `tests/test_web_analyze.py` (15 tests).
+
+---
+
 ## 2026-04-08 — Eligibility gates override confidence gate skip_reason
 
 **Context:** When a flagged email had below-threshold LLM confidence, the

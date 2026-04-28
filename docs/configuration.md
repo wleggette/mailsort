@@ -169,6 +169,7 @@ logging_config:
 | `staleness_decay_days` | `365` | Duration of linear decay from 1.0 to floor |
 | `staleness_floor` | `0.6` | Minimum staleness factor |
 | `deactivation_threshold` | `0.50` | Confidence below which a rule is set to `active=0` |
+| `min_known_contact_skips` | `3` | Min threshold-blocked emails before showing a known contact card on `/analyze` |
 
 ### `classification.base_confidence`
 
