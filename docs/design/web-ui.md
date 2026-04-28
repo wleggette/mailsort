@@ -48,6 +48,7 @@ The core inspection tool. Every classification decision mailsort has made.
   - `?sender=noreply@chase.com`
   - `?days=7|30|90`
   - `?run_id=...`
+  - `?rule_id=N` (numeric, filter by rule that matched)
 - **Source badges** — color-coded by `classification_source`:
   - `rule` → blue, `llm` → purple, `thread` → teal, `manual` → gray,
     `correction` → orange
@@ -111,9 +112,14 @@ Single rule with full history.
   `auto_rule_domain_coherence` (default 0.80), show an amber warning badge:
   "Coherence below threshold — consider reviewing this rule."
 - **Evidence Emails** — all emails matching the rule's condition across all
-  folders, with folder column color-coded (green = target, amber = other).
-  Includes `classification_source` badge (rule/llm/manual/correction/thread).
-- **Audit log entries** that matched this rule (recent 50)
+  folders, deduplicated by `email_id` (latest row per email). Folder column
+  color-coded (green = target, amber = other). Includes `classification_source`
+  badge. Subject links to `/audit/{id}`. "View in audit log →" links to
+  `/audit?rule_id=N&days=365`.
+- **Recent Matches** — emails classified by this rule, deduplicated by `email_id`.
+  Subject links to `/audit/{id}`.
+- **Emails Matched** metric — `COUNT(DISTINCT email_id)` for this rule, replacing
+  the inflated `hit_count` which counted per-cycle, not per-email.
 
 ### 6. Threshold Analysis (`/analyze`)
 

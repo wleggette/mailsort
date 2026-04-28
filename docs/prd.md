@@ -106,6 +106,7 @@ mailsort bootstrap      # One-time: scan folders, seed rules, generate descripti
 mailsort run             # Single classification + move pass
 mailsort dry-run         # Classify but don't move
 mailsort start           # Start scheduler (runs every N minutes)
+mailsort describe        # Regenerate folder descriptions (--folder, --pattern, --all)
 mailsort check-config    # Validate config and Fastmail connectivity
 mailsort export-rules    # Dump rules to YAML
 mailsort analyze         # Confidence threshold analysis

@@ -6,6 +6,39 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-28 — Rules detail page: dedup evidence, matches, and stats
+
+**Context:** The rules detail page (`/rules/{id}`) showed inflated counts.
+Rule 13 displayed "EVIDENCE EMAILS (100)" and Hit Count 2,157 for 5 unique
+emails — one email classified across 430+ cycles produced 2,108 audit rows.
+
+**Decisions:**
+
+1. **Evidence Emails deduped by `MAX(id)` per `email_id`.** Same CTE pattern
+   as the analysis page. Shows one row per unique email, latest classification.
+
+2. **Recent Matches deduped by `MAX(id)` per `email_id` + `rule_id`.**
+
+3. **Performance stats use `COUNT(DISTINCT email_id)`.** Coherence and evidence
+   counts now reflect unique emails, not raw rows. Corrections and confirming
+   sorts were already 1-per-email (learner deduplicates).
+
+4. **Option A for Hit Count: query-time dedup.** Display "Emails Matched"
+   (`COUNT(DISTINCT email_id) WHERE rule_id = ?`) instead of the inflated
+   `hit_count` column. No write-path changes. The `hit_count` column is
+   retained for internal use but not displayed.
+
+5. **Subject links go to `/audit/{id}`.** Evidence section also has a
+   "View in audit log →" link to `/audit?rule_id=N&days=365`.
+
+6. **`rule_id` filter added to audit page.** New `?rule_id=` param + "Rule #"
+   search box enables link-through from rules detail.
+
+**Affected files:** `web/routes/rules.py`, `web/templates/rules/detail.html`,
+`web/routes/audit.py`, `web/templates/audit/list.html`.
+
+---
+
 ## 2026-04-28 — Audit log unique mode: dedup by outcome
 
 **Context:** The audit log shows one row per classification event per cycle.
