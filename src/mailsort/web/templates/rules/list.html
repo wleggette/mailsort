@@ -108,12 +108,17 @@
       <input name="conf_max" type="text" value="{{ filters.conf_max }}" placeholder="0.95"
              class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
+    <div class="w-24">
+      <label class="block text-xs font-medium text-gray-500 mb-1">Created (days)</label>
+      <input name="created_days" type="text" value="{{ filters.created_days }}" placeholder="30"
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
+    </div>
     <div class="flex gap-1">
       <button type="submit" class="px-3 h-[34px] text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
         Filter
       </button>
       <a href="/rules?filter={{ filter }}"
-         class="px-2 h-[34px] inline-flex items-center text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 {{ '' if filters.type or filters.search or filters.folder or filters.conf_min or filters.conf_max else 'invisible' }}">
+         class="px-2 h-[34px] inline-flex items-center text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 {{ '' if filters.type or filters.search or filters.folder or filters.conf_min or filters.conf_max or filters.created_days else 'invisible' }}">
         ✕
       </a>
     </div>
