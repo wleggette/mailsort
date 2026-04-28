@@ -519,6 +519,104 @@ Moved to `decisions.md` §2026-04-27. See commit `7af0ad4`.
 
 ---
 
+## Audit Log — Deduplicated View (Show Unique Emails)
+
+**Status:** Not started (2026-04-28)
+
+### Problem
+
+The audit log (`/audit`) shows every classification event — one row per
+email per classification cycle. An email that sits in the inbox for 10
+cycles across 2 hours produces 10 rows, all with the same `email_id` but
+different `run_id`, `created_at`, and sometimes different `confidence` or
+`target_folder` (if a rule was created mid-cycle). This clutters the log
+when the user is trying to see "what happened to my emails."
+
+The same inflation affects sender-filtered views (`/audit?sender=X`) —
+a sender with 3 emails that each sat for 5 cycles shows 15 rows.
+
+### Proposed feature
+
+Add a `?unique=1` query parameter (or toggle in the filter bar) that
+deduplicates audit rows by `email_id`, keeping only the most recent row
+per email. When active:
+
+- Each email appears exactly once
+- The shown row is the latest classification event (highest `a.id`)
+- Total count reflects unique emails, not rows
+- Pagination still works (dedup happens in the query, not post-filter)
+
+### Implementation
+
+**Option A — CTE-based dedup (same pattern as analyze page):**
+
+```sql
+WITH latest AS (
+  SELECT a.* FROM audit_log a
+  JOIN runs r ON r.run_id = a.run_id
+  WHERE {existing_conditions}
+    AND a.id = (
+      SELECT MAX(a2.id) FROM audit_log a2
+      WHERE a2.email_id = a.email_id
+        AND a2.created_at >= datetime('now', ?)
+    )
+)
+SELECT * FROM latest ORDER BY created_at DESC LIMIT ? OFFSET ?
+```
+
+This reuses the exact dedup pattern from `analyze.py`. The CTE is only
+applied when `?unique=1` is set — normal view is unchanged.
+
+**Option B — GROUP BY with MAX(id):**
+
+```sql
+SELECT a.* FROM audit_log a
+JOIN runs r ON r.run_id = a.run_id
+WHERE {conditions}
+  AND a.id IN (
+    SELECT MAX(a2.id) FROM audit_log a2
+    WHERE a2.created_at >= datetime('now', ?)
+    GROUP BY a2.email_id
+  )
+ORDER BY a.created_at DESC LIMIT ? OFFSET ?
+```
+
+Simpler but may be slower for large tables (the IN subquery scans all
+matching rows).
+
+**Recommendation:** Option A — consistent with the analyze page pattern,
+tested, and the CTE is already proven performant.
+
+### UI changes
+
+- Add a toggle to the filter bar: "Show unique emails only" checkbox or
+  a `Unique` / `All` toggle next to the period selector
+- When active, URL gets `&unique=1` (bookmarkable)
+- Row count header changes from "N entries" to "N unique emails"
+- Consider a subtle indicator on rows that have multiple underlying
+  audit entries — e.g., a small "×3" badge meaning "3 classification
+  events for this email"
+
+### What stays the same
+
+- All existing filters (source, moved, folder, sender, days, run_id)
+  work identically in both modes
+- Detail view (`/audit/{id}`) unchanged — still shows the specific row
+- Clicking a row in unique mode goes to the latest audit entry's detail
+
+### Open questions
+
+1. **Should `run_id` filter disable dedup?** If the user filters by a
+   specific run, they probably want to see all rows from that run, not
+   deduplicated across runs. Dedup when filtering by run_id would be
+   confusing.
+2. **Default mode?** Should unique mode be the default, with "show all
+   events" as the opt-in? The analysis page already deduplicates by
+   default. Consistency would suggest unique as default for /audit too,
+   but that changes existing behavior.
+
+---
+
 ## Rules Detail Page — Duplicate Inflation in Evidence & Matches
 
 **Status:** Bug, not started (2026-04-16)
