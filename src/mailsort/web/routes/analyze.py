@@ -557,6 +557,7 @@ async def analyze(request: Request, days: int = 30):
             "error_rate": round(error_rate, 1),
             "sources": sources,
             "confidence_dist": confidence_dist,
+            "llm_max_total": max((b["total"] for b in confidence_dist), default=1),
             "skipped_then_sorted": skipped_then_sorted,
             "same_folder": same_folder,
             "avg_conf_same": round(avg_conf_same, 2),
