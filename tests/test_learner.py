@@ -1519,16 +1519,15 @@ def test_re_correction_after_new_rule_move(db: Database):
 
     rid = _seed_rule(db, confidence=0.95, target_folder="INBOX/Shopping/Orders")
 
-    # T0: First rule move
+    # T0: First rule move — use relative timestamps to avoid lookback staleness
     db.execute(
         "INSERT INTO audit_log (run_id, email_id, from_address, from_domain, "
         "source_folder, target_folder, confidence, classification_source, moved, rule_id, "
-        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now', '-1 hour'))",
         ("run-move-1", "e-cycle", "noreply@chase.com", "chase.com",
-         "INBOX", "INBOX/Shopping/Orders", 0.95, "rule", 1, rid,
-         "2026-04-05T10:00:00"),
+         "INBOX", "INBOX/Shopping/Orders", 0.95, "rule", 1, rid),
     )
-    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-move-1', '2026-04-05T10:00:00', 'completed')")
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-move-1', datetime('now', '-1 hour'), 'completed')")
     db.commit()
 
     # T1: First correction detected
@@ -1538,7 +1537,7 @@ def test_re_correction_after_new_rule_move(db: Database):
     email.mailbox_ids = {"mb-banks": True}
     mock_jmap.get_emails.return_value = [email]
 
-    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-corr-1', '2026-04-05T11:00:00', 'running')")
+    db.execute("INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES ('run-corr-1', datetime('now', '-50 minutes'), 'running')")
     db.commit()
     found1 = learner.detect_manual_sorts(mock_jmap, tree, "run-corr-1")
     assert found1.from_other == 1
