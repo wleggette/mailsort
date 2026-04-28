@@ -31,6 +31,7 @@
 - [8. Cross-Cutting Edge Cases](#8-cross-cutting-edge-cases)
 - [9. What This Validates That Unit/Integration Tests Don't](#9-what-this-validates)
 - [10. Risks and Mitigations](#10-risks-and-mitigations)
+- [11. Authentication Tests (Separate Suite)](#11-authentication-tests-separate-suite)
 
 ---
 
@@ -924,3 +925,16 @@ Behaviors that depend on state accumulated across multiple phases.
 - **Duplicate runs**: if the scheduler fires the initial run twice (manual call +
   APScheduler catchup), test results may include duplicate audit entries. Fixed by
   removing the manual `_scheduled_run` call; verified by unit test
+
+---
+
+## 11. Authentication Tests (Separate Suite)
+
+Authentication (Google SSO) tests are **not** part of this system test plan.
+The main system test suite runs with auth disabled (`auth.google_client_id`
+absent from the test config) — all existing phases are unaffected.
+
+Auth-specific tests live in `tests/test_auth.py` (unit/integration, mocked
+Authlib) and `tests/ui/` (Playwright browser tests). See
+[design/web-ui.md](../design/web-ui.md) Phase 9 and
+[design-ideas.md](../dev/design-ideas.md) §Testing strategy for details.

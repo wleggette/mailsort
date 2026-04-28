@@ -13,6 +13,7 @@ sensible defaults.
 |----------|----------|-------------|
 | `FASTMAIL_API_TOKEN` | Yes | Fastmail API token (Bearer auth) |
 | `ANTHROPIC_API_KEY` | No | Anthropic API key (for LLM classification). If unset, LLM classification is skipped gracefully |
+| `GOOGLE_CLIENT_SECRET` | No | Google OAuth 2.0 client secret (for web UI authentication). Only required when `auth.google_client_id` is configured |
 
 ## config.yaml
 
@@ -103,6 +104,14 @@ skip_senders:
 known_contact_overrides:
   # "husband@gmail.com":
   #   relationship: "spouse"   # Extra hint for the LLM beyond just the name
+
+# Authentication (optional — disabled when google_client_id is absent)
+# auth:
+#   google_client_id: "123456789.apps.googleusercontent.com"
+#   allowed_emails:
+#     - user@example.com
+#   session_lifetime_hours: 720    # 30 days
+#   redirect_uri: null             # auto-detected; set for reverse proxy
 
 # Logging
 logging_config:
@@ -199,6 +208,23 @@ bootstrap time, it is upgraded to `source='manual'`.
 | `value` | Yes | Condition value (email address, domain, list-id, regex) |
 | `folder` | Yes | Target folder path (short form like `People/Children` or full `INBOX/People/Children`) |
 | `confidence` | No | Confidence value (default `1.0`) — not recomputed by the confidence model |
+
+### `auth`
+
+Optional. When `google_client_id` is absent or null, authentication is completely
+disabled — the web UI is open (same as current behavior). No behavioral changes
+to CLI commands or the core classification pipeline.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `google_client_id` | `null` | Google OAuth 2.0 client ID. When set, enables authentication |
+| `allowed_emails` | `[]` | Email addresses permitted to log in. Empty = nobody allowed (fail-closed) |
+| `session_lifetime_hours` | `720` | Session duration before expiry (30 days) |
+| `redirect_uri` | `null` | OAuth redirect URI. Auto-detected from request; override for reverse proxy deployments |
+
+Secret: `GOOGLE_CLIENT_SECRET` is loaded from the environment (same pattern as
+`FASTMAIL_API_TOKEN`). See [operations.md](operations.md) for Google Cloud
+Console setup instructions.
 
 ### `logging_config`
 

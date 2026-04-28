@@ -149,8 +149,8 @@ show "calls / depends on". Modules are grouped by layer.
 │  │  dry-run, run,  │ │  creation/toggle.                        │    │
 │  │  analyze,       │ │  Folder description regeneration         │    │
 │  │  check-config,  │ │  (per-folder + bulk).                    │    │
-│  │  export-rules   │ │                                          │    │
-│  │                 │ │                                          │    │
+│  │  export-rules   │ │  Optional Google SSO auth gate           │    │
+│  │                 │ │  (Authlib, server-side sessions).         │    │
 │  │  Docker deleg:  │ │                                          │    │
 │  │  run/dry-run →  │ │                                          │    │
 │  │  docker exec if │ │                                          │    │
@@ -169,7 +169,7 @@ show "calls / depends on". Modules are grouped by layer.
 │  │  runs, contacts,           │  │                               │  │
 │  │  folder_descriptions,      │  │                               │  │
 │  │  inbox_snapshot,           │  │                               │  │
-│  │  learner_state             │  │                               │  │
+│  │  learner_state, sessions   │  │                               │  │
 │  └────────────────────────────┘  └───────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -455,6 +455,13 @@ calls the same path with `dry_run=False` on a timer.
 │       ├── audit/
 │       │   ├── writer.py        ← Audit log writer (runs + audit_log tables)
 │       │   └── learner.py       ← Manual sort detection + auto-rule generation
+│       │
+│       ├── web/
+│       │   ├── app.py           ← FastAPI app factory + auth middleware
+│       │   └── routes/
+│       │       ├── auth.py      ← Google OAuth login/callback/logout
+│       │       ├── dashboard.py, audit.py, rules.py, ...
+│       │       └── settings.py
 │       │
 │       └── db/
 │           ├── database.py      ← SQLite connection management

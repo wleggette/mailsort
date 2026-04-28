@@ -194,6 +194,32 @@ Read-only view of current configuration.
 - **Skip senders** list
 - **Exclude folder patterns** list
 - **Known contact overrides** list
+- **Sessions** — active sessions table (only visible when auth is enabled):
+  - Each row: browser/device (from User-Agent), IP address, created, expires
+  - Current session marked with "current" badge
+  - "Revoke" button per row (grayed out on current session)
+  - "Revoke all other sessions" button
+
+### 10. Authentication
+
+Optional Google SSO gate for the web UI. Disabled by default (no-op when
+`auth.google_client_id` is not configured).
+
+- **Login page** (`/auth/login`) — minimal page with "Sign in with Google"
+  button. Shown when a user attempts to access a protected route without a
+  valid session.
+- **OAuth callback** (`/auth/callback`) — exchanges authorization code for
+  tokens, validates email against allowlist, creates server-side session.
+- **Logout** (`/auth/logout`) — POST endpoint, deletes session row, clears
+  cookie, redirects to `/auth/login`.
+- **Auth middleware** — reads session cookie, validates against `sessions`
+  table. Redirects to login on failure. Excluded paths: `/auth/*`, `/static/*`.
+  Complete no-op when auth is disabled.
+- **Session storage** — server-side `sessions` table in SQLite. Enables
+  immediate revocation, visibility into active sessions, and "log out
+  everywhere" functionality.
+- **Lazy session cleanup** — on 1-in-100 requests, delete expired session
+  rows. Works in both `mailsort start` and `mailsort web` modes.
 
 ---
 
@@ -217,6 +243,7 @@ Read-only view of current configuration.
 fastapi
 uvicorn[standard]
 jinja2
+authlib           # OAuth 2.0 / OpenID Connect (Google SSO)
 ```
 
 ### URL Routing
@@ -237,6 +264,11 @@ GET /contacts             → Contacts list
 GET /folders              → Folder descriptions
 GET /settings             → Config view
 
+# Authentication (excluded from auth middleware)
+GET  /auth/login          → Redirect to Google OAuth
+GET  /auth/callback       → OAuth callback, create session
+POST /auth/logout         → Delete session, clear cookie
+
 # htmx fragment endpoints (partial HTML responses)
 GET /api/audit/table      → Audit table rows (for htmx filter/paginate)
 GET /api/rules/table      → Rules table rows
@@ -255,9 +287,10 @@ POST /api/contacts/refresh     → Trigger contact refresh
 src/mailsort/
   web/
     __init__.py
-    app.py              ← FastAPI app factory, route registration
+    app.py              ← FastAPI app factory, route registration, auth middleware
     routes/
       __init__.py
+      auth.py           ← GET /auth/login, /auth/callback, POST /auth/logout
       dashboard.py      ← GET /
       audit.py          ← GET /audit, /audit/{id}
       rules.py          ← GET /rules, /rules/{id}, POST actions
@@ -266,7 +299,8 @@ src/mailsort/
       folders.py        ← GET /folders
       settings.py       ← GET /settings
     templates/
-      base.html         ← Layout: nav, head, Tailwind/htmx CDN links
+      base.html         ← Layout: nav, head, Tailwind/htmx CDN links, avatar/logout
+      login.html        ← "Sign in with Google" page
       dashboard.html
       audit/
         list.html
@@ -284,7 +318,7 @@ src/mailsort/
       folders.html
       settings.html
       components/
-        nav.html        ← Sidebar/top navigation
+        nav.html        ← Sidebar/top navigation + avatar
         pagination.html ← Reusable pagination
         filters.html    ← Reusable filter bar
         badge.html      ← Status badges
@@ -485,3 +519,21 @@ All filterable pages (audit log, rules) follow these conventions:
 - [x] `web/routes/settings.py` — read-only config view
 - [x] `web/templates/settings.html` — organized cards: Fastmail, Scheduler,
       Thresholds, Auto-Rule, LLM, Filters & Exclusions, Logging
+
+### Phase 9: Authentication (Google SSO)
+- [ ] Add `authlib` to `pyproject.toml` dependencies
+- [ ] Add `AuthConfig` model to `config.py` (google_client_id, allowed_emails,
+      session_lifetime_hours, redirect_uri) + GOOGLE_CLIENT_SECRET env loading
+- [ ] Migration 13: `sessions` table (id, email, name, picture_url, user_agent,
+      ip_address, created_at, expires_at)
+- [ ] `web/routes/auth.py` — login, callback, logout routes (Authlib)
+- [ ] Auth middleware in `web/app.py` — session validation, redirect to login,
+      no-op when disabled, excluded paths (/auth/*, /static/*)
+- [ ] `web/templates/login.html` — "Sign in with Google" button
+- [ ] `web/templates/base.html` — avatar + name + logout form when session exists
+- [ ] `web/templates/components/nav.html` — avatar in sidebar bottom
+- [ ] `web/templates/settings.html` — Sessions panel (active sessions, revoke)
+- [ ] Lazy session cleanup (1-in-100 requests: delete expired rows)
+- [ ] `config.yaml.example` — commented `auth` block
+- [ ] Tests: middleware, session CRUD, allowlist, config parsing, OAuth callback
+      (mocked Authlib), logout, template rendering

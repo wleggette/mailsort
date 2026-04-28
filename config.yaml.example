@@ -79,6 +79,15 @@ known_contact_overrides: {}
   # "husband@gmail.com":
   #   relationship: "spouse"
 
+# Authentication (optional — disabled when google_client_id is absent)
+# Uncomment and configure to enable Google SSO for the web UI.
+# auth:
+#   google_client_id: "123456789.apps.googleusercontent.com"
+#   allowed_emails:
+#     - user@example.com
+#   session_lifetime_hours: 720    # 30 days
+#   redirect_uri: null             # auto-detected; set for reverse proxy
+
 # Logging
 logging_config:
   level: INFO

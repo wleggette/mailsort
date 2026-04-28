@@ -67,6 +67,7 @@ services:
     environment:
       - FASTMAIL_API_TOKEN=${FASTMAIL_API_TOKEN}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - TZ=America/Chicago
     logging:
       driver: json-file
@@ -83,6 +84,7 @@ before Docker force-kills the container during `docker compose up --build`.
 ```
 FASTMAIL_API_TOKEN=fmu1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx   # Optional: only if auth enabled
 ```
 
 ---
@@ -257,3 +259,123 @@ Migrations are tracked via a `schema_version` table. On startup, `migrations.py`
 checks the current version and applies any pending migrations in order.
 Migrations are never skipped or re-applied. See [design/data-models.md](design/data-models.md)
 for full schema details.
+
+---
+
+## Google OAuth Setup (Optional)
+
+Required only when enabling web UI authentication (`auth.google_client_id` in
+`config.yaml`). When omitted, the web UI remains open.
+
+### 1. Create a Google Cloud Project
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (e.g., "Mailsort") or select an existing one
+
+No APIs need to be enabled — basic OAuth 2.0 / OpenID Connect login works with
+just the project and OAuth credentials.
+
+### 2. Configure the OAuth Consent Screen
+
+Navigate to one of (Google shows different UIs depending on the account):
+- **Google Auth Platform → Overview** (newer UI), or
+- **APIs & Services → OAuth consent screen** (older UI)
+
+1. Click **Get started** (or **Configure consent screen**) if not yet set up
+2. Fill in app name ("Mailsort"), your support email, and select **External**
+   user type (or Internal if using Google Workspace)
+3. Add scopes — click **Add or remove scopes** and check these three:
+   - `openid` — "Associate you with your personal info on Google"
+   - `.../auth/userinfo.email` — "See your primary Google Account email address"
+   - `.../auth/userinfo.profile` — "See your personal info…"
+
+  
+### 3. Publish the App
+
+1. Navigate to **Google Auth Platform → Audience**
+2. Click **Publish App** to move from "Testing" to "Production"
+
+Since all three scopes are non-sensitive, publishing is instant with no Google
+verification required. This removes the 7-day token expiry and the
+test-user-only restriction that "Testing" mode has.
+
+### 4. Create OAuth 2.0 Credentials
+
+1. Navigate to **APIs & Services → Credentials**
+2. Click **Create Credentials → OAuth client ID**
+3. Application type: **Web application**
+4. Name: "Mailsort" (or any label)
+5. **Authorized redirect URIs** — add one per deployment:
+
+| Deployment | Redirect URI |
+|------------|--------------|
+| Local / development | `http://localhost:8080/auth/callback` |
+| Behind reverse proxy | `https://mailsort.example.com/auth/callback` |
+
+   Google rejects raw IP addresses in redirect URIs (except `localhost`).
+   For LAN access without a reverse proxy, either access via `localhost`
+   with SSH port forwarding, or use a wildcard DNS service like
+   [nip.io](https://nip.io) (e.g., `http://192-168-1-50.nip.io:8080/auth/callback`).
+
+6. Click **Create** — note the **Client ID** and **Client Secret**
+
+### 5. Configure Mailsort
+
+**`config.yaml`:**
+
+```yaml
+auth:
+  google_client_id: "123456789-abc.apps.googleusercontent.com"
+  allowed_emails:
+    - you@gmail.com
+  # session_lifetime_hours: 720   # 30 days (default)
+  # redirect_uri: null            # auto-detected (set for reverse proxy)
+```
+
+**`.env`:**
+
+```
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+For Docker deployments, add `GOOGLE_CLIENT_SECRET` to the `environment` section
+of `docker-compose.yml` (already included in the template above).
+
+### 6. Reverse Proxy Configuration
+
+When running behind a reverse proxy (e.g., nginx, Caddy, Traefik) with TLS
+termination:
+
+1. Set `auth.redirect_uri` explicitly in `config.yaml`:
+   ```yaml
+   auth:
+     redirect_uri: "https://mailsort.example.com/auth/callback"
+   ```
+2. Ensure the proxy forwards `X-Forwarded-For` and `X-Forwarded-Proto` headers
+   (used for IP logging and scheme detection).
+
+### Test Environment Setup
+
+For running auth-related tests locally:
+
+1. Create a **separate** OAuth client ID in the same Google Cloud project
+   (or a dedicated test project)
+2. Set the redirect URI to `http://localhost:8080/auth/callback`
+3. Add the test email to `allowed_emails` in the test config
+4. Set environment variables for the test runner:
+   ```bash
+   export GOOGLE_CLIENT_ID="test-client-id.apps.googleusercontent.com"
+   export GOOGLE_CLIENT_SECRET="GOCSPX-test-secret"
+   export GOOGLE_TEST_EMAIL="testuser@gmail.com"
+   export GOOGLE_TEST_PASSWORD="test-password"  # Only for Playwright browser tests
+   ```
+5. Unit tests (mocked Authlib) don't need real credentials — only the
+   Playwright browser tests require a real Google account
+
+### Security Notes
+
+- **Fail-closed:** Empty `allowed_emails` list rejects everyone (no open access)
+- **Session cookie:** `HttpOnly`, `SameSite=Lax`, `Secure` (when HTTPS)
+- **Server-side sessions:** Revocable, visible on `/settings`, cleaned up lazily
+- **No CSRF token for logout:** `SameSite=Lax` prevents cross-site POST of the
+  session cookie; worst case of bypass is forced logout (not destructive)

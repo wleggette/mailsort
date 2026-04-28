@@ -42,6 +42,7 @@ Mailsort is a self-hosted email classification service that periodically scans r
 - Confidence-based gating with per-source thresholds
 - Contact enrichment from Fastmail address book
 - Web UI for monitoring and rule management
+- Optional Google SSO authentication for web UI (disabled by default)
 - Docker deployment with health checks
 - Visibility into emails consistently left in inbox (threshold analysis, skipped-then-sorted reporting) so users can decide whether to create manual rules
 

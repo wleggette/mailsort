@@ -163,6 +163,30 @@ Known keys:
 - `classification_version` — SHA-256 hash of folder descriptions + LLM model
 - `classification_version_changed_at` — ISO timestamp of last version change
 
+### Sessions
+
+Server-side sessions for optional Google SSO authentication. Only populated
+when `auth.google_client_id` is configured.
+
+```sql
+CREATE TABLE sessions (
+    id          TEXT PRIMARY KEY,   -- random UUID
+    email       TEXT NOT NULL,
+    name        TEXT,
+    picture_url TEXT,
+    user_agent  TEXT,
+    ip_address  TEXT,
+    created_at  TEXT NOT NULL,      -- ISO 8601
+    expires_at  TEXT NOT NULL       -- ISO 8601
+);
+
+CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+```
+
+Expired rows are cleaned up lazily by the auth middleware (1-in-100 requests).
+Active sessions are visible on the `/settings` page and can be revoked
+individually or in bulk.
+
 ### Schema Version
 
 ```sql
@@ -241,5 +265,6 @@ MIGRATIONS = [
                                          # 'correction' added to audit_log classification_source CHECK
     (12, "system_source_and_cache"),     # 'system' added to classification_source CHECK,
                                          # 'cached' BOOLEAN column added to audit_log
+    (13, "create_sessions"),             # sessions table for Google SSO auth
 ]
 ```

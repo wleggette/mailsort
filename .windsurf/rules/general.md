@@ -7,13 +7,19 @@ trigger: always_on
 
 - Follow the guides in `docs/methodology/`: architecture-documentation, system-test-methodology, ai-pair-programming.
 - **For non-trivial tasks** (multiple files or multi-step), write the plan to `docs/dev/scratch.md` first, then present it for approval before writing code.
+- **Documentation first** — for new features or phases, update all relevant documentation (design docs, config reference, architecture, operations, system test plan) **before** writing any implementation code. Present the doc changes for review; coding begins only after the documentation is approved.
 - Use `docs/dev/scratch.md` for working notes across sessions (gitignored). See `docs/methodology/ai-pair-programming.md` §1.
 
 ## Documentation Maintenance
 
-After completing any feature, bug fix, or phase of development:
+**New features/phases:** Documentation updates come **first**, before implementation.
+Write the design into the relevant docs, get approval, then implement.
 
-1. **Update the relevant doc in `docs/`** to reflect the current state of the code:
+**Bug fixes and refactors:** Documentation updates come after, to reflect what changed.
+
+In either case, update:
+
+1. **Update the relevant doc in `docs/`** to reflect the design or current state:
    - `docs/architecture.md` — diagrams and sequences
    - `docs/design/` — subsystem design docs (one per major module)
    - `docs/configuration.md` — config fields and defaults

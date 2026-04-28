@@ -54,9 +54,14 @@ For non-trivial tasks (more than a single file change):
 
 1. **AI proposes a plan** — numbered steps, one in-progress at a time
 2. **Human approves or adjusts** — before any code is written
-3. **AI executes step by step** — updating the plan as new information
+3. **Documentation first** — for new features or phases, update all
+   relevant documentation (design docs, config reference, architecture,
+   operations, system test plan) before writing implementation code.
+   Present doc changes for review; coding begins only after docs are
+   approved.
+4. **AI executes step by step** — updating the plan as new information
    arrives
-4. **Both verify** — AI runs tests, human reviews the approach
+5. **Both verify** — AI runs tests, human reviews the approach
 
 ### Minimal, focused changes
 
@@ -90,9 +95,13 @@ The AI should match the codebase's existing style:
   pattern (e.g., a config class + module + tests), follow the same
   structure for new features.
 
-### Documentation as implementation
+### Documentation before implementation
 
-Treat documentation updates as part of the implementation, not a
+For **new features and phases**, documentation comes first — write the
+design into the docs, get human approval, then implement. For **bug
+fixes and refactors**, update docs after to reflect what changed.
+
+In all cases, treat documentation as part of the work, not a
 follow-up task:
 
 - **Architecture change** → update the diagram/phase card
@@ -142,10 +151,11 @@ A typical productive session:
 2. Human states the task
 3. AI proposes a plan (or asks clarifying questions)
 4. Human approves/adjusts
-5. AI executes, testing as it goes
-6. AI updates scratch with progress, decisions, deferred items
-7. Human reviews and commits
-8. AI updates changelog and decisions log if applicable
+5. For new features: AI updates documentation first, human reviews
+6. AI executes implementation, testing as it goes
+7. AI updates scratch with progress, decisions, deferred items
+8. Human reviews and commits
+9. AI updates changelog and decisions log if applicable
 ```
 
 ### Multi-session tasks

@@ -7,7 +7,7 @@ without re-investigating from scratch.
 
 ### Active
 - [List-Unsubscribe Combined Rule](#list-unsubscribe-combined-rule) — Not prioritized
-- [Google SSO for Web UI](#google-sso-for-web-ui) — Not started
+- [Google SSO for Web UI](#google-sso-for-web-ui) — In progress
 
 ### Implemented
 - [~~Analysis Page Improvements~~](#analysis-page-improvements--implemented-2026-04-27) → decisions.md §2026-04-27
@@ -116,7 +116,7 @@ token also works but the header property may fail on some token configurations).
 
 ## Google SSO for Web UI
 
-**Status:** Not started (2026-04-06)
+**Status:** In progress (2026-04-28)
 
 ### Concept
 
