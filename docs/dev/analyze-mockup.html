@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analysis Page Mockup — Mailsort</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+</head>
+<body class="bg-gray-50">
+<div class="max-w-6xl mx-auto px-8 py-8">
+
+<!-- Page header -->
+<div class="mb-8 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold text-gray-900">Threshold Analysis</h1>
+    <p class="text-sm text-gray-500 mt-1">Classification performance and threshold recommendations</p>
+  </div>
+  <div class="flex items-center gap-2">
+    <label class="text-sm text-gray-500">Period:</label>
+    <a class="px-3 py-1.5 text-sm rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50">7d</a>
+    <a class="px-3 py-1.5 text-sm rounded-lg border bg-gray-900 text-white border-gray-900">30d</a>
+    <a class="px-3 py-1.5 text-sm rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50">90d</a>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXISTING: Summary Cards (unchanged)                          -->
+<!-- ============================================================ -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">Emails Classified</p>
+    <p class="text-2xl font-semibold text-gray-900 mt-1">173</p>
+  </div>
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">Moved</p>
+    <p class="text-2xl font-semibold text-green-600 mt-1">110</p>
+    <p class="text-xs text-gray-400 mt-0.5">64% of classified</p>
+  </div>
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">Skipped</p>
+    <p class="text-2xl font-semibold text-gray-500 mt-1">63</p>
+    <p class="text-xs text-gray-400 mt-0.5">36% of classified</p>
+  </div>
+  <div class="bg-white rounded-lg border border-gray-200 p-4">
+    <p class="text-sm font-medium text-gray-500">User Corrections</p>
+    <p class="text-2xl font-semibold text-amber-600 mt-1">3</p>
+    <p class="text-xs text-gray-400 mt-0.5">2.7% error rate</p>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXISTING: Classification Sources (unchanged)                 -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h2 class="text-lg font-medium text-gray-900 mb-4">Classification Sources</h2>
+  <div class="space-y-3">
+    <div class="flex items-center gap-4">
+      <div class="w-20 text-sm font-medium text-gray-700">rule</div>
+      <div class="flex-1 bg-gray-100 rounded-full h-6 relative">
+        <div class="h-6 rounded-full bg-blue-500" style="width: 55%"></div>
+      </div>
+      <div class="w-24 text-sm text-right"><span class="font-medium text-gray-900">95</span> <span class="text-gray-400">(54.9%)</span></div>
+      <div class="w-20 text-sm text-right text-gray-500">90 moved</div>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="w-20 text-sm font-medium text-gray-700">llm</div>
+      <div class="flex-1 bg-gray-100 rounded-full h-6 relative">
+        <div class="h-6 rounded-full bg-purple-500" style="width: 30%"></div>
+      </div>
+      <div class="w-24 text-sm text-right"><span class="font-medium text-gray-900">52</span> <span class="text-gray-400">(30.1%)</span></div>
+      <div class="w-20 text-sm text-right text-gray-500">12 moved</div>
+    </div>
+    <div class="flex items-center gap-4">
+      <div class="w-20 text-sm font-medium text-gray-700">thread</div>
+      <div class="flex-1 bg-gray-100 rounded-full h-6 relative">
+        <div class="h-6 rounded-full bg-teal-500" style="width: 15%"></div>
+      </div>
+      <div class="w-24 text-sm text-right"><span class="font-medium text-gray-900">26</span> <span class="text-gray-400">(15.0%)</span></div>
+      <div class="w-20 text-sm text-right text-gray-500">8 moved</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXISTING: LLM Confidence Distribution (unchanged)            -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h2 class="text-lg font-medium text-gray-900 mb-4">LLM Confidence Distribution</h2>
+  <p class="text-xs text-gray-400 mt-1 mb-3">Placeholder — same table as current page</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXISTING: Rule Confidence Distribution (unchanged)           -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h2 class="text-lg font-medium text-gray-900 mb-4">Rule Confidence Distribution</h2>
+  <p class="text-xs text-gray-400 mt-1 mb-3">Placeholder — same table as current page</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- NEW SECTION: Analysis Cards                                  -->
+<!-- ============================================================ -->
+<div class="mb-6">
+  <h2 class="text-xl font-semibold text-gray-900 mb-1">Classification Analysis</h2>
+  <p class="text-sm text-gray-500 mb-6">Action-oriented breakdown of skipped and misclassified emails</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- CARD 6: LLM Accuracy Summary (top-level overview)            -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-4">LLM Accuracy Summary</h3>
+
+  <!-- Tree structure -->
+  <div class="space-y-2 text-sm mb-4">
+    <!-- Level 0: LLM classified -->
+    <div class="flex items-center gap-3">
+      <span class="text-2xl font-semibold text-gray-900 w-10 text-right">52</span>
+      <span class="text-gray-700">LLM classified</span>
+    </div>
+
+    <!-- Level 1: Moved -->
+    <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-2">
+      <div class="flex items-center gap-3">
+        <span class="text-xl font-semibold text-green-600 w-10 text-right">12</span>
+        <span class="text-gray-700">Moved <span class="text-gray-400">(above threshold)</span></span>
+      </div>
+      <!-- Level 2: Corrected -->
+      <div class="ml-6 border-l-2 border-gray-200 pl-4">
+        <div class="flex items-center gap-3">
+          <span class="text-lg font-semibold text-amber-600 w-10 text-right">2</span>
+          <span class="text-gray-700">Corrected by you <span class="text-gray-400">(LLM was wrong + confident)</span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Level 1: Skipped -->
+    <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-2">
+      <div class="flex items-center gap-3">
+        <span class="text-xl font-semibold text-gray-500 w-10 text-right">40</span>
+        <span class="text-gray-700">Skipped <span class="text-gray-400">(below threshold)</span></span>
+      </div>
+      <!-- Level 2: Later sorted -->
+      <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-2">
+        <div class="flex items-center gap-3">
+          <span class="text-lg font-semibold text-gray-700 w-10 text-right">21</span>
+          <span class="text-gray-700">Later sorted by you</span>
+        </div>
+        <!-- Level 3: Agreed / disagreed -->
+        <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-1.5">
+          <div class="flex items-center gap-3">
+            <span class="font-semibold text-green-600 w-10 text-right">3</span>
+            <span class="text-gray-700">LLM agreed with you <span class="text-gray-400">(threshold too strict)</span></span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="font-semibold text-amber-600 w-10 text-right">18</span>
+            <span class="text-gray-700">LLM disagreed <span class="text-gray-400">(threshold protected you)</span></span>
+          </div>
+        </div>
+        <!-- Level 2: Remaining -->
+        <div class="flex items-center gap-3">
+          <span class="text-lg font-semibold text-gray-400 w-10 text-right">19</span>
+          <span class="text-gray-400">Still in inbox or eligibility-gated</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Effectiveness metrics -->
+  <div class="bg-gray-50 rounded-lg p-4">
+    <div class="grid grid-cols-3 gap-6">
+      <!-- System effectiveness -->
+      <div class="text-center border-r border-gray-200">
+        <p class="text-3xl font-bold text-green-600">85%</p>
+        <p class="text-xs font-medium text-gray-500 mt-1">System Effectiveness</p>
+        <p class="text-xs text-gray-400 mt-0.5">28 of 33 correct outcomes</p>
+      </div>
+      <!-- Move precision -->
+      <div class="text-center border-r border-gray-200">
+        <p class="text-3xl font-bold text-green-600">83%</p>
+        <p class="text-xs font-medium text-gray-500 mt-1">Move Precision</p>
+        <p class="text-xs text-gray-400 mt-0.5">10 of 12 moves were correct</p>
+      </div>
+      <!-- Threshold precision -->
+      <div class="text-center">
+        <p class="text-3xl font-bold text-green-600">86%</p>
+        <p class="text-xs font-medium text-gray-500 mt-1">Threshold Precision</p>
+        <p class="text-xs text-gray-400 mt-0.5">18 of 21 blocks were justified</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CARD 1: Folder Description Gaps                              -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-2">Folder Description Gaps</h3>
+  <p class="text-sm text-gray-500 mb-4">Folders the LLM fails to classify emails into — the user later sorted these manually.</p>
+
+  <!-- Folder group: Affairs/Stores -->
+  <div class="border border-gray-200 rounded-lg mb-4">
+    <div class="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-t-lg border-b border-gray-200">
+      <div>
+        <span class="font-medium text-gray-900">Affairs/Stores</span>
+        <span class="ml-2 text-sm text-gray-500">14 emails the LLM couldn't classify</span>
+      </div>
+      <a href="#" class="text-sm text-blue-600 hover:underline">Review description &rarr;</a>
+    </div>
+    <div class="px-4 py-2 text-xs text-gray-500">
+      LLM said: <span class="font-mono">INBOX</span> (10), <span class="font-mono">Affairs/Alerts</span> (2), <span class="font-mono">Projects/*</span> (2)
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-200">
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">From</th>
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">Subject</th>
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">LLM said</th>
+          <th class="text-right py-2 px-4 text-gray-500 font-medium text-xs">Confidence</th>
+          <th class="text-right py-2 px-4 text-gray-500 font-medium text-xs w-8"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">chicagoelections.gov</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">Use Any of 52 Secure Drop Boxes to Return Your Ballot</td>
+          <td class="py-1.5 px-4 text-xs text-gray-500">INBOX</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">0.15</td>
+          <td class="py-1.5 px-4 text-right"><a href="#" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">chicagoelections.gov</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">Return Your Vote By Mail Ballot Before Election Day</td>
+          <td class="py-1.5 px-4 text-xs text-gray-500">INBOX</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">0.15</td>
+          <td class="py-1.5 px-4 text-right"><a href="#" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">wordpress.com</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">Gap Week, March 27 — Issue #412</td>
+          <td class="py-1.5 px-4 text-xs text-gray-500">INBOX</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">0.30</td>
+          <td class="py-1.5 px-4 text-right"><a href="#" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">wordpress.com</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">Miscellanea: The War on Meaning</td>
+          <td class="py-1.5 px-4 text-xs text-gray-500">Affairs/Alerts</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">0.15</td>
+          <td class="py-1.5 px-4 text-right"><a href="#" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">noreply@homedepot.com</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">Your Order Has Shipped — Tracking #1Z999AA1...</td>
+          <td class="py-1.5 px-4 text-xs text-gray-500">INBOX</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">0.25</td>
+          <td class="py-1.5 px-4 text-right"><a href="#" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="px-4 py-2">
+      <button onclick="this.parentElement.previousElementSibling.querySelectorAll('tr.hidden').forEach(r=>r.classList.remove('hidden')); this.style.display='none';"
+              class="text-xs text-blue-600 hover:underline">&#9656; Show 9 more</button>
+    </div>
+  </div>
+
+  <!-- Folder group: Affairs/Medical -->
+  <div class="border border-gray-200 rounded-lg mb-4">
+    <div class="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-t-lg border-b border-gray-200">
+      <div>
+        <span class="font-medium text-gray-900">Affairs/Medical</span>
+        <span class="ml-2 text-sm text-gray-500">5 emails the LLM couldn't classify</span>
+      </div>
+      <a href="#" class="text-sm text-blue-600 hover:underline">Review description &rarr;</a>
+    </div>
+    <div class="px-4 py-2 text-xs text-gray-500">
+      LLM said: <span class="font-mono">INBOX</span> (4), <span class="font-mono">Affairs/Uncommon</span> (1)
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-200">
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">From</th>
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">Subject</th>
+          <th class="text-right py-2 px-4 text-gray-500 font-medium text-xs">Confidence</th>
+          <th class="text-right py-2 px-4 text-gray-500 font-medium text-xs w-8"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">milla@besttherapies.org</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">Appointment Confirmation — March 15</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">0.20</td>
+          <td class="py-1.5 px-4 text-right"><a href="#" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">mychart@nm.org</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">Your lab results are ready</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">0.35</td>
+          <td class="py-1.5 px-4 text-right"><a href="#" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="px-4 py-2">
+      <button class="text-xs text-blue-600 hover:underline">&#9656; Show 3 more</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CARD 2: Known Contact Sorting                                -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-2">Known Contact Sorting</h3>
+  <p class="text-sm text-gray-500 mb-4">Emails from known contacts blocked by the elevated confidence threshold.</p>
+
+  <!-- Contact card: yzhuang1@gmail.com -->
+  <div class="border border-gray-200 rounded-lg">
+    <div class="px-4 py-3 bg-gray-50 rounded-t-lg border-b border-gray-200">
+      <div class="flex items-center justify-between">
+        <div>
+          <a href="#" class="font-medium text-gray-900 hover:text-blue-600">yzhuang1@gmail.com</a>
+          <span class="ml-2 text-sm text-gray-500">Known contact &middot; Relationship: spouse</span>
+        </div>
+        <a href="#" class="text-sm text-blue-600 hover:underline">View all audit entries &rarr;</a>
+      </div>
+    </div>
+
+    <!-- Sorting mechanisms summary -->
+    <div class="px-4 py-3 border-b border-gray-100">
+      <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">How emails are being sorted (30d)</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div class="bg-teal-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-teal-700">8</p>
+          <p class="text-xs text-teal-600">Thread context</p>
+        </div>
+        <div class="bg-blue-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-blue-700">0</p>
+          <p class="text-xs text-blue-600">Rules</p>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-purple-700">2</p>
+          <p class="text-xs text-purple-600">LLM moved</p>
+        </div>
+        <div class="bg-amber-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-amber-700">12</p>
+          <p class="text-xs text-amber-600">Threshold-blocked</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Coherence -->
+    <div class="px-4 py-3 border-b border-gray-100">
+      <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Folder coherence</p>
+      <div class="space-y-1.5">
+        <div class="flex items-center gap-2">
+          <div class="w-28 text-xs text-gray-700">People/Family</div>
+          <div class="flex-1 bg-gray-100 rounded-full h-3">
+            <div class="h-3 rounded-full bg-blue-400" style="width: 72%"></div>
+          </div>
+          <div class="w-20 text-xs text-right text-gray-500">72% (18)</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-28 text-xs text-gray-700">People/Friends</div>
+          <div class="flex-1 bg-gray-100 rounded-full h-3">
+            <div class="h-3 rounded-full bg-blue-400" style="width: 12%"></div>
+          </div>
+          <div class="w-20 text-xs text-right text-gray-500">12% (3)</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-28 text-xs text-gray-700">Affairs/*</div>
+          <div class="flex-1 bg-gray-100 rounded-full h-3">
+            <div class="h-3 rounded-full bg-blue-400" style="width: 8%"></div>
+          </div>
+          <div class="w-20 text-xs text-right text-gray-500">8% (2)</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="w-28 text-xs text-gray-700">Other</div>
+          <div class="flex-1 bg-gray-100 rounded-full h-3">
+            <div class="h-3 rounded-full bg-blue-400" style="width: 8%"></div>
+          </div>
+          <div class="w-20 text-xs text-right text-gray-500">8% (2)</div>
+        </div>
+      </div>
+      <p class="mt-2 text-xs text-amber-700 bg-amber-50 rounded p-2">
+        &#9888; Coherence (72%) is below the auto-rule threshold (80%).
+      </p>
+    </div>
+
+    <!-- Threshold-blocked emails -->
+    <div class="px-4 py-3">
+      <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Threshold-blocked emails</p>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-200">
+            <th class="text-left py-1.5 px-0 text-gray-500 font-medium text-xs">Subject</th>
+            <th class="text-left py-1.5 px-2 text-gray-500 font-medium text-xs">LLM said</th>
+            <th class="text-left py-1.5 px-2 text-gray-500 font-medium text-xs">User moved to</th>
+            <th class="w-8"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="border-b border-gray-100">
+            <td class="py-1.5 px-0 text-gray-700 text-xs">Re: Johnny in hospital</td>
+            <td class="py-1.5 px-2 text-xs text-gray-600">People/Family</td>
+            <td class="py-1.5 px-2 text-xs text-green-700 font-medium">People/Family</td>
+            <td class="py-1.5 px-2"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="py-1.5 px-0 text-gray-700 text-xs">when you have a moment...</td>
+            <td class="py-1.5 px-2 text-xs text-gray-600">People/Family</td>
+            <td class="py-1.5 px-2 text-xs text-green-700 font-medium">People/Family</td>
+            <td class="py-1.5 px-2"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="py-1.5 px-0 text-gray-700 text-xs">Costco planter - on sale right now</td>
+            <td class="py-1.5 px-2 text-xs text-amber-600">Gardening</td>
+            <td class="py-1.5 px-2 text-xs text-green-700 font-medium">People/Family</td>
+            <td class="py-1.5 px-2"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="py-1.5 px-0 text-gray-700 text-xs">Re: Suction cup</td>
+            <td class="py-1.5 px-2 text-xs text-amber-600">People/Friends</td>
+            <td class="py-1.5 px-2 text-xs text-green-700 font-medium">People/Family</td>
+            <td class="py-1.5 px-2"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+          </tr>
+        </tbody>
+      </table>
+      <button class="text-xs text-blue-600 hover:underline mt-2">&#9656; Show 8 more</button>
+    </div>
+
+    <!-- Actions -->
+    <div class="px-4 py-3 bg-gray-50 rounded-b-lg border-t border-gray-200">
+      <a href="#" class="text-xs text-blue-600 hover:underline">&rarr; View all audit entries for this sender</a>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CARD 3: Learning Effectiveness                               -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-2">Learning Effectiveness</h3>
+  <p class="text-sm text-gray-500 mb-4">Rules the system has learned from your manual sorts.</p>
+
+  <div class="grid grid-cols-3 gap-4 mb-4">
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">126</p>
+      <p class="text-xs text-gray-500">Total auto rules</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">1,593</p>
+      <p class="text-xs text-gray-500">Emails sorted by rules</p>
+    </div>
+    <div class="bg-blue-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-blue-700">6</p>
+      <p class="text-xs text-blue-600">Rules created in last 30d</p>
+    </div>
+  </div>
+
+  <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Recently created rules</p>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-gray-200">
+        <th class="text-left py-2 px-3 text-gray-500 font-medium text-xs">Rule</th>
+        <th class="text-left py-2 px-3 text-gray-500 font-medium text-xs">Folder</th>
+        <th class="text-right py-2 px-3 text-gray-500 font-medium text-xs">Emails sorted</th>
+        <th class="text-left py-2 px-3 text-gray-500 font-medium text-xs">Status</th>
+        <th class="w-8"></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="border-b border-gray-100">
+        <td class="py-1.5 px-3 font-mono text-xs text-gray-700">wordpress.com</td>
+        <td class="py-1.5 px-3 text-xs text-gray-600">Affairs/Stores</td>
+        <td class="py-1.5 px-3 text-right text-xs font-medium text-gray-900">197</td>
+        <td class="py-1.5 px-3"><span class="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">active</span></td>
+        <td class="py-1.5 px-3"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+      </tr>
+      <tr class="border-b border-gray-100">
+        <td class="py-1.5 px-3 font-mono text-xs text-gray-700">chicagopubliclibrary.org</td>
+        <td class="py-1.5 px-3 text-xs text-gray-600">Affairs/Stores</td>
+        <td class="py-1.5 px-3 text-right text-xs font-medium text-gray-900">195</td>
+        <td class="py-1.5 px-3"><span class="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">active</span></td>
+        <td class="py-1.5 px-3"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+      </tr>
+      <tr class="border-b border-gray-100">
+        <td class="py-1.5 px-3 font-mono text-xs text-gray-700">milla@besttherapies.org</td>
+        <td class="py-1.5 px-3 text-xs text-gray-600">Affairs/Medical</td>
+        <td class="py-1.5 px-3 text-right text-xs font-medium text-gray-900">19</td>
+        <td class="py-1.5 px-3"><span class="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">active</span></td>
+        <td class="py-1.5 px-3"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+      </tr>
+      <tr class="border-b border-gray-100">
+        <td class="py-1.5 px-3 font-mono text-xs text-gray-700">chicagoelections.gov</td>
+        <td class="py-1.5 px-3 text-xs text-gray-600">Affairs/Stores</td>
+        <td class="py-1.5 px-3 text-right text-xs font-medium text-gray-900">0</td>
+        <td class="py-1.5 px-3"><span class="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">active</span></td>
+        <td class="py-1.5 px-3"><a href="#" class="text-blue-500 text-xs">&rarr;</a></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="mt-3">
+    <a href="#" class="text-xs text-blue-600 hover:underline">&#9656; View all rules</a>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CARD 4: Eligibility-Gated Emails                             -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-4">Eligibility-Gated Emails</h3>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">20</p>
+      <p class="text-xs text-gray-500">Total gated</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">13</p>
+      <p class="text-xs text-gray-500">Flagged</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">3</p>
+      <p class="text-xs text-gray-500">Unread</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">4</p>
+      <p class="text-xs text-gray-500">Too new</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXISTING: Rule Corrections (unchanged)                       -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h2 class="text-lg font-medium text-gray-900 mb-2">Rule Corrections</h2>
+  <p class="text-xs text-gray-400 mt-1 mb-3">Placeholder — same table as current page</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXISTING: Recommendations (unchanged)                        -->
+<!-- ============================================================ -->
+<div class="bg-white rounded-lg border border-gray-200 p-6">
+  <h2 class="text-lg font-medium text-gray-900 mb-4">Recommendations</h2>
+  <div class="space-y-3">
+    <div class="flex items-start gap-3">
+      <span class="text-green-500 mt-0.5">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+      </span>
+      <div>
+        <p class="text-sm font-medium text-gray-900">llm_move: <span class="font-mono">0.85</span></p>
+        <p class="text-sm text-gray-500">insufficient data to suggest changes</p>
+      </div>
+    </div>
+    <div class="flex items-start gap-3">
+      <span class="text-amber-500 mt-0.5">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>
+      </span>
+      <div>
+        <p class="text-sm font-medium text-gray-900">rule_move: <span class="font-mono">0.85</span></p>
+        <p class="text-sm text-gray-500">3 correction(s)</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /max-w-6xl -->
+</body>
+</html>
