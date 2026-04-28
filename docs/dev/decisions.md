@@ -6,6 +6,40 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-28 — Audit log unique mode: dedup by outcome
+
+**Context:** The audit log shows one row per classification event per cycle.
+An email in the inbox for 10 cycles produces 10 nearly-identical rows,
+cluttering the log.
+
+**Decisions:**
+
+1. **Dedup key: `(email_id, classification_source, moved, skip_reason)`.**
+   Repeated identical outcomes collapse. Different outcomes (flagged →
+   below_threshold → moved → corrected) each show as separate rows. This
+   matches the user's mental model of "what happened to this email" rather
+   than "what happened each cycle."
+
+2. **Unique on by default.** The primary use case is "what happened to my
+   emails" not "what did each cycle do." Consistent with the analyze page
+   which already deduplicates. `?unique=0` for raw view.
+
+3. **`run_id` filter disables unique.** Filtering by a specific run means
+   "show me everything from this run" — dedup would hide rows and confuse.
+
+4. **`×N` badge.** Shows how many raw events share the same outcome. Computed
+   via correlated subquery (`COUNT(*) ... WHERE same dedup key`).
+
+5. **LLM cache makes this mostly cosmetic.** Since the LLM cache (decision
+   2026-04-08) stabilizes target_folder and confidence across cycles, the only
+   thing that changes between cycles is `skip_reason` (when eligibility gates
+   change). The dedup key captures exactly these transitions.
+
+**Affected files:** `web/routes/audit.py`, `web/templates/audit/list.html`,
+`tests/test_web_audit.py` (6 tests).
+
+---
+
 ## 2026-04-27 — Analysis page redesign: cards, metrics, and dedup
 
 **Context:** The analysis page had a flat "Skipped Emails You Later Sorted"

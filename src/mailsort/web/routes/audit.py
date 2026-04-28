@@ -20,9 +20,13 @@ async def audit_list(
     days: int = 30,
     run_id: str = "",
     page: int = 1,
+    unique: str = "1",
 ):
     db = request.state.db
     templates = request.app.state.templates
+
+    # Unique mode: on by default, disabled when filtering by run_id
+    use_unique = unique == "1" and not run_id
 
     conditions = ["a.created_at >= datetime('now', ?)"]
     params: list = [f"-{days} days"]
@@ -53,15 +57,48 @@ async def audit_list(
     where = " AND ".join(conditions)
     base = f"FROM audit_log a JOIN runs r ON r.run_id = a.run_id WHERE {where}"
 
-    # Count
-    total = db.execute(f"SELECT COUNT(*) {base}", tuple(params)).fetchone()[0]
+    if use_unique:
+        # Dedup by (email_id, classification_source, moved, skip_reason).
+        # Keeps the latest row (highest a.id) per unique outcome.
+        # Also computes event_count — how many raw rows share this outcome.
+        dedup_condition = (
+            "AND a.id = ("
+            "  SELECT MAX(a2.id) FROM audit_log a2"
+            "  WHERE a2.email_id = a.email_id"
+            "    AND a2.classification_source = a.classification_source"
+            "    AND a2.moved = a.moved"
+            "    AND COALESCE(a2.skip_reason, '') = COALESCE(a.skip_reason, '')"
+            "    AND a2.created_at >= datetime('now', ?)"
+            ")"
+        )
+        base_unique = f"{base} {dedup_condition}"
+        unique_params = tuple(params) + (f"-{days} days",)
 
-    # Paginate
-    offset = (page - 1) * PER_PAGE
-    rows = db.execute(
-        f"SELECT a.* {base} ORDER BY a.created_at DESC LIMIT ? OFFSET ?",
-        tuple(params) + (PER_PAGE, offset),
-    ).fetchall()
+        total = db.execute(
+            f"SELECT COUNT(*) {base_unique}", unique_params
+        ).fetchone()[0]
+
+        offset = (page - 1) * PER_PAGE
+        rows = db.execute(
+            f"SELECT a.*, ("
+            f"  SELECT COUNT(*) FROM audit_log a3"
+            f"  WHERE a3.email_id = a.email_id"
+            f"    AND a3.classification_source = a.classification_source"
+            f"    AND a3.moved = a.moved"
+            f"    AND COALESCE(a3.skip_reason, '') = COALESCE(a.skip_reason, '')"
+            f"    AND a3.created_at >= datetime('now', ?)"
+            f") AS event_count "
+            f"{base_unique} ORDER BY a.created_at DESC LIMIT ? OFFSET ?",
+            (f"-{days} days",) + unique_params + (PER_PAGE, offset),
+        ).fetchall()
+    else:
+        total = db.execute(f"SELECT COUNT(*) {base}", tuple(params)).fetchone()[0]
+
+        offset = (page - 1) * PER_PAGE
+        rows = db.execute(
+            f"SELECT a.*, 1 AS event_count {base} ORDER BY a.created_at DESC LIMIT ? OFFSET ?",
+            tuple(params) + (PER_PAGE, offset),
+        ).fetchall()
 
     total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
 
@@ -78,6 +115,7 @@ async def audit_list(
             "total": total,
             "page": page,
             "total_pages": total_pages,
+            "use_unique": use_unique,
             "filters": {
                 "source": source,
                 "moved": moved,
@@ -86,6 +124,7 @@ async def audit_list(
                 "subject": subject,
                 "days": days,
                 "run_id": run_id,
+                "unique": unique,
             },
             "folders": [r["target_folder"] for r in folders],
             "nav_active": "audit",

@@ -5,6 +5,22 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-28 — Feat: Audit log unique mode (dedup by outcome)
+
+**What changed:**
+- **feat:** Audit log (`/audit`) now deduplicates by default. Repeated
+  identical classifications (same email, source, moved, skip_reason)
+  collapse into one row with a `×N` badge showing how many raw events
+  exist. Different outcomes for the same email (flagged → moved →
+  corrected) each show as separate rows.
+- **feat:** "Show unique events only" checkbox in the filter bar.
+  Bookmarkable via `?unique=1|0`. Disabled automatically when filtering
+  by `run_id`.
+- **test:** `tests/test_web_audit.py` — 6 tests covering dedup, outcome
+  preservation, toggle, run_id override, and default-on behavior.
+
+---
+
 ## 2026-04-27 — Feat: Analysis page redesign with action-oriented cards
 
 **What changed:**

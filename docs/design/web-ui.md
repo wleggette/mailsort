@@ -36,7 +36,12 @@ The core inspection tool. Every classification decision mailsort has made.
 
 - **Filterable table** with columns: timestamp, email_id, from, subject,
   classification source, target folder, confidence, moved, skip reason
+- **Unique mode** (on by default): deduplicates by `(email_id, classification_source,
+  moved, skip_reason)` — repeated identical outcomes collapse into one row with a
+  `×N` badge. Different outcomes for the same email (flagged → moved → corrected)
+  each show as separate rows. Disabled when filtering by `run_id`.
 - **Filter bar** (query params, all bookmarkable):
+  - `?unique=1|0` (default 1)
   - `?source=rule|llm|thread|manual|correction`
   - `?moved=1|0`
   - `?folder=INBOX/Affairs/Banks`
