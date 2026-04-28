@@ -19,6 +19,7 @@ async def audit_list(
     subject: str = "",
     days: int = 30,
     run_id: str = "",
+    rule_id: str = "",
     page: int = 1,
     unique: str = "1",
 ):
@@ -53,6 +54,12 @@ async def audit_list(
     if run_id:
         conditions.append("a.run_id LIKE ?")
         params.append(f"{run_id}%")
+    if rule_id:
+        try:
+            conditions.append("a.rule_id = ?")
+            params.append(int(rule_id))
+        except ValueError:
+            pass
 
     where = " AND ".join(conditions)
     base = f"FROM audit_log a JOIN runs r ON r.run_id = a.run_id WHERE {where}"
@@ -124,6 +131,7 @@ async def audit_list(
                 "subject": subject,
                 "days": days,
                 "run_id": run_id,
+                "rule_id": rule_id,
                 "unique": unique,
             },
             "folders": [r["target_folder"] for r in folders],

@@ -126,7 +126,9 @@
     <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider">
       Evidence Emails ({{ evidence_rows|length }})
     </h2>
-    <p class="text-xs text-gray-400 mt-1">All emails matching this condition — the data that created and validates this rule</p>
+    <p class="text-xs text-gray-400 mt-1">All emails matching this condition — the data that created and validates this rule.
+      <a href="/audit?rule_id={{ rule['id'] }}&days=365" class="text-blue-600 hover:underline">View in audit log &rarr;</a>
+    </p>
   </div>
   {% if evidence_rows %}
   <div class="overflow-x-auto max-h-96 overflow-y-auto">
@@ -147,7 +149,7 @@
           <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap" data-utc="{{ row['email_received_at'] or '' }}" data-utc-format="short">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</td>
           <td class="px-4 py-2 text-sm font-mono text-gray-700 max-w-xs truncate">{{ row['from_address'] }}</td>
           <td class="px-4 py-2 text-sm text-gray-700 max-w-sm truncate">
-            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600 hover:underline">{{ row['subject'] or '(no subject)' }}</a>
+            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600 hover:underline" title="View audit detail">{{ row['subject'] or '(no subject)' }}</a>
           </td>
           <td class="px-4 py-2 text-sm whitespace-nowrap {{ 'text-green-700 font-medium' if row['target_folder'] == rule['target_folder_path'] else 'text-amber-600' }}">
             {{ row['target_folder'] }}

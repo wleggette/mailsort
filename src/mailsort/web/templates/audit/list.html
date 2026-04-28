@@ -9,8 +9,8 @@
 
 <!-- Filters -->
 <form method="get" action="/audit" class="bg-white rounded-lg border border-gray-200 p-4 mb-6">
-  <div class="grid grid-cols-3 md:grid-cols-9 gap-2">
-    <div class="col-span-1">
+  <div class="flex gap-2 items-end flex-wrap">
+    <div class="w-24">
       <label class="block text-xs font-medium text-gray-500 mb-1">Source</label>
       <select name="source" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All</option>
@@ -22,7 +22,7 @@
         <option value="system" {{ 'selected' if filters.source == 'system' }}>System</option>
       </select>
     </div>
-    <div class="col-span-1">
+    <div class="w-16">
       <label class="block text-xs font-medium text-gray-500 mb-1">Moved</label>
       <select name="moved" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All</option>
@@ -30,7 +30,7 @@
         <option value="0" {{ 'selected' if filters.moved == '0' }}>No</option>
       </select>
     </div>
-    <div class="col-span-1">
+    <div class="w-32">
       <label class="block text-xs font-medium text-gray-500 mb-1">Folder</label>
       <select name="folder" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All</option>
@@ -39,23 +39,28 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-span-1">
+    <div class="w-28">
       <label class="block text-xs font-medium text-gray-500 mb-1">Sender</label>
       <input name="sender" type="text" value="{{ filters.sender }}" placeholder="email"
              class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
-    <div class="col-span-2">
+    <div class="flex-1 min-w-[100px]">
       <label class="block text-xs font-medium text-gray-500 mb-1">Subject</label>
       <input name="subject" type="text" value="{{ filters.subject }}" placeholder="search subject"
              class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
     </div>
-    <div class="col-span-1">
+    <div class="w-20">
       <label class="block text-xs font-medium text-gray-500 mb-1">Run</label>
       <input name="run_id" type="text" value="{{ filters.run_id }}" placeholder="run ID"
              class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
+    <div class="w-14">
+      <label class="block text-xs font-medium text-gray-500 mb-1">Rule #</label>
+      <input name="rule_id" type="text" value="{{ filters.rule_id }}" placeholder="ID"
+             class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
+    </div>
     <input type="hidden" name="unique" value="{{ filters.unique }}">
-    <div class="col-span-1">
+    <div class="w-14">
       <label class="block text-xs font-medium text-gray-500 mb-1">Days</label>
       <select name="days" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="7" {{ 'selected' if filters.days == 7 }}>7d</option>
@@ -64,12 +69,12 @@
         <option value="365" {{ 'selected' if filters.days == 365 }}>1y</option>
       </select>
     </div>
-    <div class="col-span-1 flex items-end gap-1">
+    <div class="flex gap-1">
       <button type="submit" class="px-3 h-[34px] text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
         Filter
       </button>
       <a href="/audit"
-         class="px-2 h-[34px] inline-flex items-center text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 {{ '' if filters.source or filters.moved or filters.folder or filters.sender or filters.subject or filters.run_id or filters.days != 30 else 'invisible' }}">
+         class="px-2 h-[34px] inline-flex items-center text-sm font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 {{ '' if filters.source or filters.moved or filters.folder or filters.sender or filters.subject or filters.run_id or filters.rule_id or filters.days != 30 else 'invisible' }}">
         ✕
       </a>
     </div>
@@ -216,11 +221,11 @@
     </p>
     <div class="flex gap-1">
       {% if page > 1 %}
-      <a href="/audit?page={{ page - 1 }}&source={{ filters.source }}&moved={{ filters.moved }}&folder={{ filters.folder }}&sender={{ filters.sender }}&subject={{ filters.subject }}&days={{ filters.days }}&run_id={{ filters.run_id }}&unique={{ filters.unique }}"
+      <a href="/audit?page={{ page - 1 }}&source={{ filters.source }}&moved={{ filters.moved }}&folder={{ filters.folder }}&sender={{ filters.sender }}&subject={{ filters.subject }}&days={{ filters.days }}&run_id={{ filters.run_id }}&rule_id={{ filters.rule_id }}&unique={{ filters.unique }}"
          class="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50">← Prev</a>
       {% endif %}
       {% if page < total_pages %}
-      <a href="/audit?page={{ page + 1 }}&source={{ filters.source }}&moved={{ filters.moved }}&folder={{ filters.folder }}&sender={{ filters.sender }}&subject={{ filters.subject }}&days={{ filters.days }}&run_id={{ filters.run_id }}&unique={{ filters.unique }}"
+      <a href="/audit?page={{ page + 1 }}&source={{ filters.source }}&moved={{ filters.moved }}&folder={{ filters.folder }}&sender={{ filters.sender }}&subject={{ filters.subject }}&days={{ filters.days }}&run_id={{ filters.run_id }}&rule_id={{ filters.rule_id }}&unique={{ filters.unique }}"
          class="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50">Next →</a>
       {% endif %}
     </div>
