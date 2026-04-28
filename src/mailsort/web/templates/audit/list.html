@@ -22,7 +22,7 @@
         <option value="system" {{ 'selected' if filters.source == 'system' }}>System</option>
       </select>
     </div>
-    <div class="w-16">
+    <div class="w-14">
       <label class="block text-xs font-medium text-gray-500 mb-1">Moved</label>
       <select name="moved" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="">All</option>
@@ -60,7 +60,7 @@
              class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm font-mono">
     </div>
     <input type="hidden" name="unique" value="{{ filters.unique }}">
-    <div class="w-14">
+    <div class="w-16">
       <label class="block text-xs font-medium text-gray-500 mb-1">Days</label>
       <select name="days" class="w-full rounded-md border border-gray-300 px-2 h-[34px] text-sm">
         <option value="7" {{ 'selected' if filters.days == 7 }}>7d</option>
@@ -86,7 +86,7 @@
              onchange="this.form.querySelector('input[type=hidden][name=unique]').value = this.checked ? '1' : '0'; this.form.submit();">
       Show unique events only
     </label>
-    <span class="text-xs text-gray-400">(deduplicates repeated classifications of the same email{% if filters.run_id %} — disabled when filtering by run{% endif %})</span>
+    <span class="text-xs text-gray-400">(shows one row per email per distinct outcome)</span>
   </div>
 </form>
 
