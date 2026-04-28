@@ -5,6 +5,31 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-28 — Feat: Phase 9 — Google SSO Authentication
+
+**What changed:**
+- **feat:** Optional Google SSO authentication for the web UI. Disabled by
+  default (no behavioral change); enabled via `auth.google_client_id` in
+  config.yaml.
+- **feat:** Server-side sessions stored in new `sessions` SQLite table
+  (migration 13). Sessions have configurable lifetime (default 30 days).
+- **feat:** Auth middleware gates all routes when enabled; no-op when disabled.
+  Login page with "Sign in with Google" button, OAuth callback with allowlist
+  validation, logout with cookie cleanup.
+- **feat:** User avatar and sign-out in sidebar nav. Sessions panel on
+  settings page with per-session revoke and "revoke all others".
+- **feat:** Lazy session cleanup (1-in-100 requests delete expired rows).
+- **deps:** Added `authlib>=1.3`, `itsdangerous>=2.1`.
+- **brand:** UI renamed from "Mailsort" to "MailSort" in all page titles and
+  sidebar. CLI commands remain lowercase `mailsort`.
+- **tests:** 24 new tests covering session CRUD, middleware (enabled/disabled,
+  valid/expired/missing session, exempt routes), logout, session revocation,
+  config parsing, template visibility.
+- **docs:** Full documentation update across 11 files (design, architecture,
+  operations, configuration, PRD, phases, system test plan, examples).
+
+---
+
 ## 2026-04-28 — Fix: Rules detail page duplicate inflation
 
 **What changed:**

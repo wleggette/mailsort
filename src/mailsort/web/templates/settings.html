@@ -226,5 +226,61 @@
       </div>
     </div>
   </div>
+
+  {% if auth_enabled %}
+  <!-- Sessions -->
+  <div class="bg-white rounded-lg border border-gray-200 p-6 md:col-span-2">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-medium text-gray-500 uppercase tracking-wider">Active Sessions</h2>
+      {% if sessions|length > 1 %}
+      <form method="post" action="/settings/revoke-other-sessions">
+        <button type="submit" class="text-xs text-red-600 hover:text-red-800 font-medium">
+          Revoke all other sessions
+        </button>
+      </form>
+      {% endif %}
+    </div>
+    {% if sessions %}
+    <div class="space-y-3">
+      {% for s in sessions %}
+      <div class="flex items-center justify-between p-3 rounded-lg {{ 'bg-blue-50 border border-blue-100' if s.id == current_session_id else 'bg-gray-50' }}">
+        <div class="flex items-center gap-3 min-w-0">
+          {% if s.picture_url %}
+          <img src="{{ s.picture_url }}" alt="" class="w-8 h-8 rounded-full flex-shrink-0">
+          {% else %}
+          <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium text-gray-600 flex-shrink-0">
+            {{ s.email[0]|upper }}
+          </div>
+          {% endif %}
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-gray-900 truncate">
+              {{ s.email }}
+              {% if s.id == current_session_id %}
+              <span class="text-xs text-blue-600 font-normal ml-1">(this session)</span>
+              {% endif %}
+            </p>
+            <p class="text-xs text-gray-400 truncate">
+              {{ s.user_agent[:60] if s.user_agent else 'Unknown browser' }}{{ '…' if s.user_agent and s.user_agent|length > 60 else '' }}
+            </p>
+            <p class="text-xs text-gray-400">
+              IP: {{ s.ip_address or 'unknown' }} ·
+              Created: <span data-utc="{{ s.created_at }}" data-utc-format="short">{{ s.created_at }}</span> ·
+              Expires: <span data-utc="{{ s.expires_at }}" data-utc-format="short">{{ s.expires_at }}</span>
+            </p>
+          </div>
+        </div>
+        {% if s.id != current_session_id %}
+        <form method="post" action="/settings/revoke-session/{{ s.id }}" class="flex-shrink-0 ml-3">
+          <button type="submit" class="text-xs text-red-600 hover:text-red-800 font-medium">Revoke</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm text-gray-400">No active sessions.</p>
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

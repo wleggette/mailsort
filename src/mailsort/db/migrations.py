@@ -281,6 +281,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_run     ON audit_log(run_id);
 PRAGMA foreign_keys=ON;
 """
 
+_M13_CREATE_SESSIONS = """
+CREATE TABLE sessions (
+    id          TEXT PRIMARY KEY,
+    email       TEXT NOT NULL,
+    name        TEXT,
+    picture_url TEXT,
+    user_agent  TEXT,
+    ip_address  TEXT,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+"""
+
 _MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "create_schema_version",      _M1_SCHEMA_VERSION),
     (2, "create_rules",               _M2_RULES),
@@ -294,6 +309,7 @@ _MIGRATIONS: list[tuple[int, str, str]] = [
     (10, "add_runs_dry_run",           _M10_RUNS_DRY_RUN),
     (11, "computed_confidence",        _M11_COMPUTED_CONFIDENCE),
     (12, "system_source_and_cache",   _M12_SYSTEM_SOURCE_AND_CACHE),
+    (13, "create_sessions",           _M13_CREATE_SESSIONS),
 ]
 
 # ---------------------------------------------------------------------------

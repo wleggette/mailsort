@@ -92,6 +92,13 @@ class KnownContactOverride(BaseModel):
     relationship: Optional[str] = None
 
 
+class AuthConfig(BaseModel):
+    google_client_id: Optional[str] = None
+    allowed_emails: list[str] = Field(default_factory=list)
+    session_lifetime_hours: int = 720
+    redirect_uri: Optional[str] = None
+
+
 class Config(BaseModel):
     fastmail: FastmailConfig = Field(default_factory=FastmailConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
@@ -101,11 +108,13 @@ class Config(BaseModel):
     skip_senders: list[str] = Field(default_factory=list)
     exclude_folder_patterns: list[str] = Field(default_factory=list)
     known_contact_overrides: dict[str, KnownContactOverride] = Field(default_factory=dict)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     logging_config: LoggingConfig = Field(default_factory=LoggingConfig)
 
     # Secrets — loaded from environment, not config.yaml
     fastmail_api_token: str = Field(default="")
     anthropic_api_key: str = Field(default="")
+    google_client_secret: str = Field(default="")
 
     # Runtime: path to the SQLite database
     db_path: str = Field(default="data/mailsort.db")
@@ -118,6 +127,9 @@ class Config(BaseModel):
         if not self.anthropic_api_key:
             key = os.environ.get("ANTHROPIC_API_KEY", "")
             object.__setattr__(self, "anthropic_api_key", key)
+        if not self.google_client_secret:
+            secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+            object.__setattr__(self, "google_client_secret", secret)
         return self
 
     @model_validator(mode="after")

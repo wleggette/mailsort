@@ -10,7 +10,7 @@ def test_migrations_apply_once(db: Database):
     """Running migrations twice should be idempotent."""
     run_migrations(db)  # second call
     version = db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert version == 12
+    assert version == 13
 
 
 def test_all_tables_created(db: Database):
@@ -20,7 +20,7 @@ def test_all_tables_created(db: Database):
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
     }
-    expected = {"schema_version", "rules", "runs", "audit_log", "contacts", "folder_descriptions", "inbox_snapshot", "learner_state"}
+    expected = {"schema_version", "rules", "runs", "audit_log", "contacts", "folder_descriptions", "inbox_snapshot", "learner_state", "sessions"}
     assert expected.issubset(tables)
 
 
@@ -92,4 +92,4 @@ def test_audit_log_cached_column(db: Database):
 def test_schema_version_tracked(db: Database):
     rows = db.execute("SELECT version FROM schema_version ORDER BY version").fetchall()
     versions = [r[0] for r in rows]
-    assert versions == list(range(1, 13))
+    assert versions == list(range(1, 14))
