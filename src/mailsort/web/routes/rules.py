@@ -17,6 +17,7 @@ async def rules_list(
     folder: str = "",
     conf_min: str = "",
     conf_max: str = "",
+    created_days: str = "",
 ):
     db = request.state.db
     templates = request.app.state.templates
@@ -54,6 +55,12 @@ async def rules_list(
         try:
             conditions.append("confidence < ?")
             params.append(float(conf_max))
+        except ValueError:
+            pass
+    if created_days:
+        try:
+            conditions.append("created_at >= datetime('now', ?)")
+            params.append(f"-{int(created_days)} days")
         except ValueError:
             pass
 
@@ -94,6 +101,7 @@ async def rules_list(
                 "folder": folder,
                 "conf_min": conf_min,
                 "conf_max": conf_max,
+                "created_days": created_days,
             },
             "folders": [r["target_folder_path"] for r in folders],
             "nav_active": "rules",

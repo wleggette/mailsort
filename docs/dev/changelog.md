@@ -5,6 +5,39 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-27 — Feat: Analysis page redesign with action-oriented cards
+
+**What changed:**
+- **fix:** Skipped-then-sorted query deduplicated by email_id. Emails
+  classified across N cycles now produce 1 result, not N. Previously
+  reported 1,534 rows for 41 actual emails (~37× inflation).
+- **feat:** Analysis page replaced flat "Skipped Emails You Later Sorted"
+  table with 5 action-oriented cards:
+  - **Folder Description Gaps** — wrong-folder emails grouped by destination,
+    with "Review description" links to /folders.
+  - **Known Contact Sorting** — per-contact breakdown of sorting mechanisms,
+    folder coherence, and threshold-blocked emails.
+  - **Learning Effectiveness** — auto rule counts, hit counts, recently
+    created rules with link-through to /rules.
+  - **Eligibility-Gated Emails** — flagged/unread/too_new breakdown.
+  - **LLM Accuracy Summary** — tree structure + 3 precision metrics
+    (system effectiveness, move precision, threshold precision) with
+    adaptive color thresholds.
+- **feat:** Rules page: added `created_days` filter parameter and `Created`
+  column (sortable). Enables link from analysis page "N rules created in
+  last Xd" to `/rules?filter=all&created_days=30`.
+- **feat:** Folders page: added `?highlight=` query param support. Scrolls
+  to and highlights specified folders (yellow background). Used by "Review
+  description" and "Compare descriptions" links on analysis page.
+- **feat:** New config field `classification.min_known_contact_skips`
+  (default 3) — minimum threshold-blocked emails before showing a known
+  contact card on /analyze.
+- **test:** First web UI test file (`tests/test_web_analyze.py`) — 15 tests
+  covering query-level dedup, card building, metric calculations, and
+  route-level rendering.
+
+---
+
 ## 2026-04-08 — Fix: Eligibility gates override confidence gate skip_reason
 
 **What changed:**

@@ -160,7 +160,7 @@
 })();
 </script>
 
-{% if filters.type or filters.search or filters.folder or filters.conf_min or filters.conf_max %}
+{% if filters.type or filters.search or filters.folder or filters.conf_min or filters.conf_max or filters.created_days %}
 <p class="text-sm text-gray-500 mb-3">Showing {{ rules | length }} rule(s) matching filters</p>
 {% endif %}
 
@@ -177,6 +177,7 @@
           <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Conf.</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Source</th>
           <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Hits</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Created</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Last Relevant</th>
           <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Active</th>
         </tr>
@@ -202,7 +203,8 @@
           <td class="px-4 py-3 text-sm text-right font-mono text-gray-900">{{ "%.2f"|format(rule['confidence']) }}</td>
           <td class="px-4 py-3 text-sm text-gray-500">{{ rule['source'] }}</td>
           <td class="px-4 py-3 text-sm text-right text-gray-900">{{ rule['hit_count'] }}</td>
-          <td class="px-4 py-3 text-sm text-gray-500">{{ rule['last_relevant_at'] or '—' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-500" data-utc="{{ rule['created_at'] }}" data-utc-format="date">{{ rule['created_at'][:10] if rule['created_at'] else '—' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-500" data-utc="{{ rule['last_relevant_at'] or '' }}" data-utc-format="date">{{ rule['last_relevant_at'] or '—' }}</td>
           <td class="px-4 py-3 text-center">
             {% if rule['active'] %}
               <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>

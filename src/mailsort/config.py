@@ -70,6 +70,7 @@ class ClassificationConfig(BaseModel):
     staleness_floor: float = 0.6
     deactivation_threshold: float = 0.50
     base_confidence: BaseConfidenceConfig = Field(default_factory=BaseConfidenceConfig)
+    min_known_contact_skips: int = 3  # Min threshold-blocked emails before showing a known contact card
 
 
 class LoggingConfig(BaseModel):

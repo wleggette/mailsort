@@ -196,40 +196,336 @@
 </div>
 {% endif %}
 
-<!-- Skipped Then Sorted -->
-{% if skipped_then_sorted %}
+<!-- ============================================================ -->
+<!-- Classification Analysis Cards                                -->
+<!-- ============================================================ -->
+{% if total > 0 %}
+<div class="mb-6">
+  <h2 class="text-xl font-semibold text-gray-900 mb-1">Classification Analysis</h2>
+  <p class="text-sm text-gray-500 mb-6">Action-oriented breakdown of skipped and misclassified emails</p>
+</div>
+
+<!-- Card 5: LLM Accuracy Summary -->
+{% if llm_accuracy.llm_total > 0 %}
 <div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-  <h2 class="text-lg font-medium text-gray-900 mb-2">Skipped Emails You Later Sorted</h2>
-  <p class="text-sm text-gray-500 mb-4">
-    {{ same_folder | length }} of {{ skipped_then_sorted | length }} skipped LLM emails were manually sorted to the
-    <strong>same folder</strong> the LLM suggested.
-    {% if same_folder %}
-    Average confidence: <span class="font-mono">{{ avg_conf_same }}</span>
+  <h3 class="text-lg font-medium text-gray-900 mb-4">LLM Accuracy Summary</h3>
+  <div class="space-y-2 text-sm mb-4">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl font-semibold text-gray-900 w-10 text-right">{{ llm_accuracy.llm_total }}</span>
+      <span class="text-gray-700">LLM classified</span>
+    </div>
+    <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-2">
+      <div class="flex items-center gap-3">
+        <span class="text-xl font-semibold text-green-600 w-10 text-right">{{ llm_accuracy.llm_moved }}</span>
+        <span class="text-gray-700">Moved <span class="text-gray-400">(above threshold)</span></span>
+      </div>
+      {% if llm_accuracy.llm_corrected > 0 %}
+      <div class="ml-6 border-l-2 border-gray-200 pl-4">
+        <div class="flex items-center gap-3">
+          <span class="text-lg font-semibold text-amber-600 w-10 text-right">{{ llm_accuracy.llm_corrected }}</span>
+          <span class="text-gray-700">Corrected by you <span class="text-gray-400">(LLM was wrong + confident)</span></span>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-2">
+      <div class="flex items-center gap-3">
+        <span class="text-xl font-semibold text-gray-500 w-10 text-right">{{ llm_accuracy.llm_skipped }}</span>
+        <span class="text-gray-700">Skipped <span class="text-gray-400">(below threshold)</span></span>
+      </div>
+      {% if llm_accuracy.later_sorted > 0 %}
+      <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-2">
+        <div class="flex items-center gap-3">
+          <span class="text-lg font-semibold text-gray-700 w-10 text-right">{{ llm_accuracy.later_sorted }}</span>
+          <span class="text-gray-700">Later sorted by you</span>
+        </div>
+        <div class="ml-6 border-l-2 border-gray-200 pl-4 space-y-1.5">
+          <div class="flex items-center gap-3">
+            <span class="font-semibold text-green-600 w-10 text-right">{{ llm_accuracy.agreed }}</span>
+            <span class="text-gray-700">LLM agreed with you <span class="text-gray-400">(threshold too strict)</span></span>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="font-semibold text-amber-600 w-10 text-right">{{ llm_accuracy.disagreed }}</span>
+            <span class="text-gray-700">LLM disagreed <span class="text-gray-400">(threshold protected you)</span></span>
+          </div>
+        </div>
+      {% endif %}
+      {% if llm_accuracy.still_pending > 0 %}
+        <div class="flex items-center gap-3">
+          <span class="text-lg font-semibold text-gray-400 w-10 text-right">{{ llm_accuracy.still_pending }}</span>
+          <span class="text-gray-400">Still in inbox or eligibility-gated</span>
+        </div>
+      {% endif %}
+      {% if llm_accuracy.later_sorted > 0 %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% if llm_accuracy.system_effectiveness is not none or llm_accuracy.move_precision is not none or llm_accuracy.threshold_precision is not none %}
+  <div class="bg-gray-50 rounded-lg p-4">
+    <div class="grid grid-cols-3 gap-6">
+      <div class="text-center border-r border-gray-200">
+        <p class="text-3xl font-bold {{ metric_color(llm_accuracy.system_effectiveness) }}">{{ llm_accuracy.system_effectiveness if llm_accuracy.system_effectiveness is not none else 'N/A' }}{% if llm_accuracy.system_effectiveness is not none %}%{% endif %}</p>
+        <p class="text-xs font-medium text-gray-500 mt-1">System Effectiveness</p>
+        <p class="text-xs text-gray-400 mt-0.5">{{ llm_accuracy.se_n }} of {{ llm_accuracy.se_d }} correct outcomes</p>
+      </div>
+      <div class="text-center border-r border-gray-200">
+        <p class="text-3xl font-bold {{ metric_color(llm_accuracy.move_precision) }}">{{ llm_accuracy.move_precision if llm_accuracy.move_precision is not none else 'N/A' }}{% if llm_accuracy.move_precision is not none %}%{% endif %}</p>
+        <p class="text-xs font-medium text-gray-500 mt-1">Move Precision</p>
+        <p class="text-xs text-gray-400 mt-0.5">{{ llm_accuracy.mp_n }} of {{ llm_accuracy.mp_d }} moves were correct</p>
+      </div>
+      <div class="text-center">
+        <p class="text-3xl font-bold {{ metric_color(llm_accuracy.threshold_precision) }}">{{ llm_accuracy.threshold_precision if llm_accuracy.threshold_precision is not none else 'N/A' }}{% if llm_accuracy.threshold_precision is not none %}%{% endif %}</p>
+        <p class="text-xs font-medium text-gray-500 mt-1">Threshold Precision</p>
+        <p class="text-xs text-gray-400 mt-0.5">{{ llm_accuracy.tp_n }} of {{ llm_accuracy.tp_d }} blocks were justified</p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Card 1: Folder Description Gaps -->
+{% if folder_gaps %}
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-2">Folder Description Gaps</h3>
+  <p class="text-sm text-gray-500 mb-4">Folders the LLM fails to classify emails into — you later sorted these manually.</p>
+  {% for card in folder_gaps %}
+  <div class="border border-gray-200 rounded-lg mb-4">
+    <div class="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-t-lg border-b border-gray-200">
+      <div>
+        <span class="font-medium text-gray-900">{{ card.folder | replace("INBOX/", "") }}</span>
+        <span class="ml-2 text-sm text-gray-500">{{ card.count }} email{{ 's' if card.count != 1 else '' }} the LLM couldn't classify</span>
+      </div>
+      <a href="/folders?highlight={{ card.folder | urlencode }}" class="text-sm text-blue-600 hover:underline">Review description &rarr;</a>
+    </div>
+    <div class="px-4 py-2 text-xs text-gray-500">
+      LLM said: {% for folder, cnt in card.llm_summary %}<span class="font-mono">{{ folder | replace("INBOX/", "") }}</span> ({{ cnt }}){{ ', ' if not loop.last else '' }}{% endfor %}
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-200">
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">From</th>
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">Subject</th>
+          <th class="text-left py-2 px-4 text-gray-500 font-medium text-xs">LLM said</th>
+          <th class="text-right py-2 px-4 text-gray-500 font-medium text-xs">Confidence</th>
+          <th class="text-right py-2 px-4 text-gray-500 font-medium text-xs w-8"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in card.emails[:5] %}
+        <tr class="border-b border-gray-100">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">{{ e.from_address[:30] }}</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">{{ e.subject[:60] }}</td>
+          <td class="py-1.5 px-4 text-xs text-gray-500">{{ e.llm_folder | replace("INBOX/", "") }}</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">{{ "%.2f" | format(e.confidence) }}</td>
+          <td class="py-1.5 px-4 text-right"><a href="/audit/{{ e.skip_audit_id }}" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+        {% endfor %}
+        {% for e in card.emails[5:] %}
+        <tr class="border-b border-gray-100 hidden" data-expand="{{ loop.index }}">
+          <td class="py-1.5 px-4 font-mono text-xs text-gray-600">{{ e.from_address[:30] }}</td>
+          <td class="py-1.5 px-4 text-gray-700 truncate max-w-xs text-xs">{{ e.subject[:60] }}</td>
+          <td class="py-1.5 px-4 text-xs text-gray-500">{{ e.llm_folder | replace("INBOX/", "") }}</td>
+          <td class="py-1.5 px-4 text-right font-mono text-xs text-gray-700">{{ "%.2f" | format(e.confidence) }}</td>
+          <td class="py-1.5 px-4 text-right"><a href="/audit/{{ e.skip_audit_id }}" class="text-blue-500 hover:text-blue-700 text-xs">&rarr;</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if card.emails | length > 5 %}
+    <div class="px-4 py-2">
+      <button onclick="this.closest('.border').querySelectorAll('[data-expand]').forEach(r=>r.classList.remove('hidden')); this.style.display='none';"
+              class="text-xs text-blue-600 hover:underline">&#9656; Show {{ card.emails | length - 5 }} more</button>
+    </div>
     {% endif %}
-  </p>
-  {% if same_folder %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Card 2: Known Contact Sorting -->
+{% if known_contacts %}
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-2">Known Contact Sorting</h3>
+  <p class="text-sm text-gray-500 mb-4">Emails from known contacts blocked by the elevated confidence threshold.</p>
+  {% for card in known_contacts %}
+  <div class="border border-gray-200 rounded-lg {% if not loop.last %}mb-4{% endif %}">
+    <div class="px-4 py-3 bg-gray-50 rounded-t-lg border-b border-gray-200">
+      <div class="flex items-center justify-between">
+        <div>
+          <a href="/contacts?search={{ card.sender | urlencode }}" class="font-medium text-gray-900 hover:text-blue-600">{{ card.sender }}</a>
+          {% if card.relationship %}
+          <span class="ml-2 text-sm text-gray-500">Known contact &middot; Relationship: {{ card.relationship }}</span>
+          {% else %}
+          <span class="ml-2 text-sm text-gray-500">Known contact</span>
+          {% endif %}
+        </div>
+        <a href="/audit?sender={{ card.sender | urlencode }}&days={{ days }}" class="text-sm text-blue-600 hover:underline">View all audit entries &rarr;</a>
+      </div>
+    </div>
+    <div class="px-4 py-3 border-b border-gray-100">
+      <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">How emails are being sorted ({{ days }}d)</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div class="bg-teal-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-teal-700">{{ card.thread_count }}</p>
+          <p class="text-xs text-teal-600">Thread context</p>
+        </div>
+        <div class="bg-blue-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-blue-700">{{ card.rule_count }}</p>
+          <p class="text-xs text-blue-600">Rules</p>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-purple-700">{{ card.llm_moved_count }}</p>
+          <p class="text-xs text-purple-600">LLM moved</p>
+        </div>
+        <div class="bg-amber-50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-semibold text-amber-700">{{ card.blocked_count }}</p>
+          <p class="text-xs text-amber-600">Threshold-blocked</p>
+        </div>
+      </div>
+    </div>
+    {% if card.coherence %}
+    <div class="px-4 py-3 border-b border-gray-100">
+      <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Folder coherence</p>
+      <div class="space-y-1.5">
+        {% for c in card.coherence %}
+        <div class="flex items-center gap-2">
+          <div class="w-28 text-xs text-gray-700 truncate">{{ c.folder | replace("INBOX/", "") }}</div>
+          <div class="flex-1 bg-gray-100 rounded-full h-3">
+            <div class="h-3 rounded-full bg-blue-400" style="width: {{ [c.pct, 2] | max }}%"></div>
+          </div>
+          <div class="w-20 text-xs text-right text-gray-500">{{ c.pct }}% ({{ c.count }})</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% if card.coherence_note %}
+      <p class="mt-2 text-xs text-amber-700 bg-amber-50 rounded p-2">&#9888; {{ card.coherence_note }}</p>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if card.blocked_emails %}
+    <div class="px-4 py-3">
+      <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Threshold-blocked emails</p>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-200">
+            <th class="text-left py-1.5 px-0 text-gray-500 font-medium text-xs">Subject</th>
+            <th class="text-left py-1.5 px-2 text-gray-500 font-medium text-xs">LLM said</th>
+            <th class="text-left py-1.5 px-2 text-gray-500 font-medium text-xs">User moved to</th>
+            <th class="w-8"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in card.blocked_emails[:5] %}
+          <tr class="border-b border-gray-100">
+            <td class="py-1.5 px-0 text-gray-700 text-xs">{{ e.subject[:60] if e.subject else '' }}</td>
+            <td class="py-1.5 px-2 text-xs {% if e.manual_folder and e.llm_folder != e.manual_folder %}text-amber-600{% else %}text-gray-600{% endif %}">{{ e.llm_folder | replace("INBOX/", "") }}</td>
+            <td class="py-1.5 px-2 text-xs text-green-700 font-medium">{{ e.manual_folder | replace("INBOX/", "") if e.manual_folder else '—' }}</td>
+            <td class="py-1.5 px-2"><a href="/audit/{{ e.audit_id }}" class="text-blue-500 text-xs">&rarr;</a></td>
+          </tr>
+          {% endfor %}
+          {% for e in card.blocked_emails[5:] %}
+          <tr class="border-b border-gray-100 hidden" data-expand-contact="{{ loop.index }}">
+            <td class="py-1.5 px-0 text-gray-700 text-xs">{{ e.subject[:60] if e.subject else '' }}</td>
+            <td class="py-1.5 px-2 text-xs {% if e.manual_folder and e.llm_folder != e.manual_folder %}text-amber-600{% else %}text-gray-600{% endif %}">{{ e.llm_folder | replace("INBOX/", "") }}</td>
+            <td class="py-1.5 px-2 text-xs text-green-700 font-medium">{{ e.manual_folder | replace("INBOX/", "") if e.manual_folder else '—' }}</td>
+            <td class="py-1.5 px-2"><a href="/audit/{{ e.audit_id }}" class="text-blue-500 text-xs">&rarr;</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if card.blocked_emails | length > 5 %}
+      <button onclick="this.closest('.border').querySelectorAll('[data-expand-contact]').forEach(r=>r.classList.remove('hidden')); this.style.display='none';"
+              class="text-xs text-blue-600 hover:underline mt-2">&#9656; Show {{ card.blocked_emails | length - 5 }} more</button>
+      {% endif %}
+    </div>
+    {% endif %}
+    <div class="px-4 py-3 bg-gray-50 rounded-b-lg border-t border-gray-200">
+      <a href="/audit?sender={{ card.sender | urlencode }}&days={{ days }}" class="text-xs text-blue-600 hover:underline">&rarr; View all audit entries for this sender</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Card 3: Learning Effectiveness -->
+{% if learning.total_auto_rules > 0 %}
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-2">Learning Effectiveness</h3>
+  <p class="text-sm text-gray-500 mb-4">Rules the system has learned from your manual sorts.</p>
+  <div class="grid grid-cols-3 gap-4 mb-4">
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">{{ learning.total_auto_rules }}</p>
+      <p class="text-xs text-gray-500">Total auto rules</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">{{ "{:,}".format(learning.total_emails_sorted) }}</p>
+      <p class="text-xs text-gray-500">Emails sorted by rules</p>
+    </div>
+    <div class="bg-blue-50 rounded-lg p-3 text-center">
+      <a href="/rules?filter=all&created_days={{ days }}" class="block">
+        <p class="text-2xl font-semibold text-blue-700">{{ learning.recent_rules_count }}</p>
+        <p class="text-xs text-blue-600">Rules created in last {{ days }}d</p>
+      </a>
+    </div>
+  </div>
+  {% if learning.recent_rules %}
+  <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Recently created rules</p>
   <table class="w-full text-sm sortable">
     <thead>
       <tr class="border-b border-gray-200">
-        <th class="text-left py-2 px-3 text-gray-500 font-medium">From</th>
-        <th class="text-left py-2 px-3 text-gray-500 font-medium">Subject</th>
-        <th class="text-left py-2 px-3 text-gray-500 font-medium">Folder</th>
-        <th class="text-right py-2 px-3 text-gray-500 font-medium">Confidence</th>
+        <th class="text-left py-2 px-3 text-gray-500 font-medium text-xs">Rule</th>
+        <th class="text-left py-2 px-3 text-gray-500 font-medium text-xs">Folder</th>
+        <th class="text-right py-2 px-3 text-gray-500 font-medium text-xs">Emails sorted</th>
+        <th class="text-left py-2 px-3 text-gray-500 font-medium text-xs">Status</th>
+        <th class="w-8" data-nosort></th>
       </tr>
     </thead>
     <tbody>
-      {% for r in same_folder %}
+      {% for r in learning.recent_rules %}
       <tr class="border-b border-gray-100">
-        <td class="py-2 px-3 font-mono text-xs text-gray-600">{{ r.from_address }}</td>
-        <td class="py-2 px-3 text-gray-700 truncate max-w-xs">{{ r.subject[:60] }}</td>
-        <td class="py-2 px-3 text-gray-600">{{ r.llm_folder | replace("INBOX/", "") }}</td>
-        <td class="py-2 px-3 text-right font-mono text-gray-700">{{ "%.2f" | format(r.confidence) }}</td>
+        <td class="py-1.5 px-3 font-mono text-xs text-gray-700">{{ r.condition_value }}</td>
+        <td class="py-1.5 px-3 text-xs text-gray-600">{{ r.target_folder | replace("INBOX/", "") }}</td>
+        <td class="py-1.5 px-3 text-right text-xs font-medium text-gray-900">{{ r.emails_sorted }}</td>
+        <td class="py-1.5 px-3"><span class="text-xs px-1.5 py-0.5 rounded-full {{ 'bg-green-100 text-green-700' if r.active else 'bg-gray-100 text-gray-500' }}">{{ 'active' if r.active else 'inactive' }}</span></td>
+        <td class="py-1.5 px-3"><a href="/rules/{{ r.id }}" class="text-blue-500 text-xs">&rarr;</a></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% endif %}
+  <div class="mt-3">
+    <a href="/rules" class="text-xs text-blue-600 hover:underline">&#9656; View all rules</a>
+  </div>
 </div>
+{% endif %}
+
+<!-- Card 4: Eligibility-Gated Emails -->
+{% if eligibility.total > 0 %}
+<div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+  <h3 class="text-lg font-medium text-gray-900 mb-4">Eligibility-Gated Emails</h3>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">{{ eligibility.total }}</p>
+      <p class="text-xs text-gray-500">Total gated</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">{{ eligibility.flagged }}</p>
+      <p class="text-xs text-gray-500">Flagged</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">{{ eligibility.unread }}</p>
+      <p class="text-xs text-gray-500">Unread</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 text-center">
+      <p class="text-2xl font-semibold text-gray-900">{{ eligibility.too_new }}</p>
+      <p class="text-xs text-gray-500">Too new</p>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endif %}
 
 <!-- Rule Corrections -->

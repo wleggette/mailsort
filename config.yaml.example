@@ -43,6 +43,7 @@ classification:
   #   sender_domain_floor: 0.75
   #   sender_domain_cap: 0.90
   #   sender_domain_per_evidence: 0.02
+  # min_known_contact_skips: 3  # Min threshold-blocked emails to show a known contact card on /analyze
 
 # Folder descriptions — OPTIONAL manual overrides only.
 # Bootstrap auto-generates descriptions for all folders by scanning their contents.
