@@ -113,9 +113,9 @@
       <div class="text-right font-medium {{ 'text-red-700' if stats.windowed.net_corrections > 0 else 'text-gray-400' }}">{{ stats.windowed.net_corrections }}</div>
       <div class="text-right font-medium {{ 'text-red-700' if stats.all_time.net_corrections > 0 else 'text-gray-400' }}">{{ stats.all_time.net_corrections }}</div>
 
-      <div class="text-gray-600">Hit Count</div>
+      <div class="text-gray-600">Emails Matched</div>
       <div class="text-right text-gray-400">—</div>
-      <div class="text-right font-semibold text-gray-900">{{ rule['hit_count'] }}</div>
+      <div class="text-right font-semibold text-gray-900">{{ unique_emails_matched }}</div>
     </div>
   </div>
 </div>
@@ -146,7 +146,9 @@
         <tr class="hover:bg-gray-50">
           <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap" data-utc="{{ row['email_received_at'] or '' }}" data-utc-format="short">{{ row['email_received_at'][:16] if row['email_received_at'] else '—' }}</td>
           <td class="px-4 py-2 text-sm font-mono text-gray-700 max-w-xs truncate">{{ row['from_address'] }}</td>
-          <td class="px-4 py-2 text-sm text-gray-700 max-w-sm truncate">{{ row['subject'] or '(no subject)' }}</td>
+          <td class="px-4 py-2 text-sm text-gray-700 max-w-sm truncate">
+            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600 hover:underline">{{ row['subject'] or '(no subject)' }}</a>
+          </td>
           <td class="px-4 py-2 text-sm whitespace-nowrap {{ 'text-green-700 font-medium' if row['target_folder'] == rule['target_folder_path'] else 'text-amber-600' }}">
             {{ row['target_folder'] }}
           </td>
@@ -203,7 +205,9 @@
         <tr class="hover:bg-gray-50">
           <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap" data-utc="{{ row['created_at'] }}" data-utc-format="short">{{ row['created_at'][:16] }}</td>
           <td class="px-4 py-2 text-sm font-mono text-gray-700 max-w-xs truncate">{{ row['from_address'] }}</td>
-          <td class="px-4 py-2 text-sm text-gray-700 max-w-sm truncate">{{ row['subject'] or '(no subject)' }}</td>
+          <td class="px-4 py-2 text-sm text-gray-700 max-w-sm truncate">
+            <a href="/audit/{{ row['id'] }}" class="hover:text-blue-600 hover:underline">{{ row['subject'] or '(no subject)' }}</a>
+          </td>
           <td class="px-4 py-2 text-center">
             {% if row['moved'] %}
               <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Yes</span>

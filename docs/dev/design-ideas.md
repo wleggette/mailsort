@@ -525,9 +525,10 @@ Moved to `decisions.md` §2026-04-28.
 
 ---
 
-## Rules Detail Page — Duplicate Inflation in Evidence & Matches
+## ~~Rules Detail Page — Duplicate Inflation in Evidence & Matches~~ — FIXED (2026-04-28)
 
-**Status:** Bug, not started (2026-04-16)
+Fixed: dedup by email_id in evidence, matches, and performance stats.
+Option A for hit count (query-time dedup → "Unique Emails" metric).
 
 ### Problem
 

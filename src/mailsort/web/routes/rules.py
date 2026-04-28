@@ -126,10 +126,13 @@ async def rule_detail(request: Request, rule_id: int):
             },
         )
 
-    # Recent audit log entries that matched this rule
+    # Recent audit log entries that matched this rule (deduplicated by email_id)
     audit_rows = db.execute(
-        "SELECT * FROM audit_log WHERE rule_id = ? ORDER BY created_at DESC LIMIT 50",
-        (rule_id,),
+        "SELECT a.* FROM audit_log a WHERE a.rule_id = ? "
+        "AND a.id = (SELECT MAX(a2.id) FROM audit_log a2 "
+        "            WHERE a2.email_id = a.email_id AND a2.rule_id = ?) "
+        "ORDER BY a.created_at DESC LIMIT 50",
+        (rule_id, rule_id),
     ).fetchall()
 
     # ---- Coherence & evidence stats (all-time + windowed) ----
@@ -139,6 +142,7 @@ async def rule_detail(request: Request, rule_id: int):
         "list_id": "list_id",
     }
     evidence_rows = []
+    unique_emails_matched = 0
     stats: dict = {
         "all_time": {"to_target": 0, "total": 0, "coherence": 0,
                      "corrections": 0, "confirming": 0, "net_corrections": 0},
@@ -151,13 +155,13 @@ async def rule_detail(request: Request, rule_id: int):
         cond_val = rule["condition_value"]
         target = rule["target_folder_path"]
 
-        # --- All-time ---
+        # --- All-time (COUNT DISTINCT email_id) ---
         at_to_target = db.execute(
-            f"SELECT COUNT(*) FROM audit_log WHERE {col} COLLATE NOCASE = ? AND target_folder = ? AND moved = 1",
+            f"SELECT COUNT(DISTINCT email_id) FROM audit_log WHERE {col} COLLATE NOCASE = ? AND target_folder = ? AND moved = 1",
             (cond_val, target),
         ).fetchone()[0]
         at_total = db.execute(
-            f"SELECT COUNT(*) FROM audit_log WHERE {col} COLLATE NOCASE = ? AND moved = 1",
+            f"SELECT COUNT(DISTINCT email_id) FROM audit_log WHERE {col} COLLATE NOCASE = ? AND moved = 1",
             (cond_val,),
         ).fetchone()[0]
         at_corrections = db.execute(
@@ -179,16 +183,16 @@ async def rule_detail(request: Request, rule_id: int):
             "net_corrections": max(0, at_corrections - at_confirming),
         }
 
-        # --- Windowed (30 days) ---
+        # --- Windowed (30 days, COUNT DISTINCT email_id) ---
         lookback = "-30 days"
         w_to_target = db.execute(
-            f"""SELECT COUNT(*) FROM audit_log
+            f"""SELECT COUNT(DISTINCT email_id) FROM audit_log
                 WHERE {col} COLLATE NOCASE = ? AND target_folder = ? AND moved = 1
                   AND created_at >= datetime('now', ?)""",
             (cond_val, target, lookback),
         ).fetchone()[0]
         w_total = db.execute(
-            f"""SELECT COUNT(*) FROM audit_log
+            f"""SELECT COUNT(DISTINCT email_id) FROM audit_log
                 WHERE {col} COLLATE NOCASE = ? AND moved = 1
                   AND created_at >= datetime('now', ?)""",
             (cond_val, lookback),
@@ -215,11 +219,22 @@ async def rule_detail(request: Request, rule_id: int):
             "net_corrections": max(0, w_corrections - w_confirming),
         }
 
-        # All emails matching this condition (evidence table)
+        # All emails matching this condition (evidence table, deduplicated)
         evidence_rows = db.execute(
-            f"SELECT * FROM audit_log WHERE {col} COLLATE NOCASE = ? ORDER BY created_at DESC LIMIT 100",
-            (cond_val,),
+            f"SELECT a.* FROM audit_log a "
+            f"WHERE a.{col} COLLATE NOCASE = ? "
+            f"  AND a.id = (SELECT MAX(a2.id) FROM audit_log a2 "
+            f"              WHERE a2.email_id = a.email_id "
+            f"                AND a2.{col} COLLATE NOCASE = ?) "
+            f"ORDER BY a.created_at DESC LIMIT 100",
+            (cond_val, cond_val),
         ).fetchall()
+
+        # Unique emails matched by this rule (for display instead of hit_count)
+        unique_emails_matched = db.execute(
+            "SELECT COUNT(DISTINCT email_id) FROM audit_log WHERE rule_id = ?",
+            (rule_id,),
+        ).fetchone()[0]
 
     return templates.TemplateResponse(
         request=request,
@@ -229,6 +244,7 @@ async def rule_detail(request: Request, rule_id: int):
             "audit_rows": audit_rows,
             "evidence_rows": evidence_rows,
             "stats": stats,
+            "unique_emails_matched": unique_emails_matched,
             "nav_active": "rules",
     })
 

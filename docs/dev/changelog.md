@@ -5,6 +5,20 @@ chronological — newest entries first.
 
 ---
 
+## 2026-04-28 — Fix: Rules detail page duplicate inflation
+
+**What changed:**
+- **fix:** Evidence Emails and Recent Matches panels deduplicated by
+  `email_id` (keep latest row per email). Rule 13 went from showing
+  "EVIDENCE EMAILS (100)" to showing 5 unique emails.
+- **fix:** Performance stats (coherence, evidence counts) use
+  `COUNT(DISTINCT email_id)` instead of `COUNT(*)`.
+- **fix:** Hit Count replaced with "Unique Emails" — shows
+  `COUNT(DISTINCT email_id) WHERE rule_id = ?` instead of the inflated
+  `hit_count` column.
+
+---
+
 ## 2026-04-28 — Feat: Audit log unique mode (dedup by outcome)
 
 **What changed:**
