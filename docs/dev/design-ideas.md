@@ -3,6 +3,17 @@
 Captured ideas for future features with enough context to pick them up later
 without re-investigating from scratch.
 
+## Table of Contents
+
+### Active
+- [List-Unsubscribe Combined Rule](#list-unsubscribe-combined-rule) — Not prioritized
+- [Google SSO for Web UI](#google-sso-for-web-ui) — Not started
+
+### Implemented
+- [~~Analysis Page Improvements~~](#analysis-page-improvements--implemented-2026-04-27) → decisions.md §2026-04-27
+- [~~Audit Log — Deduplicated View~~](#audit-log--deduplicated-view--implemented-2026-04-28) → decisions.md §2026-04-28
+- [~~Rules Detail Page — Duplicate Inflation~~](#rules-detail-page--duplicate-inflation-in-evidence--matches--fixed-2026-04-28) → decisions.md §2026-04-28
+
 ---
 
 ## List-Unsubscribe Combined Rule
