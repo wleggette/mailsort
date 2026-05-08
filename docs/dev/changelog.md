@@ -5,6 +5,21 @@ chronological — newest entries first.
 
 ---
 
+## 2026-05-08 — Fix: Coherence calculation double-counts superseded moves
+
+**What changed:**
+- **fix:** Coherence queries in `maybe_create_rule()`, `_compute_coherence()`,
+  and `_count_all_time_evidence()` now filter to the latest `moved=1` row per
+  `email_id`. Previously, when an LLM move was corrected by the user, both the
+  original LLM row and the correction row counted in the denominator, inflating
+  it and artificially lowering coherence. This blocked auto-rule creation for
+  senders the user was consistently correcting to the same folder.
+- **test:** 4 regression tests: exact_sender, sender_domain, list_id with
+  superseded moves, and mixed superseded/fresh boundary case.
+- **WIP:** Tests not yet verified (committed from production box).
+
+---
+
 ## 2026-04-28 — Feat: Phase 9 — Google SSO Authentication
 
 **What changed:**
