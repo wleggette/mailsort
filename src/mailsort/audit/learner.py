@@ -651,11 +651,21 @@ class Learner:
         # 1. List-Id rule
         if list_id:
             to_target = self._db.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE list_id = ? AND target_folder = ? AND moved = 1",
+                """SELECT COUNT(*) FROM audit_log a
+                   WHERE a.list_id = ? AND a.target_folder = ? AND a.moved = 1
+                     AND a.created_at = (
+                         SELECT MAX(a2.created_at) FROM audit_log a2
+                         WHERE a2.email_id = a.email_id AND a2.moved = 1
+                     )""",
                 (list_id, target_folder),
             ).fetchone()[0]
             total = self._db.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE list_id = ? AND moved = 1",
+                """SELECT COUNT(*) FROM audit_log a
+                   WHERE a.list_id = ? AND a.moved = 1
+                     AND a.created_at = (
+                         SELECT MAX(a2.created_at) FROM audit_log a2
+                         WHERE a2.email_id = a.email_id AND a2.moved = 1
+                     )""",
                 (list_id,),
             ).fetchone()[0]
             coherence = to_target / total if total > 0 else 0.0
@@ -689,18 +699,32 @@ class Learner:
         # 2. Sender domain rule (with coherence check)
         if from_domain:
             domain_total = self._db.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE from_domain = ? AND moved = 1",
+                """SELECT COUNT(*) FROM audit_log a
+                   WHERE a.from_domain = ? AND a.moved = 1
+                     AND a.created_at = (
+                         SELECT MAX(a2.created_at) FROM audit_log a2
+                         WHERE a2.email_id = a.email_id AND a2.moved = 1
+                     )""",
                 (from_domain,),
             ).fetchone()[0]
 
             domain_to_target = self._db.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE from_domain = ? AND target_folder = ? AND moved = 1",
+                """SELECT COUNT(*) FROM audit_log a
+                   WHERE a.from_domain = ? AND a.target_folder = ? AND a.moved = 1
+                     AND a.created_at = (
+                         SELECT MAX(a2.created_at) FROM audit_log a2
+                         WHERE a2.email_id = a.email_id AND a2.moved = 1
+                     )""",
                 (from_domain, target_folder),
             ).fetchone()[0]
 
             domain_distinct = self._db.execute(
-                "SELECT COUNT(DISTINCT from_address) FROM audit_log "
-                "WHERE from_domain = ? AND target_folder = ? AND moved = 1",
+                """SELECT COUNT(DISTINCT a.from_address) FROM audit_log a
+                   WHERE a.from_domain = ? AND a.target_folder = ? AND a.moved = 1
+                     AND a.created_at = (
+                         SELECT MAX(a2.created_at) FROM audit_log a2
+                         WHERE a2.email_id = a.email_id AND a2.moved = 1
+                     )""",
                 (from_domain, target_folder),
             ).fetchone()[0]
 
@@ -741,11 +765,21 @@ class Learner:
         # 3. Exact sender (always evaluated)
         if from_address:
             to_target = self._db.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE from_address = ? AND target_folder = ? AND moved = 1",
+                """SELECT COUNT(*) FROM audit_log a
+                   WHERE a.from_address = ? AND a.target_folder = ? AND a.moved = 1
+                     AND a.created_at = (
+                         SELECT MAX(a2.created_at) FROM audit_log a2
+                         WHERE a2.email_id = a.email_id AND a2.moved = 1
+                     )""",
                 (from_address, target_folder),
             ).fetchone()[0]
             total = self._db.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE from_address = ? AND moved = 1",
+                """SELECT COUNT(*) FROM audit_log a
+                   WHERE a.from_address = ? AND a.moved = 1
+                     AND a.created_at = (
+                         SELECT MAX(a2.created_at) FROM audit_log a2
+                         WHERE a2.email_id = a.email_id AND a2.moved = 1
+                     )""",
                 (from_address,),
             ).fetchone()[0]
             coherence = to_target / total if total > 0 else 0.0
@@ -889,8 +923,12 @@ class Learner:
         )
         return self._db.execute(
             f"""SELECT COUNT(*) FROM (
-                    SELECT 1 FROM audit_log
-                    WHERE {col} = ? AND target_folder = ? AND moved = 1
+                    SELECT 1 FROM audit_log a
+                    WHERE a.{col} = ? AND a.target_folder = ? AND a.moved = 1
+                      AND a.created_at = (
+                          SELECT MAX(a2.created_at) FROM audit_log a2
+                          WHERE a2.email_id = a.email_id AND a2.moved = 1
+                      )
                     LIMIT ?
                 )""",
             (rule["condition_value"], rule["target_folder_path"], max_needed),
@@ -926,20 +964,30 @@ class Learner:
         lookback = f"-{lookback_days} days"
 
         # Total emails matching condition that were moved in the window
+        # Only count the latest moved=1 row per email_id to avoid
+        # double-counting superseded moves (e.g. LLM move later corrected).
         total_row = self._db.execute(
-            f"""SELECT COUNT(*) AS cnt FROM audit_log
-                WHERE {col} = ? AND moved = 1
-                  AND created_at >= datetime('now', ?)""",
+            f"""SELECT COUNT(*) AS cnt FROM audit_log a
+                WHERE a.{col} = ? AND a.moved = 1
+                  AND a.created_at >= datetime('now', ?)
+                  AND a.created_at = (
+                      SELECT MAX(a2.created_at) FROM audit_log a2
+                      WHERE a2.email_id = a.email_id AND a2.moved = 1
+                  )""",
             (rule["condition_value"], lookback),
         ).fetchone()
         total = total_row["cnt"]
 
         # Emails matching condition moved to this rule's target folder
         target_row = self._db.execute(
-            f"""SELECT COUNT(*) AS cnt, MAX(created_at) AS last_relevant
-                FROM audit_log
-                WHERE {col} = ? AND target_folder = ? AND moved = 1
-                  AND created_at >= datetime('now', ?)""",
+            f"""SELECT COUNT(*) AS cnt, MAX(a.created_at) AS last_relevant
+                FROM audit_log a
+                WHERE a.{col} = ? AND a.target_folder = ? AND a.moved = 1
+                  AND a.created_at >= datetime('now', ?)
+                  AND a.created_at = (
+                      SELECT MAX(a2.created_at) FROM audit_log a2
+                      WHERE a2.email_id = a.email_id AND a2.moved = 1
+                  )""",
             (rule["condition_value"], rule["target_folder_path"], lookback),
         ).fetchone()
         to_target = target_row["cnt"]

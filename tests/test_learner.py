@@ -440,6 +440,133 @@ def test_auto_rule_reactivates_inactive_sender_domain(db: Database):
 
 
 # ------------------------------------------------------------------
+# Coherence: superseded moves must not inflate denominator
+# ------------------------------------------------------------------
+
+def test_exact_sender_coherence_excludes_superseded_moves(db: Database):
+    """Corrected LLM moves should not count against coherence for exact_sender rules.
+
+    Regression test: LLM moves email to FolderA, user corrects to FolderB.
+    Both rows have moved=1, but only the correction (latest) should count.
+    Without the fix, coherence = 3/6 = 50% (blocked). With the fix, 3/3 = 100%.
+    """
+    learner = _make_learner(db)
+
+    # 3 emails: LLM moved to Shopping/Orders, user corrected to Banks
+    for i in range(3):
+        # Original LLM move (superseded)
+        _seed_audit_row(db, email_id=f"bcbs-{i}", from_address="noreply@bcbs.com",
+                        from_domain="bcbs.com", target_folder="INBOX/Shopping/Orders",
+                        classification_source="llm")
+        # User correction (latest)
+        _seed_audit_row(db, email_id=f"bcbs-{i}", from_address="noreply@bcbs.com",
+                        from_domain="bcbs.com", target_folder="INBOX/Affairs/Banks",
+                        classification_source="correction")
+
+    created = learner.maybe_create_rule(
+        from_address="noreply@bcbs.com",
+        from_domain="bcbs.com",
+        list_id=None,
+        target_folder="INBOX/Affairs/Banks",
+    )
+    assert len(created) >= 1
+    rule_types = {db.execute("SELECT rule_type FROM rules WHERE id = ?", (rid,)).fetchone()["rule_type"]
+                  for rid in created}
+    assert "exact_sender" in rule_types
+
+
+def test_domain_coherence_excludes_superseded_moves(db: Database):
+    """Corrected LLM moves should not count against coherence for sender_domain rules.
+
+    5 emails from 3 senders at example.com, all LLM-moved to Orders then corrected to Banks.
+    Without fix: coherence = 5/10 = 50%. With fix: 5/5 = 100%.
+    """
+    learner = _make_learner(db)
+
+    senders = ["a@example.com", "b@example.com", "c@example.com", "a@example.com", "b@example.com"]
+    for i, sender in enumerate(senders):
+        _seed_audit_row(db, email_id=f"dom-{i}", from_address=sender,
+                        from_domain="example.com", target_folder="INBOX/Shopping/Orders",
+                        classification_source="llm")
+        _seed_audit_row(db, email_id=f"dom-{i}", from_address=sender,
+                        from_domain="example.com", target_folder="INBOX/Affairs/Banks",
+                        classification_source="correction")
+
+    created = learner.maybe_create_rule(
+        from_address="a@example.com",
+        from_domain="example.com",
+        list_id=None,
+        target_folder="INBOX/Affairs/Banks",
+    )
+    rule_types = {db.execute("SELECT rule_type FROM rules WHERE id = ?", (rid,)).fetchone()["rule_type"]
+                  for rid in created}
+    assert "sender_domain" in rule_types
+
+
+def test_list_id_coherence_excludes_superseded_moves(db: Database):
+    """Corrected LLM moves should not count against coherence for list_id rules.
+
+    2 emails with list_id, LLM-moved to Orders then corrected to Banks.
+    Without fix: coherence = 2/4 = 50%. With fix: 2/2 = 100%.
+    """
+    learner = _make_learner(db)
+
+    for i in range(2):
+        _seed_audit_row(db, email_id=f"lid-{i}", from_address=f"bot{i}@news.com",
+                        from_domain="news.com", target_folder="INBOX/Shopping/Orders",
+                        classification_source="llm", list_id="<digest.news.com>")
+        _seed_audit_row(db, email_id=f"lid-{i}", from_address=f"bot{i}@news.com",
+                        from_domain="news.com", target_folder="INBOX/Affairs/Banks",
+                        classification_source="correction", list_id="<digest.news.com>")
+
+    created = learner.maybe_create_rule(
+        from_address="bot0@news.com",
+        from_domain="news.com",
+        list_id="<digest.news.com>",
+        target_folder="INBOX/Affairs/Banks",
+    )
+    assert any(
+        db.execute("SELECT rule_type FROM rules WHERE id = ?", (rid,)).fetchone()["rule_type"] == "list_id"
+        for rid in created
+    )
+
+
+def test_mixed_superseded_and_fresh_moves_coherence(db: Database):
+    """Mix of corrected and non-corrected emails: coherence should reflect final state.
+
+    5 emails from same sender:
+    - 3 LLM-moved to Orders, then corrected to Banks (only Banks counts)
+    - 2 LLM-moved to Orders, never corrected (Orders counts)
+    Final: 3 to Banks, 2 to Orders → coherence for Banks = 3/5 = 60% (below 80%, no rule).
+    """
+    learner = _make_learner(db)
+
+    # 3 corrected emails
+    for i in range(3):
+        _seed_audit_row(db, email_id=f"mix-{i}", from_address="noreply@mixed.com",
+                        from_domain="mixed.com", target_folder="INBOX/Shopping/Orders",
+                        classification_source="llm")
+        _seed_audit_row(db, email_id=f"mix-{i}", from_address="noreply@mixed.com",
+                        from_domain="mixed.com", target_folder="INBOX/Affairs/Banks",
+                        classification_source="correction")
+
+    # 2 non-corrected emails (still in Orders)
+    for i in range(3, 5):
+        _seed_audit_row(db, email_id=f"mix-{i}", from_address="noreply@mixed.com",
+                        from_domain="mixed.com", target_folder="INBOX/Shopping/Orders",
+                        classification_source="llm")
+
+    created = learner.maybe_create_rule(
+        from_address="noreply@mixed.com",
+        from_domain="mixed.com",
+        list_id=None,
+        target_folder="INBOX/Affairs/Banks",
+    )
+    # 3/5 = 60% coherence — should NOT create a rule
+    assert len(created) == 0
+
+
+# ------------------------------------------------------------------
 # Manual sort detection
 # ------------------------------------------------------------------
 
