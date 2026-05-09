@@ -13,7 +13,6 @@ RUN mkdir -p src/mailsort && \
 COPY src/ ./src/
 RUN pip install --no-cache-dir --no-deps .
 
-COPY config.yaml ./config.yaml
 RUN mkdir -p /app/data
 
 EXPOSE 8025 8080
