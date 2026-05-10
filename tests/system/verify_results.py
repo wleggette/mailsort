@@ -570,7 +570,9 @@ def verify_dry_run(db: Database, run_id: str) -> VerificationResult:
     v.check(rules_with_hits == 0, f"All rules have hit_count=0 after dry run (violations: {rules_with_hits})")
 
     # compute_rule_confidence() runs during the learning step (even on dry runs)
-    # and populates last_relevant_at from bootstrap audit_log evidence.
+    # and populates last_relevant_at from audit_log evidence for all rules,
+    # including manual rules (which skip confidence recomputation but still
+    # track when their sender was last seen).
     rules_with_last_relevant = db.execute(
         "SELECT COUNT(*) FROM rules WHERE last_relevant_at IS NOT NULL"
     ).fetchone()[0]

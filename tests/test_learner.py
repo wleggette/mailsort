@@ -983,6 +983,28 @@ def test_compute_confidence_skips_manual_rules(db: Database):
     assert row["confidence"] == 0.95  # unchanged
 
 
+def test_compute_confidence_manual_rule_updates_last_relevant_at(db: Database):
+    """Manual rules skip confidence recomputation but still track last_relevant_at."""
+    learner = _make_learner(db)
+
+    db.execute(
+        "INSERT INTO rules (id, rule_type, condition_value, target_folder_path, "
+        "confidence, source, active) VALUES (53, 'exact_sender', 'manual@example.com', "
+        "'INBOX/Affairs/Banks', 0.95, 'manual', 1)"
+    )
+    # Add evidence for this sender
+    _seed_audit_row(db, email_id="e-manual-1", from_address="manual@example.com",
+                    from_domain="example.com", target_folder="INBOX/Affairs/Banks")
+    db.commit()
+
+    changed = learner.compute_rule_confidence()
+    assert changed == 0  # confidence unchanged
+
+    row = db.execute("SELECT confidence, last_relevant_at FROM rules WHERE id = 53").fetchone()
+    assert row["confidence"] == 0.95  # unchanged
+    assert row["last_relevant_at"] is not None  # but last_relevant_at IS set
+
+
 def test_compute_confidence_net_correction_recovery(db: Database):
     """Confirming manual sorts cancel out corrections (sort-back recovery)."""
     learner = _make_learner(db)

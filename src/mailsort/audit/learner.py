@@ -827,8 +827,6 @@ class Learner:
         rows = self._db.execute(
             "SELECT * FROM rules WHERE active = 1 AND source != 'manual'"
         ).fetchall()
-        if not rows:
-            return 0
 
         base_conf = self._config.base_confidence
         lookback_days = self._config.coherence_lookback_days
@@ -901,6 +899,23 @@ class Learner:
                 self._db.execute(
                     "UPDATE rules SET last_relevant_at = ? WHERE id = ?",
                     (effective_last_relevant, rule["id"]),
+                )
+
+        # Update last_relevant_at for manual rules (confidence stays fixed,
+        # but we still track when matching emails were last seen).
+        manual_rows = self._db.execute(
+            "SELECT * FROM rules WHERE active = 1 AND source = 'manual'"
+        ).fetchall()
+        for rule in manual_rows:
+            rule = dict(rule)
+            _, _, last_relevant = self._compute_coherence(
+                rule, self._config.coherence_lookback_days,
+            )
+            effective = last_relevant or rule.get("last_relevant_at")
+            if effective:
+                self._db.execute(
+                    "UPDATE rules SET last_relevant_at = ? WHERE id = ?",
+                    (effective, rule["id"]),
                 )
 
         if changed:
