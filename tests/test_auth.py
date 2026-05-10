@@ -299,7 +299,8 @@ class TestAuthConfig:
         )
         assert cfg.google_client_secret == "test-secret-123"
 
-    def test_google_client_secret_defaults_empty(self):
+    def test_google_client_secret_defaults_empty(self, monkeypatch):
+        monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
         cfg = Config(
             fastmail_api_token="t",
             db_path=":memory:",
