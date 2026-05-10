@@ -5,6 +5,24 @@ chronological — newest entries first.
 
 ---
 
+## 2026-05-10 — Fix: Contact import failures in system tests and production
+
+**What changed:**
+- **fix:** `refresh_contacts()` early-returned when JMAP returned no contacts,
+  skipping `known_contact_overrides` processing. Overrides now always apply,
+  and stale-contact cleanup only runs when JMAP actually returned data.
+- **fix:** `JMAPLoader.account_id` picked the first account from the JMAP
+  session non-deterministically. When a contacts-only account came first,
+  `Mailbox/get` failed. Now uses `primaryAccounts` (matching production client).
+- **fix:** `JMAPLoader.create_contacts` used wrong JSContact fields — missing
+  `@type`/`version`, used `value` instead of `address` for emails.
+- **test:** CI1 now checks a JMAP-only contact (can't pass via override fallback).
+  CI2 verifies `fastmail_uid` to prove JMAP import. New CI6 tests override-only
+  contacts. Setup warns if contacts scope is missing.
+- **doc:** Added contacts scope to system test prerequisites. Added CI6 scenario.
+
+---
+
 ## 2026-05-08 — Fix: Coherence calculation double-counts superseded moves
 
 **What changed:**

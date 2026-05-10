@@ -81,6 +81,12 @@ def phase_setup(config: str, to_email: str | None) -> bool:
         folder_map = loader.resolve_folder_paths()
         print(f"  Folders verified: {len(folder_map)} mailboxes")
 
+        # Check contacts scope prerequisite
+        if not loader.has_contacts_scope:
+            print("  WARNING: JMAP token lacks contacts scope (urn:ietf:params:jmap:contacts)")
+            print("           CI1, CI2, S7, S8 tests will FAIL. Regenerate token with contacts scope.")
+            print("           See system-test-plan.md §1 Prerequisites.")
+
         # Create test contacts (CI1)
         contacts_created = loader.create_contacts(TEST_CONTACTS)
         print(f"  Test contacts: {contacts_created} created")

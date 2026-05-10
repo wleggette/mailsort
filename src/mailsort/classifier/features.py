@@ -86,11 +86,10 @@ def refresh_contacts(
         raw_contacts = jmap_client.get_contacts()
     except Exception as e:
         logger.warning("Failed to fetch contacts from Fastmail: %s", e)
-        return 0
+        raw_contacts = []
 
     if not raw_contacts:
         logger.info("No contacts returned from Fastmail (scope may be unavailable)")
-        return 0
 
     overrides = known_contact_overrides or {}
     count = 0
@@ -121,9 +120,11 @@ def refresh_contacts(
         except Exception:
             logger.debug("Failed to insert override contact %s", addr_lower)
 
-    # Remove contacts that no longer exist in Fastmail or overrides
+    # Remove contacts that no longer exist in Fastmail or overrides.
+    # Only clean up when JMAP returned data — avoids accidentally deleting
+    # contacts during a transient scope outage.
     removed = 0
-    if seen_addresses:
+    if seen_addresses and raw_contacts:
         try:
             placeholders = ",".join("?" for _ in seen_addresses)
             cursor = db.execute(

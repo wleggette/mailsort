@@ -52,7 +52,7 @@ This plan follows the methodology in
 ### Prerequisites
 
 - A dedicated Fastmail test account (separate from your real account)
-- An API token for the test account with full read/write access
+- An API token for the test account with full read/write access, **including `urn:ietf:params:jmap:contacts` scope** (required for CI1, CI2, S7, S8 contact tests)
 - A separate `config.test.yaml` pointing to a test database (`data/test.db`)
 - The `ANTHROPIC_API_KEY` env var set (for LLM classification tests)
 
@@ -115,6 +115,8 @@ folder_description_overrides:
 known_contact_overrides:
   "testcontact@example.com":
     relationship: "friend"
+  "overrideonly@example.com":
+    relationship: "colleague"
 
 manual_rules:
   - rule_type: exact_sender
@@ -334,11 +336,12 @@ and coherence requirements.
 
 | ID | Scenario | Setup | Expected Behavior | Tested By |
 |----|----------|-------|-------------------|----------|
-| **CI1** | Contacts fetched from Fastmail | Test account has `ContactCard` entries | Contacts cached in `contacts` table | Test account address book |
-| **CI2** | Config override merged | `known_contact_overrides` has `testcontact@example.com` | Entry appears in contacts cache with `relationship: "friend"` | Config (`known_contact_overrides`) |
+| **CI1** | JMAP contacts fetched from Fastmail | Test account has `ContactCard` entries created by fixture loader | ≥1 JMAP-sourced contacts cached in `contacts` table. **Requires contacts scope** — test setup fails early if scope unavailable | Test account address book |
+| **CI2** | Config override merged onto JMAP contact | `known_contact_overrides` has `testcontact@example.com` (also a JMAP fixture) | JMAP-imported contact has `relationship: "friend"` from override | Config (`known_contact_overrides`) + JMAP fixture |
 | **CI3** | No contacts | Empty address book, no overrides | Empty contacts table; LLM uses standard threshold for all senders | Config variation (remove overrides) |
 | **CI4** | Re-run idempotent | Run bootstrap twice | Contacts refreshed (upserted), not duplicated | Procedural (F5: run bootstrap ×2) |
 | **CI5** | Contacts scope unavailable | JMAP token lacks `urn:ietf:params:jmap:contacts` scope | Contacts import skipped gracefully (log warning, empty contacts table). LLM uses standard threshold for all senders | Config variation (revoke contacts scope) |
+| **CI6** | Override-only contact (no JMAP entry) | `overrideonly@example.com` in `known_contact_overrides` but NOT in `TEST_CONTACTS` | Contact appears in `contacts` table with `relationship: "colleague"`, even if JMAP returns no contacts for this address | Config (`known_contact_overrides`) |
 
 ### 3.6 Bootstrap Verification Checklist
 

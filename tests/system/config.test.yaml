@@ -43,6 +43,8 @@ folder_description_overrides:
 known_contact_overrides:
   "testcontact@example.com":
     relationship: "friend"
+  "overrideonly@example.com":
+    relationship: "colleague"
 
 manual_rules:
   - type: exact_sender

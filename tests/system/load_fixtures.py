@@ -60,6 +60,10 @@ class JMAPLoader:
     @property
     def account_id(self) -> str:
         session = self._get_session()
+        primary = session.get("primaryAccounts", {})
+        mail_account = primary.get("urn:ietf:params:jmap:mail")
+        if mail_account:
+            return mail_account
         return list(session["accounts"].keys())[0]
 
     @property
@@ -81,6 +85,13 @@ class JMAPLoader:
                 f"Pass --to-email explicitly."
             )
         return name
+
+    @property
+    def has_contacts_scope(self) -> bool:
+        """Check if the JMAP session includes the contacts scope."""
+        session = self._get_session()
+        capabilities = set(session.get("capabilities", {}).keys())
+        return "urn:ietf:params:jmap:contacts" in capabilities
 
     @property
     def upload_url(self) -> str:
@@ -322,9 +333,11 @@ class JMAPLoader:
                 continue
 
             create_data = {
+                "@type": "Card",
+                "version": "1.0",
                 "name": {"full": contact["name"]},
                 "emails": {
-                    "e1": {"value": contact["email"]},
+                    "e1": {"address": contact["email"]},
                 },
             }
             payload = {

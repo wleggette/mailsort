@@ -308,19 +308,54 @@ def verify_bootstrap(db: Database) -> VerificationResult:
         v.check(found, f"D1/D7: description exists for folder containing '{path_suffix}'")
 
     # ------------------------------------------------------------------
-    # Contacts (CI1-CI2)
+    # Contacts (CI1, CI2, CI6)
     # ------------------------------------------------------------------
-    contact_count = db.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
-    v.check(contact_count >= 1, f"CI1: at least 1 contact imported (got {contact_count})")
 
-    # CI2: testcontact@example.com should have relationship from config override
+    # CI1: JMAP-sourced contacts (must come from Fastmail, not overrides).
+    # Check for contacts that are in TEST_CONTACTS — these require JMAP scope.
+    jmap_contact = db.execute(
+        "SELECT * FROM contacts WHERE email_address = 'testfriend@gmail.com'"
+    ).fetchone()
+    v.check(
+        jmap_contact is not None,
+        f"CI1: JMAP contact testfriend@gmail.com imported from Fastmail "
+        f"(requires contacts scope on API token)",
+    )
+
+    # CI2: config override merged onto JMAP-imported contact (relationship field).
+    # The contact must have a fastmail_uid (proving it came from JMAP), plus the
+    # relationship from the config override. If fastmail_uid is NULL, the contact
+    # only came from the override path — JMAP import didn't work.
     tc = db.execute(
         "SELECT * FROM contacts WHERE email_address = 'testcontact@example.com'"
     ).fetchone()
+    v.check(
+        tc is not None,
+        "CI2: testcontact@example.com in contacts (JMAP fixture + override)",
+    )
     if tc:
-        v.check(tc["relationship"] == "friend", f"CI2: testcontact relationship='friend' (got {tc['relationship']})")
-    else:
-        v.warn("CI2: testcontact@example.com not in contacts (may need config override)")
+        v.check(
+            tc["fastmail_uid"] is not None,
+            f"CI2: testcontact has fastmail_uid (JMAP-imported, not override-only)",
+        )
+        v.check(
+            tc["relationship"] == "friend",
+            f"CI2: testcontact relationship='friend' (got {tc['relationship']})",
+        )
+
+    # CI6: override-only contact (not in TEST_CONTACTS, only in config overrides)
+    oc = db.execute(
+        "SELECT * FROM contacts WHERE email_address = 'overrideonly@example.com'"
+    ).fetchone()
+    v.check(
+        oc is not None,
+        "CI6: override-only contact overrideonly@example.com in contacts table",
+    )
+    if oc:
+        v.check(
+            oc["relationship"] == "colleague",
+            f"CI6: override-only contact relationship='colleague' (got {oc['relationship']})",
+        )
 
     # ------------------------------------------------------------------
     # Hit counts — bootstrap must not record hits (coverage check is read-only)
