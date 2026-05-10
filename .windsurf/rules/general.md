@@ -31,9 +31,9 @@ In either case, update:
 ## Dev Logs
 
 - **`docs/dev/changelog.md`** — append an entry for every `feat:`, `fix:`, or `refactor:` commit. Focus on what changed behaviorally.
-- **`docs/dev/design-ideas.md`** — explored-but-deferred feature ideas. Remove when built. **Update the TOC** at the top when adding, implementing, or removing ideas.
+- **`docs/dev/design-ideas.md`** — explored-but-deferred feature ideas. **Only unimplemented ideas belong here.** When an idea is implemented, remove it entirely from `design-ideas.md` (no stubs, no "moved to" pointers). Update the TOC when adding or removing ideas.
 - **`docs/dev/decisions.md`** — log of design decisions with options, tradeoffs, and rationale. Permanent records.
-- **After implementing a design idea**, migrate the decisions, alternatives considered, and rationale from `design-ideas.md` into `decisions.md` as a permanent record. Then remove the implemented section from `design-ideas.md` (or mark it as implemented with a pointer to the decision log). `design-ideas.md` should only contain ideas that are **not yet implemented**.
+- **After implementing a design idea**, migrate decisions, alternatives, and rationale into `decisions.md` as a permanent record, then **delete** the section from `design-ideas.md`.
 
 ## Testing
 

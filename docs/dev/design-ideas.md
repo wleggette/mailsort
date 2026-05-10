@@ -1,26 +1,13 @@
 # Design Ideas
 
 Captured ideas for future features with enough context to pick them up later
-without re-investigating from scratch.
+without re-investigating from scratch. **Only unimplemented ideas belong here.**
+Once an idea is implemented, remove it entirely — decisions and rationale go to
+`decisions.md`.
 
 ## Table of Contents
 
-### Active
 - [List-Unsubscribe Combined Rule](#list-unsubscribe-combined-rule) — Not prioritized
-
-### Implemented
-- [~~Coherence Double-Counting~~](#coherence-double-counting--system-test-scenarios--implemented-2026-05-10) → decisions.md §2026-05-08
-- [~~Google SSO for Web UI~~](#google-sso-for-web-ui--implemented-2026-04-28) → decisions.md §2026-04-28
-- [~~Analysis Page Improvements~~](#analysis-page-improvements--implemented-2026-04-27) → decisions.md §2026-04-27
-- [~~Audit Log — Deduplicated View~~](#audit-log--deduplicated-view--implemented-2026-04-28) → decisions.md §2026-04-28
-- [~~Rules Detail Page — Duplicate Inflation~~](#rules-detail-page--duplicate-inflation-in-evidence--matches--fixed-2026-04-28) → decisions.md §2026-04-28
-
----
-
-## ~~Coherence Double-Counting — System Test Scenarios~~ — IMPLEMENTED (2026-05-10)
-
-Moved to `decisions.md` §2026-05-08 (Coherence Double-Counting Fix).
-Unit tests and system test scenarios (L12a, L12b) implemented and passing.
 
 ---
 
@@ -120,26 +107,3 @@ to reassess if this feature becomes worth implementing as email volume grows.
 Requires `FASTMAIL_API_TOKEN` in `.env` (read-write token works; read-only
 token also works but the header property may fail on some token configurations).
 
----
-
-## ~~Google SSO for Web UI~~ — IMPLEMENTED (2026-04-28)
-
-Moved to `decisions.md` §2026-04-28 (Phase 9 — Google SSO Authentication).
-
----
-
-## ~~Analysis Page Improvements~~ — IMPLEMENTED (2026-04-27)
-
-Moved to `decisions.md` §2026-04-27. See commit `7af0ad4`.
-
----
-
-## ~~Audit Log — Deduplicated View~~ — IMPLEMENTED (2026-04-28)
-
-Moved to `decisions.md` §2026-04-28.
-
----
-
-## ~~Rules Detail Page — Duplicate Inflation in Evidence & Matches~~ — FIXED (2026-04-28)
-
-Moved to `decisions.md` §2026-04-28 (Rules Detail dedup).
