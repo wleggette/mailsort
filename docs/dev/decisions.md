@@ -6,6 +6,61 @@ chronological — newest entries first.
 
 ---
 
+## 2026-05-10 — Contact Import: Override Processing and Test Hardening
+
+**Context:** System test CI1 (contact import) failed because `refresh_contacts()`
+early-returned when JMAP `get_contacts()` returned empty (e.g., missing contacts
+scope), skipping `known_contact_overrides`. Additionally, the test loader
+(`JMAPLoader`) had three bugs: non-deterministic account selection, missing
+JSContact fields, and wrong email field name.
+
+**Decisions:**
+
+1. **Keep the production fix (overrides always processed).** In production, a user
+   may have a token without contacts scope but still want overrides to work (e.g.,
+   marking a spouse as a known contact). The `refresh_contacts()` function now
+   always processes overrides, even when JMAP returns no contacts. Stale-contact
+   cleanup only runs when JMAP actually returned data, avoiding accidental deletion
+   during scope outages.
+
+2. **Test the JMAP and override paths independently.** CI1 checks a JMAP-only
+   contact (`testfriend@gmail.com` — in `TEST_CONTACTS` but not in overrides).
+   CI2 checks that a JMAP contact (`testcontact@example.com`) gets the override's
+   `relationship` merged, AND that `fastmail_uid` is non-NULL (proving JMAP import).
+   CI6 (new) checks an override-only contact (`overrideonly@example.com`). This
+   prevents override fallback from masking JMAP failures.
+
+3. **Use `primaryAccounts` for account selection.** The test loader used
+   `list(accounts.keys())[0]`, which was non-deterministic when the session
+   contained multiple accounts (e.g., a contacts-only shared account). The
+   production `JMAPClient` already used `primaryAccounts` correctly.
+
+**Affected files:** `features.py`, `load_fixtures.py`, `verify_results.py`,
+`config.test.yaml`, `system-test-plan.md`.
+
+---
+
+## 2026-05-10 — Manual Rules Track `last_relevant_at`
+
+**Context:** `compute_rule_confidence()` skipped manual rules entirely
+(`source != 'manual'`). This was correct for confidence (manual rules have fixed
+confidence), but also skipped the `last_relevant_at` update. The field tracks when
+a rule's sender was last seen in the audit log — meaningful for all rule types,
+not just auto rules.
+
+**Decision:** Add a second pass in `compute_rule_confidence()` that queries
+`_compute_coherence()` for manual rules and updates `last_relevant_at` without
+touching confidence. Also removed an early return that prevented this pass from
+running when there were zero auto rules.
+
+**Alternative considered:** Exclude manual rules from the system test assertion.
+Rejected — `last_relevant_at` is semantically about sender freshness, not
+confidence. Manual rules should track it.
+
+**Affected files:** `learner.py`, `verify_results.py`, `test_learner.py`.
+
+---
+
 ## 2026-05-08 — Coherence Double-Counting Fix
 
 **Context:** The coherence calculation in `maybe_create_rule()` and

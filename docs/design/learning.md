@@ -498,9 +498,14 @@ Instead, the web UI shows a warning badge when live coherence drops below
 `auto_rule_domain_coherence` (default 0.80), and the user decides whether to adjust
 or deactivate.
 
+However, manual rules **do** track `last_relevant_at` — this records when their
+sender was last seen in the audit log. This is useful for staleness visibility
+(e.g., a manual rule for a sender who stopped emailing 6 months ago).
+
 ### `compute_rule_confidence()` Method
 
-Runs every cycle in the learning step. For each active auto rule:
+Runs every cycle in the learning step. For each active auto rule, recomputes
+confidence. For manual rules, updates only `last_relevant_at`.
 
 ```python
 def compute_rule_confidence(db, config):
@@ -550,6 +555,18 @@ def compute_rule_confidence(db, config):
             db.execute(
                 "UPDATE rules SET confidence = ?, last_relevant_at = ? WHERE id = ?",
                 (confidence, last_relevant, rule["id"]),
+            )
+
+    # Update last_relevant_at for manual rules (confidence stays fixed)
+    manual_rules = db.execute(
+        "SELECT * FROM rules WHERE active = 1 AND source = 'manual'"
+    ).fetchall()
+    for rule in manual_rules:
+        _, _, last_relevant = _compute_coherence(db, rule, config.coherence_lookback_days)
+        if last_relevant or rule["last_relevant_at"]:
+            db.execute(
+                "UPDATE rules SET last_relevant_at = ? WHERE id = ?",
+                (last_relevant or rule["last_relevant_at"], rule["id"]),
             )
 
     db.commit()

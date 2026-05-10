@@ -7,9 +7,9 @@ without re-investigating from scratch.
 
 ### Active
 - [List-Unsubscribe Combined Rule](#list-unsubscribe-combined-rule) — Not prioritized
-- [Coherence Double-Counting — System Test Scenarios](#coherence-double-counting--system-test-scenarios) — Testing follow-up for 2026-05-08 fix
 
 ### Implemented
+- [~~Coherence Double-Counting~~](#coherence-double-counting--system-test-scenarios--implemented-2026-05-10) → decisions.md §2026-05-08
 - [~~Google SSO for Web UI~~](#google-sso-for-web-ui--implemented-2026-04-28) → decisions.md §2026-04-28
 - [~~Analysis Page Improvements~~](#analysis-page-improvements--implemented-2026-04-27) → decisions.md §2026-04-27
 - [~~Audit Log — Deduplicated View~~](#audit-log--deduplicated-view--implemented-2026-04-28) → decisions.md §2026-04-28
@@ -17,102 +17,10 @@ without re-investigating from scratch.
 
 ---
 
-## Coherence Double-Counting — System Test Scenarios
+## ~~Coherence Double-Counting — System Test Scenarios~~ — IMPLEMENTED (2026-05-10)
 
-**Status:** Testing follow-up (2026-05-08)
-
-### Context
-
-The coherence calculation in `maybe_create_rule()`, `_compute_coherence()`, and
-`_count_all_time_evidence()` was double-counting emails that had been moved by
-the LLM and then corrected by the user. Both rows had `moved=1`, inflating the
-denominator and making coherence artificially low.
-
-**Real-world example:** `BCBSIL_noreply@emailcxt.bcbsil.health` — 7 LLM moves to
-`Affairs/Uncommon/Insurance`, 5 of which were corrected to `Affairs/Medical`, plus
-1 manual sort to Medical. The query saw 13 `moved=1` rows (7 Insurance + 6 Medical)
-instead of 8 distinct emails (2 Insurance + 6 Medical). Coherence for Medical was
-46% instead of 75%, blocking rule creation.
-
-**Fix applied (commit 574a378):** All coherence queries now include a
-`MAX(created_at)` subquery to only count the latest `moved=1` row per `email_id`.
-
-### Unit tests added (not yet run)
-
-4 regression tests in `tests/test_learner.py`:
-
-1. **`test_exact_sender_coherence_excludes_superseded_moves`** — 3 emails LLM→Orders
-   then corrected→Banks. Without fix: 3/6=50%. With fix: 3/3=100%. Rule created.
-2. **`test_domain_coherence_excludes_superseded_moves`** — 5 emails from 3 senders,
-   all corrected. Without fix: 5/10=50%. With fix: 5/5=100%. Domain rule created.
-3. **`test_list_id_coherence_excludes_superseded_moves`** — 2 list-id emails
-   corrected. Without fix: 2/4=50%. With fix: 2/2=100%. List-id rule created.
-4. **`test_mixed_superseded_and_fresh_moves_coherence`** — 3 corrected + 2
-   non-corrected. Final state: 3 Banks, 2 Orders. Coherence = 60% — correctly
-   blocks rule (negative test).
-
-### System test scenarios (to add to system-test-plan.md)
-
-These scenarios test the fix end-to-end with real JMAP moves. They belong in
-**Phase 4: Learning & Feedback** (§6.1, auto-rule generation section).
-
-#### Scenario L12a: Corrected LLM moves create rule (superseded move dedup)
-
-| Step | Action | Expected |
-|------|--------|----------|
-| 1 | Seed 3 inbox emails from `corrections@testdomain.com` | Emails in INBOX |
-| 2 | Run `mailsort run` — LLM classifies all 3 to `Affairs/Stores` | 3 audit rows: `source=llm, moved=1, target=Stores` |
-| 3 | JMAP move all 3 from Stores → `Affairs/Banks` | Emails now in Banks |
-| 4 | Run `mailsort run` — learner detects 3 corrections | 3 correction rows: `source=correction, moved=1, target=Banks` |
-| 5 | Verify `maybe_create_rule` was triggered | `exact_sender` rule created for `corrections@testdomain.com` → Banks |
-| 6 | Verify coherence | `to_target=3, total=3` (not 3/6). Superseded LLM rows excluded |
-
-**What it tests:** The `MAX(created_at)` subquery correctly filters superseded
-moves so that corrections don't poison coherence. Without the fix, step 5 would
-fail (coherence = 3/6 = 50%, below 80% threshold).
-
-**Prerequisite:** The sender must NOT match any existing rule (so LLM is used),
-and must NOT be in `skip_senders`.
-
-#### Scenario L12b: Partial corrections don't create rule (boundary)
-
-| Step | Action | Expected |
-|------|--------|----------|
-| 1 | Seed 5 inbox emails from `partial@testdomain2.com` | Emails in INBOX |
-| 2 | Run `mailsort run` — LLM classifies all 5 to `Affairs/Stores` | 5 LLM move rows |
-| 3 | JMAP move 3 of 5 from Stores → Banks (leave 2 in Stores) | 3 in Banks, 2 in Stores |
-| 4 | Run `mailsort run` — learner detects 3 corrections | 3 correction rows |
-| 5 | Verify NO rule created | Coherence = 3/5 = 60% (3 corrections + 2 uncorrected). Below 80% |
-
-**What it tests:** Partial corrections correctly reduce coherence. The fix
-doesn't over-correct by ignoring non-superseded LLM moves.
-
-#### Scenario L12c: compute_rule_confidence uses deduped coherence
-
-| Step | Action | Expected |
-|------|--------|----------|
-| 1 | Create an `exact_sender` rule manually via bootstrap evidence (5 emails, all to Banks) | Rule active, confidence ~0.95 |
-| 2 | Run `mailsort run` — rule moves 3 new emails to Banks | 3 rule-move rows |
-| 3 | JMAP move 2 of the 3 from Banks → Stores | 2 corrections |
-| 4 | Run `mailsort run` — `compute_rule_confidence()` runs | Coherence computed from deduped rows: 6 to Banks (5 bootstrap + 1 uncorrected), 2 to Stores. Coherence = 6/8 = 75% |
-| 5 | Verify confidence | `base × 0.75 × staleness − corrections × penalty`. Not `base × 0.375` (which would be the buggy 6/16 calculation) |
-
-**What it tests:** `_compute_coherence()` (used by `compute_rule_confidence()`)
-also correctly excludes superseded rows, not just `maybe_create_rule()`.
-
-### Additional testing notes
-
-**Existing tests to verify pass:** All existing `test_learner.py` coherence tests
-should still pass because they use distinct `email_id` values per row (no
-superseded moves). The fix is a no-op for single-row-per-email scenarios.
-
-**Edge case to consider:** If two `moved=1` rows for the same `email_id` have the
-exact same `created_at` timestamp (unlikely but theoretically possible with fast
-test seeding), the `MAX(created_at)` subquery would match both. The `_seed_audit_row`
-helper uses `datetime('now')` which has second-level granularity. Tests that insert
-multiple rows for the same email_id in quick succession should add a small delay or
-explicit timestamps. The 4 unit tests above use sequential inserts which should get
-distinct timestamps, but verify on a fast machine.
+Moved to `decisions.md` §2026-05-08 (Coherence Double-Counting Fix).
+Unit tests and system test scenarios (L12a, L12b) implemented and passing.
 
 ---
 

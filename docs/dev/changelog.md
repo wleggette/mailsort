@@ -20,6 +20,11 @@ chronological — newest entries first.
   CI2 verifies `fastmail_uid` to prove JMAP import. New CI6 tests override-only
   contacts. Setup warns if contacts scope is missing.
 - **doc:** Added contacts scope to system test prerequisites. Added CI6 scenario.
+- **fix:** `compute_rule_confidence()` now updates `last_relevant_at` for manual
+  rules. Previously manual rules were skipped entirely, leaving `last_relevant_at`
+  NULL even when matching evidence existed in the audit log.
+- **fix:** `test_google_client_secret_defaults_empty` used `monkeypatch.delenv` to
+  isolate from shell `GOOGLE_CLIENT_SECRET` env var.
 
 ---
 
