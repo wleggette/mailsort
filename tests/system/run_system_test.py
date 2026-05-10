@@ -412,7 +412,7 @@ def phase_live_verify(config: str, run_id: str) -> bool:
 
 
 def phase_learning(config: str, to_email: str) -> bool:
-    """Phase 4: Learning & Feedback — L1, L3, L3a, L4, L5, L6, L9, L14, L17.
+    """Phase 4: Learning & Feedback — L1, L3, L3a, L4, L5, L6, L9, L12a, L12b, L14, L17.
 
     Batch 1 (single correction + skipped sort):
       Step 1: Make 4 JMAP moves simulating user actions.
@@ -431,9 +431,14 @@ def phase_learning(config: str, to_email: str) -> bool:
       Step 11: Verify L14.
     Manual rule exemption:
       Step 12: Verify L17.
+    Superseded-move dedup (coherence double-counting fix):
+      Step 13: Find L12a/L12b LLM-moved emails.
+      Step 14: JMAP corrections — L12a all 3, L12b 3 of 5.
+      Step 15: Run mailsort.
+      Step 16: Verify L12a (rule created), L12b (no rule).
     """
     print("\n" + "=" * 60)
-    print("Phase 4: Learning & Feedback (L1, L3, L3a, L4, L5, L6, L9, L14, L17)")
+    print("Phase 4: Learning & Feedback (L1, L3, L3a, L4, L5, L6, L9, L12a, L12b, L14, L17)")
     print("=" * 60)
 
     import yaml
@@ -790,8 +795,121 @@ def phase_learning(config: str, to_email: str) -> bool:
     finally:
         db.close()
 
+    # ------------------------------------------------------------------
+    # Step 13: Find L12a/L12b emails and prepare JMAP corrections
+    # ------------------------------------------------------------------
+    print("\n  Step 13: Finding L12a/L12b emails for superseded-move dedup test...")
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+
+        # L12a: 3 emails from corrections@testdomain.com (LLM-moved or skipped)
+        l12a_rows = db.execute(
+            "SELECT email_id, target_folder FROM audit_log "
+            "WHERE from_address = 'corrections@testdomain.com' "
+            "AND moved = 1 "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+        l12a_email_ids = list(dict.fromkeys(r["email_id"] for r in l12a_rows))
+
+        # L12b: 5 emails from partial@testdomain2.com (LLM-moved or skipped)
+        l12b_rows = db.execute(
+            "SELECT email_id, target_folder FROM audit_log "
+            "WHERE from_address = 'partial@testdomain2.com' "
+            "AND moved = 1 "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+        l12b_email_ids = list(dict.fromkeys(r["email_id"] for r in l12b_rows))
+    finally:
+        db.close()
+
+    print(f"    L12a: found {len(l12a_email_ids)} moved emails from corrections@testdomain.com")
+    print(f"    L12b: found {len(l12b_email_ids)} moved emails from partial@testdomain2.com")
+
+    # ------------------------------------------------------------------
+    # Step 14: JMAP corrections for L12a/L12b
+    # ------------------------------------------------------------------
+    print("\n  Step 14: Simulating L12a/L12b corrections via JMAP moves...")
+    loader = JMAPLoader(token, session_url)
+    l12b_corrected_ids = []
+    try:
+        folder_map = loader.resolve_folder_paths()
+
+        def resolve_folder(name: str) -> str | None:
+            return (folder_map.get(name)
+                    or folder_map.get(f"INBOX/{name}")
+                    or folder_map.get(f"Inbox/{name}"))
+
+        banks_id = resolve_folder("Affairs/Banks")
+
+        def move_email(email_id: str, target_id: str, label: str) -> bool:
+            try:
+                loader.call([
+                    ["Email/set", {
+                        "accountId": loader.account_id,
+                        "update": {email_id: {"mailboxIds": {target_id: True}}},
+                    }, "s1"],
+                ])
+                print(f"    {label}: moved {email_id[:12]}...")
+                return True
+            except Exception as e:
+                print(f"    {label}: FAILED — {e}")
+                return False
+
+        # L12a: correct all emails to Banks
+        if banks_id and len(l12a_email_ids) >= 3:
+            for i, eid in enumerate(l12a_email_ids[:3]):
+                move_email(eid, banks_id, f"L12a-{i+1} testdomain → Banks")
+        else:
+            print("    L12a: SKIP — Banks folder not found or <3 emails")
+
+        # L12b: correct first 3 to Banks, leave remaining 2 uncorrected
+        if banks_id and len(l12b_email_ids) >= 5:
+            for i in range(3):
+                eid = l12b_email_ids[i]
+                if move_email(eid, banks_id, f"L12b-{i+1} testdomain2 → Banks"):
+                    l12b_corrected_ids.append(eid)
+            print(f"    L12b: left {len(l12b_email_ids) - 3} emails uncorrected")
+        else:
+            print(f"    L12b: SKIP — Banks folder not found or <5 emails (have {len(l12b_email_ids)})")
+    finally:
+        loader.close()
+
+    # ------------------------------------------------------------------
+    # Step 15: Run mailsort to detect L12 corrections
+    # ------------------------------------------------------------------
+    print("\n  Step 15: Running mailsort (detect L12 corrections)...")
+    result = run_mailsort("run", config)
+    if result.returncode != 0:
+        print("  ERROR: L12 run failed")
+        return False
+
+    # ------------------------------------------------------------------
+    # Step 16: Verify L12a, L12b
+    # ------------------------------------------------------------------
+    print("\n  Step 16: Verifying L12a, L12b...")
+    db = Database(db_path)
+    db.connect()
+    try:
+        run_migrations(db)
+        run5_id = db.execute(
+            "SELECT run_id FROM runs WHERE trigger != 'bootstrap' ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()["run_id"]
+
+        from tests.system.verify_results import verify_learning_l12
+        v6 = verify_learning_l12(
+            db, run5_id,
+            l12a_email_ids=l12a_email_ids[:3],
+            l12b_email_ids=l12b_email_ids,
+            l12b_corrected_ids=l12b_corrected_ids,
+        )
+    finally:
+        db.close()
+
     return (v1.failed == 0 and v2.failed == 0
-            and v3.failed == 0 and v4.failed == 0 and v5.failed == 0)
+            and v3.failed == 0 and v4.failed == 0 and v5.failed == 0
+            and v6.failed == 0)
 
 
 def phase_cleanup(config: str) -> bool:

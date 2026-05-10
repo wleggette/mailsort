@@ -1095,3 +1095,131 @@ def verify_learning_step5(db: Database) -> VerificationResult:
 
     v.print_report()
     return v
+
+
+def verify_learning_l12(
+    db: Database,
+    run_id: str,
+    *,
+    l12a_email_ids: list[str],
+    l12b_email_ids: list[str],
+    l12b_corrected_ids: list[str],
+) -> VerificationResult:
+    """Verify L12a (superseded move dedup → rule created) and L12b (partial → no rule).
+
+    L12a: All 3 emails from corrections@testdomain.com corrected to Banks.
+          With dedup, coherence = 3/3 = 100% → rule created.
+    L12b: 3 of 5 emails from partial@testdomain2.com corrected to Banks.
+          With dedup, coherence = 3/5 = 60% → no rule.
+    """
+    v = VerificationResult()
+    print(f"\n=== Verifying Learning L12 ({run_id[:8]}) — L12a, L12b ===")
+
+    # --- L12a: Rule created for corrections@testdomain.com ---
+    if len(l12a_email_ids) >= 3:
+        # Check correction rows exist in this run
+        l12a_corrections = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? "
+            "AND from_address = 'corrections@testdomain.com' "
+            "AND classification_source IN ('manual', 'correction')",
+            (run_id,),
+        ).fetchall()
+        v.check(
+            len(l12a_corrections) >= 3,
+            f"L12a: ≥3 correction rows for corrections@testdomain.com "
+            f"(got {len(l12a_corrections)})",
+        )
+
+        # Rule should be created
+        l12a_rule = db.execute(
+            "SELECT * FROM rules WHERE condition_value = 'corrections@testdomain.com' "
+            "AND rule_type = 'exact_sender' AND active = 1"
+        ).fetchone()
+        v.check(
+            l12a_rule is not None,
+            "L12a: exact_sender rule created for corrections@testdomain.com",
+        )
+        if l12a_rule:
+            v.check(
+                "Banks" in l12a_rule["target_folder_path"],
+                f"L12a: rule target is Banks (got {l12a_rule['target_folder_path']})",
+            )
+
+        # Verify dedup was exercised: check for superseded LLM rows
+        superseded = db.execute(
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE from_address = 'corrections@testdomain.com' "
+            "AND classification_source = 'llm' AND moved = 1"
+        ).fetchone()[0]
+        if superseded > 0:
+            v.details.append(
+                f"  INFO: L12a dedup exercised — {superseded} superseded LLM rows exist"
+            )
+        else:
+            v.warn(
+                "L12a: no superseded LLM rows — dedup not exercised "
+                "(LLM may not have moved these emails)"
+            )
+    else:
+        v.warn(
+            f"L12a: skipped — only {len(l12a_email_ids)} emails available (need 3)"
+        )
+
+    # --- L12b: NO rule for partial@testdomain2.com ---
+    if len(l12b_corrected_ids) >= 3:
+        # Check correction rows exist
+        l12b_corrections = db.execute(
+            "SELECT * FROM audit_log WHERE run_id = ? "
+            "AND from_address = 'partial@testdomain2.com' "
+            "AND classification_source IN ('manual', 'correction')",
+            (run_id,),
+        ).fetchall()
+        v.check(
+            len(l12b_corrections) >= 3,
+            f"L12b: ≥3 correction rows for partial@testdomain2.com "
+            f"(got {len(l12b_corrections)})",
+        )
+
+        # Total unique emails for this sender (deduped)
+        total_unique = db.execute(
+            "SELECT COUNT(DISTINCT email_id) FROM audit_log "
+            "WHERE from_address = 'partial@testdomain2.com' AND moved = 1"
+        ).fetchone()[0]
+        v.check(
+            total_unique >= 5,
+            f"L12b: ≥5 unique emails for partial@testdomain2.com (got {total_unique})",
+        )
+
+        # No rule should exist
+        l12b_rule = db.execute(
+            "SELECT * FROM rules WHERE condition_value = 'partial@testdomain2.com' "
+            "AND rule_type = 'exact_sender'"
+        ).fetchone()
+        v.check(
+            l12b_rule is None,
+            f"L12b: NO exact_sender rule for partial@testdomain2.com "
+            f"(60% coherence below 80% threshold)",
+        )
+
+        # Verify dedup was exercised
+        superseded = db.execute(
+            "SELECT COUNT(*) FROM audit_log "
+            "WHERE from_address = 'partial@testdomain2.com' "
+            "AND classification_source = 'llm' AND moved = 1"
+        ).fetchone()[0]
+        if superseded > 0:
+            v.details.append(
+                f"  INFO: L12b dedup exercised — {superseded} superseded LLM rows exist"
+            )
+        else:
+            v.warn(
+                "L12b: no superseded LLM rows — dedup not exercised "
+                "(LLM may not have moved these emails)"
+            )
+    else:
+        v.warn(
+            f"L12b: skipped — only {len(l12b_corrected_ids)} correctable emails (need 3)"
+        )
+
+    v.print_report()
+    return v

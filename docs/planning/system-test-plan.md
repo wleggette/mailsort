@@ -618,6 +618,8 @@ at runtime.
 | P2: list_id over exact_sender | `activities@ymca.org` (List-Id: `<updates.ymca.org>`) | `$seen` | 5h ago | moved → Children (list_id, not exact_sender) |
 | L3a-1: Chase correction target #2 | `noreply@chase.com` | `$seen` | 5h ago | moved → Banks (rule) — corrected in Phase 4 for L3a |
 | L3a-2: Chase correction target #3 | `noreply@chase.com` | `$seen` | 5h ago | moved → Banks (rule) — corrected in Phase 4 for L3a |
+| L12a-1…3: Superseded move dedup (×3) | `corrections@testdomain.com` | `$seen` | 5h ago | LLM classifies (Stores content) — corrected to Banks in Phase 4 for L12a |
+| L12b-1…5: Partial corrections (×5) | `partial@testdomain2.com` | `$seen` | 5h ago | LLM classifies (Stores content) — 3 corrected, 2 uncorrected in Phase 4 for L12b |
 
 The generator uses `datetime.now(timezone.utc)` to produce `receivedAt`
 timestamps relative to the current time, ensuring `too_new` scenarios work
@@ -752,6 +754,9 @@ Rules created when manual sort evidence accumulates past thresholds.
 | ID | Scenario | Setup | Expected Behavior | Tested By |
 |----|----------|-------|-------------------|-----------|
 | **L12** | Accumulated manual sorts create rule | 3+ manual sorts from same sender to same folder | New `exact_sender` rule auto-created | *Deferred to unit test* (`test_auto_rule_exact_sender`) — would need 3+ JMAP moves from same sender |
+| **L12a** | Corrected LLM moves create rule (superseded move dedup) | 3 emails from unknown sender, LLM classifies and moves, user corrects all 3 to Banks | `exact_sender` rule created; coherence = 3/3 (deduped, not 3/6) | System test: steps 13–16 |
+| **L12b** | Partial corrections don't create rule (boundary) | 5 emails from unknown sender, LLM classifies and moves, user corrects 3 of 5 to Banks | NO rule created; coherence = 3/5 = 60% (below 80% threshold) | System test: steps 13–16 |
+| **L12c** | `compute_rule_confidence` uses deduped coherence | Existing rule, emails moved then corrected | Coherence computed from deduped rows (latest per email_id) | *Deferred to unit test* (`test_exact_sender_coherence_excludes_superseded_moves`, `test_domain_coherence_excludes_superseded_moves`, `test_list_id_coherence_excludes_superseded_moves`, `test_mixed_superseded_and_fresh_moves_coherence`) |
 
 ### 6.2 Test Execution Sequence
 
@@ -789,6 +794,15 @@ Rules created when manual sort evidence accumulates past thresholds.
 
 12. **Verify L17** — manual rule for `admin@lincolnelementary.org` → Children has `confidence=1.0` and `source='manual'` unchanged after all runs
 
+**Superseded-move dedup (coherence double-counting fix):**
+
+13. **Find L12a/L12b emails** — locate LLM-moved emails from `corrections@testdomain.com` (3) and `partial@testdomain2.com` (5) in audit_log
+14. **JMAP moves** (corrections):
+    - L12a: correct all 3 `corrections@testdomain.com` emails → Banks
+    - L12b: correct first 3 `partial@testdomain2.com` emails → Banks (leave 2 uncorrected)
+15. **Run `mailsort run`** — learning step detects corrections, `maybe_create_rule` evaluates coherence
+16. **Verify L12a, L12b** — L12a rule created (3/3=100%), L12b no rule (3/5=60%)
+
 ### 6.3 Learning Verification Checklist
 
 **Batch 1 verification (steps 2–3):**
@@ -824,6 +838,16 @@ Rules created when manual sort evidence accumulates past thresholds.
 **Manual rule exemption (step 12):**
 
 - [x] **L17**: manual rule for `admin@lincolnelementary.org` → Children: `confidence=1.0`, `source='manual'`, unchanged after all runs
+
+**Superseded-move dedup verification (steps 13–16):**
+
+- [ ] **L12a**: ≥3 correction rows for `corrections@testdomain.com`
+- [ ] **L12a**: `exact_sender` rule created for `corrections@testdomain.com` → Banks
+- [ ] **L12a**: INFO: superseded LLM rows exist (dedup exercised) — warning if LLM didn't move
+- [ ] **L12b**: ≥3 correction rows for `partial@testdomain2.com`
+- [ ] **L12b**: ≥5 unique emails for `partial@testdomain2.com` with `moved=1`
+- [ ] **L12b**: NO `exact_sender` rule for `partial@testdomain2.com` (60% coherence < 80%)
+- [ ] **L12b**: INFO: superseded LLM rows exist (dedup exercised) — warning if LLM didn't move
 
 **Deferred to unit test:**
 

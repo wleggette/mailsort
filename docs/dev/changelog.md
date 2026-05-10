@@ -14,9 +14,13 @@ chronological — newest entries first.
   original LLM row and the correction row counted in the denominator, inflating
   it and artificially lowering coherence. This blocked auto-rule creation for
   senders the user was consistently correcting to the same folder.
-- **test:** 4 regression tests: exact_sender, sender_domain, list_id with
-  superseded moves, and mixed superseded/fresh boundary case.
-- **WIP:** Tests not yet verified (committed from production box).
+- **test:** 4 unit regression tests: exact_sender, sender_domain, list_id with
+  superseded moves, and mixed superseded/fresh boundary case. Fixed same-second
+  timestamp collision in `_seed_audit_row` by adding explicit `created_at` parameter.
+- **test:** System test scenarios L12a (rule created from 3/3 corrected LLM moves)
+  and L12b (no rule from 3/5 partial corrections, 60% coherence boundary). L12c
+  deferred to unit tests.
+- **doc:** Updated `system-test-plan.md` §6.1, §6.2, §6.3, §4.5 with L12a/L12b/L12c.
 
 ---
 

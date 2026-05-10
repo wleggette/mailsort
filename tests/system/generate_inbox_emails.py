@@ -18,7 +18,7 @@ def generate_inbox_emails() -> list[dict]:
     now = datetime.now(timezone.utc)
     ts = now.strftime("%Y%m%d%H%M")
 
-    return [
+    emails = [
         # E1: Rule match (chase), read, old — should be moved to Banks
         {
             "from_email": "noreply@chase.com",
@@ -303,3 +303,47 @@ def generate_inbox_emails() -> list[dict]:
             "description": "P2: list_id beats exact_sender — activities@ymca.org has both rule types, list_id wins",
         },
     ]
+
+    # L12a: Superseded move dedup — 3 emails for auto-rule creation
+    # Unknown sender with clear Stores content; LLM should classify to Stores.
+    # All 3 will be corrected to Banks in the learning phase.
+    # With dedup: coherence = 3/3 = 100% → rule created.
+    # Without dedup: coherence = 3/6 = 50% → no rule (regression).
+    for i in range(3):
+        emails.append({
+            "from_email": "corrections@testdomain.com",
+            "from_name": "TestDomain Shipping",
+            "subject": f"[TEST] L12a order shipped #{i+1} {ts}",
+            "body": (
+                f"Your TestDomain order #TD-{i+1:03d} has shipped! "
+                f"Tracking number: 1Z999AA{i+1:08d}. "
+                "Expected delivery in 3-5 business days. "
+                "Thank you for shopping with TestDomain."
+            ),
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "llm_classifies",
+            "description": f"L12a-{i+1}: TestDomain order — LLM classifies, corrected to Banks in learning phase",
+        })
+
+    # L12b: Partial corrections boundary — 5 emails, only 3 corrected
+    # Same approach: Stores content, LLM classifies, but only 3 of 5 corrected.
+    # With dedup: coherence = 3/5 = 60% → no rule (below 80%).
+    for i in range(5):
+        emails.append({
+            "from_email": "partial@testdomain2.com",
+            "from_name": "TestDomain2 Shipping",
+            "subject": f"[TEST] L12b shipping update #{i+1} {ts}",
+            "body": (
+                f"Your TestDomain2 order #TD2-{i+1:03d} is on its way! "
+                f"Current status: in transit. "
+                f"Expected delivery: {(now + timedelta(days=3)).strftime('%B %d')}. "
+                "Check your order status at testdomain2.com/orders."
+            ),
+            "keywords": {"$seen": True},
+            "received_at": (now - timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expected_outcome": "llm_classifies",
+            "description": f"L12b-{i+1}: TestDomain2 shipping — LLM classifies, {'corrected' if i < 3 else 'uncorrected'} in learning phase",
+        })
+
+    return emails

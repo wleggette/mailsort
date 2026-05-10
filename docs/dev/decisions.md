@@ -6,6 +6,40 @@ chronological — newest entries first.
 
 ---
 
+## 2026-05-08 — Coherence Double-Counting Fix
+
+**Context:** The coherence calculation in `maybe_create_rule()` and
+`_compute_coherence()` was double-counting emails that had been moved by the
+LLM and then corrected by the user. Both rows had `moved=1`, inflating the
+denominator and making coherence artificially low. This blocked auto-rule
+creation for senders the user was consistently correcting to the same folder.
+
+**Options considered:**
+1. **`MAX(created_at)` subquery** — filter to the latest `moved=1` row per
+   `email_id` in SQL. Simple, no schema changes, covers all query sites.
+2. **Application-level dedup** — query all rows, deduplicate in Python.
+   More flexible but requires touching every coherence call site.
+3. **Delete superseded rows** — clean up old rows when a correction is detected.
+   Loses audit trail; violates append-only audit principle.
+
+**Decision:** Option 1 — `MAX(created_at)` subquery. Applied to all coherence
+SQL queries in `maybe_create_rule()`, `_compute_coherence()`, and
+`_count_all_time_evidence()`.
+
+**Edge case:** If two `moved=1` rows for the same `email_id` have identical
+`created_at` (same-second insertion), the subquery matches both. In production
+this can't happen (rows are from different runs, minutes/hours apart). In tests,
+the `_seed_audit_row` helper was updated to accept an explicit `created_at`
+parameter to ensure sequential timestamps.
+
+**Testing:**
+- 4 unit tests covering exact_sender, sender_domain, list_id, and mixed scenarios
+- System test scenarios L12a (full correction → rule created) and L12b (partial
+  correction → no rule, boundary at 60% coherence)
+- L12c (compute_rule_confidence dedup) deferred to unit tests
+
+---
+
 ## 2026-04-28 — Phase 9: Google SSO Authentication
 
 **Context:** The web UI was completely unauthenticated — anyone who could reach

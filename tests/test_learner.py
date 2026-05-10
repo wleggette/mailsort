@@ -32,21 +32,32 @@ def _seed_audit_row(db: Database, *, email_id: str, from_address: str,
                     from_domain: str, target_folder: str, moved: bool = True,
                     list_id: str | None = None, run_id: str = "run-seed",
                     rule_id: int | None = None,
-                    classification_source: str = "rule"):
+                    classification_source: str = "rule",
+                    created_at: str | None = None):
     """Helper to insert a row into audit_log."""
     # Ensure the run exists
     db.execute(
         "INSERT OR IGNORE INTO runs (run_id, started_at, status) VALUES (?, datetime('now'), 'completed')",
         (run_id,),
     )
-    db.execute(
-        "INSERT INTO audit_log "
-        "(run_id, email_id, from_address, from_domain, list_id, "
-        " source_folder, target_folder, confidence, classification_source, moved, rule_id) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (run_id, email_id, from_address, from_domain, list_id,
-         "INBOX", target_folder, 0.95, classification_source, moved, rule_id),
-    )
+    if created_at:
+        db.execute(
+            "INSERT INTO audit_log "
+            "(run_id, email_id, from_address, from_domain, list_id, "
+            " source_folder, target_folder, confidence, classification_source, moved, rule_id, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (run_id, email_id, from_address, from_domain, list_id,
+             "INBOX", target_folder, 0.95, classification_source, moved, rule_id, created_at),
+        )
+    else:
+        db.execute(
+            "INSERT INTO audit_log "
+            "(run_id, email_id, from_address, from_domain, list_id, "
+            " source_folder, target_folder, confidence, classification_source, moved, rule_id) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (run_id, email_id, from_address, from_domain, list_id,
+             "INBOX", target_folder, 0.95, classification_source, moved, rule_id),
+        )
     db.commit()
 
 
@@ -454,14 +465,16 @@ def test_exact_sender_coherence_excludes_superseded_moves(db: Database):
 
     # 3 emails: LLM moved to Shopping/Orders, user corrected to Banks
     for i in range(3):
-        # Original LLM move (superseded)
+        # Original LLM move (superseded) — earlier timestamp
         _seed_audit_row(db, email_id=f"bcbs-{i}", from_address="noreply@bcbs.com",
                         from_domain="bcbs.com", target_folder="INBOX/Shopping/Orders",
-                        classification_source="llm")
-        # User correction (latest)
+                        classification_source="llm",
+                        created_at=f"2026-05-08 10:00:0{i}")
+        # User correction (latest) — later timestamp
         _seed_audit_row(db, email_id=f"bcbs-{i}", from_address="noreply@bcbs.com",
                         from_domain="bcbs.com", target_folder="INBOX/Affairs/Banks",
-                        classification_source="correction")
+                        classification_source="correction",
+                        created_at=f"2026-05-08 11:00:0{i}")
 
     created = learner.maybe_create_rule(
         from_address="noreply@bcbs.com",
@@ -487,10 +500,12 @@ def test_domain_coherence_excludes_superseded_moves(db: Database):
     for i, sender in enumerate(senders):
         _seed_audit_row(db, email_id=f"dom-{i}", from_address=sender,
                         from_domain="example.com", target_folder="INBOX/Shopping/Orders",
-                        classification_source="llm")
+                        classification_source="llm",
+                        created_at=f"2026-05-08 10:00:0{i}")
         _seed_audit_row(db, email_id=f"dom-{i}", from_address=sender,
                         from_domain="example.com", target_folder="INBOX/Affairs/Banks",
-                        classification_source="correction")
+                        classification_source="correction",
+                        created_at=f"2026-05-08 11:00:0{i}")
 
     created = learner.maybe_create_rule(
         from_address="a@example.com",
@@ -514,10 +529,12 @@ def test_list_id_coherence_excludes_superseded_moves(db: Database):
     for i in range(2):
         _seed_audit_row(db, email_id=f"lid-{i}", from_address=f"bot{i}@news.com",
                         from_domain="news.com", target_folder="INBOX/Shopping/Orders",
-                        classification_source="llm", list_id="<digest.news.com>")
+                        classification_source="llm", list_id="<digest.news.com>",
+                        created_at=f"2026-05-08 10:00:0{i}")
         _seed_audit_row(db, email_id=f"lid-{i}", from_address=f"bot{i}@news.com",
                         from_domain="news.com", target_folder="INBOX/Affairs/Banks",
-                        classification_source="correction", list_id="<digest.news.com>")
+                        classification_source="correction", list_id="<digest.news.com>",
+                        created_at=f"2026-05-08 11:00:0{i}")
 
     created = learner.maybe_create_rule(
         from_address="bot0@news.com",
@@ -545,10 +562,12 @@ def test_mixed_superseded_and_fresh_moves_coherence(db: Database):
     for i in range(3):
         _seed_audit_row(db, email_id=f"mix-{i}", from_address="noreply@mixed.com",
                         from_domain="mixed.com", target_folder="INBOX/Shopping/Orders",
-                        classification_source="llm")
+                        classification_source="llm",
+                        created_at=f"2026-05-08 10:00:0{i}")
         _seed_audit_row(db, email_id=f"mix-{i}", from_address="noreply@mixed.com",
                         from_domain="mixed.com", target_folder="INBOX/Affairs/Banks",
-                        classification_source="correction")
+                        classification_source="correction",
+                        created_at=f"2026-05-08 11:00:0{i}")
 
     # 2 non-corrected emails (still in Orders)
     for i in range(3, 5):
