@@ -54,6 +54,10 @@ In either case, update:
 - **All intervals, thresholds, and tunable values must be configurable** — no hardcoded magic numbers that control behavior (refresh intervals, batch sizes, confidence thresholds, lookback windows, etc.).
 - Pattern: add the field with a sensible default in the config model, and document it in the config example file.
 
+## Git
+
+- **Never push to remote automatically.** Only push when the user explicitly asks. Committing locally is fine, but `git push` requires explicit user request.
+
 ## Destructive Changes
 
 - **Schema changes** (database migrations, API contract changes, config format changes) require explicit user approval before implementation.
