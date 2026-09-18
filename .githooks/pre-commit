@@ -1,0 +1,47 @@
+#!/bin/bash
+# house-style: managed by tools house-style/sync.py -- edit templates/ there, then re-sync.
+#
+# Refuses a commit that stages a credential-shaped file, a per-machine Claude settings
+# file, or Finder metadata. Enabled by `git config core.hooksPath .githooks`, which the
+# sync sets per clone. Repo-specific checks go in .githooks/pre-commit.d/<name> (executable);
+# they run after these, in name order, and any non-zero exit refuses the commit.
+#
+# Bypass knowingly with `git commit --no-verify`.
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+bad=0
+
+refuse() { printf 'pre-commit: refusing %s -- %s\n' "$1" "$2" >&2; bad=1; }
+
+while IFS= read -r -d '' f; do
+    base=${f##*/}
+    case "$base" in
+        *.secrets.example|*.example|.env.example|*.pub) ;;
+        *.secrets|*.secrets.*)  refuse "$f" "service secrets are seeded on the host, never committed" ;;
+        .env|.env.*)            refuse "$f" "environment files carry credentials" ;;
+        secrets.yaml)           refuse "$f" "Home Assistant secrets file" ;;
+        *.pem|*.key|*.p12|*.pfx|id_rsa*|id_ed25519*|id_ecdsa*)
+                                refuse "$f" "private key material" ;;
+        .DS_Store)              refuse "$f" "Finder metadata" ;;
+    esac
+    case "$f" in
+        .claude/settings.local.json) refuse "$f" "per-machine Claude permissions" ;;
+    esac
+done < <(git diff --cached --name-only --diff-filter=AM -z)
+
+if git diff --cached -U0 --diff-filter=AM | grep -qE '^\+.*-----BEGIN [A-Z ]*PRIVATE KEY-----'; then
+    refuse "staged content" "contains a PEM private key block"
+fi
+
+if [[ -d "$root/.githooks/pre-commit.d" ]]; then
+    for h in "$root"/.githooks/pre-commit.d/*; do
+        [[ -x "$h" ]] || continue
+        "$h" || { printf 'pre-commit: %s failed\n' "${h##*/}" >&2; bad=1; }
+    done
+fi
+
+if (( bad )); then
+    printf 'pre-commit: commit refused. Unstage the file, or `git commit --no-verify` if you mean it.\n' >&2
+    exit 1
+fi

@@ -1,0 +1,33 @@
+#!/bin/bash
+# house-style: managed by tools house-style/sync.py -- edit templates/ there, then re-sync.
+# Checks staged shell scripts for the house header: a bash shebang on line 1,
+# `set -euo pipefail` before the first command, and `bash -n` clean. Files ending in .sh,
+# and any staged file whose first line is a bash shebang. Only staged files are checked,
+# so an existing script is held to this the next time it is edited.
+set -euo pipefail
+
+bad=0
+refuse() { printf 'shell-header: %s -- %s\n' "$1" "$2" >&2; bad=1; }
+
+while IFS= read -r -d '' f; do
+    [[ -f "$f" ]] || continue
+    first=$(head -n1 "$f")
+    case "$f" in
+        *.sh) ;;
+        *) [[ "$first" == '#!/bin/bash' || "$first" == '#!/usr/bin/env bash' ]] || continue ;;
+    esac
+    if [[ "$first" != '#!/bin/bash' && "$first" != '#!/usr/bin/env bash' ]]; then
+        refuse "$f" "line 1 must be #!/bin/bash (or #!/usr/bin/env bash for a Mac-side script)"
+    fi
+    # First line that is not the shebang, a comment or blank must be the set line.
+    firstcmd=$(sed -n '2,$p' "$f" | grep -v -E '^\s*(#|$)' | head -n1 || true)
+    if [[ "$firstcmd" != 'set -euo pipefail' ]]; then
+        refuse "$f" "first command must be 'set -euo pipefail', found: ${firstcmd:-<none>}"
+    fi
+    bash -n "$f" || refuse "$f" "bash -n failed"
+done < <(git diff --cached --name-only --diff-filter=AM -z)
+
+if (( bad )); then
+    printf 'shell-header: house style for scripts is in CLAUDE.md § Scripts.\n' >&2
+    exit 1
+fi

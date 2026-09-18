@@ -1,0 +1,27 @@
+{
+  "folders": [
+    {
+      "name": "mailsort · code",
+      "path": "."
+    },
+    {
+      "name": "kaylix · deploy",
+      "path": "../kaylix"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.DS_Store": true,
+      "**/__pycache__": true
+    },
+    "search.useIgnoreFiles": true,
+    "markdown.validate.enabled": true,
+    "[markdown]": {
+      "editor.wordWrap": "bounded",
+      "editor.wordWrapColumn": 90,
+      "editor.rulers": [
+        90
+      ]
+    }
+  }
+}

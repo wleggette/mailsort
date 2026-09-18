@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "ask": [
+      "Edit(~/Workspace/kaylix/**)",
+      "Write(~/Workspace/kaylix/**)",
+      "NotebookEdit(~/Workspace/kaylix/**)"
+    ],
+    "additionalDirectories": [
+      "~/Workspace/kaylix"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-external-writes.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
