@@ -49,6 +49,13 @@ pulls `main` every five minutes, so a commit on `main` is effectively published.
 
 - Name the user in every ssh: `kaylix@edwin`, `wleggette@edwin`, `root@ruslan.kaylix.net`.
   `~/.ssh/config` supplies a default, and the two edwin accounts see different units.
+- **After a push that is meant to deploy, trigger the deploy** rather than waiting up to
+  five minutes for `kaylix-deploy.timer`:
+  `ssh kaylix@edwin /opt/kaylix/edwin/deploy/deploy.sh`. That is the script the timer
+  runs: no root, about ten seconds, idempotent. Watch its output; anything verified before
+  it finishes measures the previous version. `systemctl start kaylix-deploy` fails as
+  `kaylix` with `Interactive authentication required`, and is not a reason for a root
+  batch.
 - `wleggette@edwin` and `nigel` hold the operator's personal files: ask before first use
   in a session, saying what for. That approval covers the session, not one command.
 - Root on any host goes through the batch gate in `~/.claude/CLAUDE.md` § Root and
