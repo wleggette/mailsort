@@ -44,6 +44,15 @@ pulls `main` every five minutes, so a commit on `main` is effectively published.
 - The operator reviews the branch in the editor and merges it to `main`.
 - Never leave edits uncommitted in the main checkout: the next session's commit may
   carry them.
+- **Never rebase or reset a branch another session may be working on**, and never push
+  someone else's unpushed commits to get yours out. When your work is ready and `main`
+  carries theirs, cut a worktree from `origin/main`, cherry-pick your own commits into
+  it, and push that:
+  `git worktree add .claude/worktrees/<topic> -b <topic> origin/main` then
+  `git cherry-pick <sha>...`. The checkout is then divergent, which is the price and is
+  recoverable — the duplicated commits keep their patch-ids, so whoever pushes next runs
+  `git pull --rebase` and git drops them silently. Rebase the shared branch only when
+  you know no other session is in it.
 
 ### Remote hosts and root
 
