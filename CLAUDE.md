@@ -21,7 +21,9 @@ Their own `CLAUDE.md` files do not load here; read them before changing anything
 **Every write to a sibling asks first, unless it is marked writable above.** Name the
 file, show the diff, say why the change cannot live here, and get a yes. An approval
 covers the change described, not the next one. This holds in auto mode and for every
-tool.
+tool. kaylix is the one difference: the change is written and committed on a worktree
+branch first, and the ask is made on that committed branch before it is merged and
+deployed (§ Working in kaylix).
 
 Enforcement: `.claude/settings.json` puts each read-only sibling in `permissions.ask`
 for `Edit`, `Write` and `NotebookEdit`, and `.claude/hooks/guard-external-writes.py` asks
@@ -34,15 +36,28 @@ held in a variable or reached by `cd` is not caught. Ask anyway.
 kaylix is a shared checkout: several sessions edit it, and the deploy timer on edwin
 pulls `main` every five minutes, so a commit on `main` is effectively published.
 
-- Prepare a change in a worktree, never in the main checkout:
-  `git -C ~/Workspace/kaylix worktree add .claude/worktrees/<topic> -b <topic> main`.
+- Prepare a change in a worktree, never in the main checkout, cut from `origin/main`
+  after a fetch, since the local `main` may lag:
+  `git -C ~/Workspace/kaylix worktree add .claude/worktrees/<topic> -b <topic> origin/main`.
   That path is gitignored there and is what `EnterWorktree` expects.
 - `git add` explicit paths, never `-A` or `.`. `git commit -- <paths>`, not a bare
   `git commit`: a bare commit writes the whole index, including another session's
   staged files. This is the rule in kaylix always, because it manages the whole
   deployment. Elsewhere it is judgement: apply it whenever another session may have
   work staged in the same checkout.
-- The operator reviews the branch in the editor and merges it to `main`.
+- **A kaylix change ends merged and deployed, never waiting on a branch.** Commit it on
+  the worktree branch. From any other workspace, stop there and ask: name the branch and
+  the worktree path, show `git diff main...<topic>`, and say what it deploys and which
+  change in which repo it pairs with. That ask is the operator's alert and his review.
+  On his yes, or at once in a session working in the kaylix workspace itself: fetch,
+  rebase the branch onto `origin/main` if `main` has moved (the branch is yours),
+  `git push origin <topic>:main`, run the deploy (§ Remote hosts and root) and watch its
+  output, then `git worktree remove` it and delete the branch locally and on origin.
+  Last, `git -C ~/Workspace/kaylix merge --ff-only origin/main` when the main checkout
+  is on `main` with a clean tree, so the operator's kaylix window shows what edwin runs.
+- **A kaylix change paired with another repo's change deploys with it**, in the same
+  sitting. Neither half is done while the other is unmerged or undeployed; order the two
+  deploys so each finds what it needs.
 - Never leave edits uncommitted in the main checkout: the next session's commit may
   carry them.
 - **Never rebase or reset a branch another session may be working on**, and never push
