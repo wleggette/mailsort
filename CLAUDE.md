@@ -25,11 +25,15 @@ tool. kaylix is the one difference: the change is written and committed on a wor
 branch first, and the ask is made on that committed branch before it is merged and
 deployed (§ Working in kaylix).
 
-Enforcement: `.claude/settings.json` puts each read-only sibling in `permissions.ask`
-for `Edit`, `Write` and `NotebookEdit`, and `.claude/hooks/guard-external-writes.py` asks
-for any Bash command naming a sibling that is not recognizably read-only (`cat`, `grep`,
-`rg`, `find`, `diff`, `sed -n`, read-only `git`). The hook reads command text, so a path
-held in a variable or reached by `cd` is not caught. Ask anyway.
+Enforcement: `.claude/settings.json` puts each read-only sibling but kaylix in
+`permissions.ask` for `Edit`, `Write` and `NotebookEdit`, and
+`.claude/hooks/guard-external-writes.py` asks for any Bash command naming a sibling that
+is not recognizably read-only (`cat`, `grep`, `rg`, `find`, `diff`, `sed -n`, read-only
+`git`, `sync.py --check`, `plan check`). For kaylix the hook passes every write inside a
+worktree under `.claude/worktrees/`, asks on `git push` — the merge approval — and asks on
+any other write to the main checkout, edits included. It follows `cd` and variables set
+earlier in the same command; a path held in a variable set elsewhere is not caught. Ask
+anyway.
 
 ### Working in kaylix
 
@@ -46,13 +50,15 @@ pulls `main` every five minutes, so a commit on `main` is effectively published.
   deployment. Elsewhere it is judgement: apply it whenever another session may have
   work staged in the same checkout.
 - **A kaylix change ends merged and deployed, never waiting on a branch.** Commit it on
-  the worktree branch. From any other workspace, stop there and ask: name the branch and
-  the worktree path, show `git diff main...<topic>`, and say what it deploys and which
-  change in which repo it pairs with. That ask is the operator's alert and his review.
-  On his yes, or at once in a session working in the kaylix workspace itself: fetch,
-  rebase the branch onto `origin/main` if `main` has moved (the branch is yours),
-  `git push origin <topic>:main`, run the deploy (§ Remote hosts and root) and watch its
-  output, then `git worktree remove` it and delete the branch locally and on origin.
+  the worktree branch; nothing asks while it is written. From any other workspace, show
+  it in chat: the branch and the worktree path, `git diff main...<topic>`, what it
+  deploys, and which change in which repo it pairs with. Then, in the same turn: fetch,
+  rebase the branch onto `origin/main` if `main` has moved (the branch is yours), and
+  `git push origin <topic>:main`. The guard asks on that push; the operator's click, with
+  the change shown above it, is the approval, and a no ends the change. In the kaylix
+  workspace itself the push does not ask. Then run the deploy (§ Remote hosts and root)
+  and watch its output, `git worktree remove` it, and delete the branch locally and on
+  origin.
   Last, `git -C ~/Workspace/kaylix merge --ff-only origin/main` when the main checkout
   is on `main` with a clean tree, so the operator's kaylix window shows what edwin runs.
 - **A kaylix change paired with another repo's change deploys with it**, in the same

@@ -1,9 +1,6 @@
 {
   "permissions": {
     "ask": [
-      "Edit(~/Workspace/kaylix/**)",
-      "Write(~/Workspace/kaylix/**)",
-      "NotebookEdit(~/Workspace/kaylix/**)",
       "Edit(~/Workspace/tools/**)",
       "Write(~/Workspace/tools/**)",
       "NotebookEdit(~/Workspace/tools/**)"
@@ -17,6 +14,15 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-external-writes.py\""
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
