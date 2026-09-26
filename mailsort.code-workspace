@@ -7,6 +7,10 @@
     {
       "name": "kaylix · deploy",
       "path": "../kaylix"
+    },
+    {
+      "name": "tools · tools",
+      "path": "../tools"
     }
   ],
   "settings": {

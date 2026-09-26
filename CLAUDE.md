@@ -13,6 +13,7 @@ there and re-run the sync; an edit here is overwritten on the next run.
 `mailsort.code-workspace` opens these repos alongside this one:
 
 - **kaylix** (`~/Workspace/kaylix`, deploy)
+- **tools** (`~/Workspace/tools`, tools)
 
 Opening them makes them Claude working directories, so reading them needs no permission.
 Their own `CLAUDE.md` files do not load here; read them before changing anything there.
@@ -130,4 +131,6 @@ of record.
   per block at most.
 - Write literally. No metaphors, no stock phrases; quantities rather than
   characterisations.
+- A title, heading or subject line names its subject, in terms that make sense before the
+  content is read. It is a label, and is never written to intrigue.
 <!-- house-style:end -->

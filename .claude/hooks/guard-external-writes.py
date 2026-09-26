@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # house-style: managed by tools house-style/sync.py -- edit templates/ there, then re-sync.
-"""PreToolUse/Bash guard for the sibling repos opened read-only: ~/Workspace/kaylix.
+"""PreToolUse/Bash guard for the sibling repos opened read-only: ~/Workspace/kaylix, ~/Workspace/tools.
 
 The workspace's multi-root `folders` make those repos Claude working directories, so
 reads there are unprompted -- which is wanted. The `ask` rules in settings.json cover
@@ -27,7 +27,7 @@ import sys
 
 # ~/Workspace/<repo>, $HOME/Workspace/<repo>, /Users/.../Workspace/<repo>, ../<repo>
 GUARDED = re.compile(
-    r"(?:(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s]+)/Workspace|\.\.)/(kaylix)(?:/|\s|$|['\"])"
+    r"(?:(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s]+)/Workspace|\.\.)/(kaylix|tools)(?:/|\s|$|['\"])"
 )
 
 # Commands that cannot modify the filesystem on their own. Anything not listed
