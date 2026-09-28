@@ -13,7 +13,7 @@ there and re-run the sync; an edit here is overwritten on the next run.
 `mailsort.code-workspace` opens these repos alongside this one:
 
 - **kaylix** (`~/Workspace/kaylix`, deploy)
-- **tools** (`~/Workspace/tools`, tools)
+- **tools** (`~/Workspace/tools`, common)
 
 Opening them makes them Claude working directories, so reading them needs no permission.
 Their own `CLAUDE.md` files do not load here; read them before changing anything there.
