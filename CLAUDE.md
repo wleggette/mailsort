@@ -24,7 +24,9 @@ file, show the diff, say why the change cannot live here, and get a yes. An appr
 covers the change described, not the next one. This holds in auto mode and for every
 tool. kaylix is the one difference: the change is written and committed on a worktree
 branch first, and the ask is made on that committed branch before it is merged and
-deployed (§ Working in kaylix).
+deployed (§ Working in kaylix). A grant, marked against the sibling above, lifts those
+asks for one plan's work. A session that needs one asks the operator; a tools session makes
+it with the `grant` skill.
 
 Enforcement: `.claude/settings.json` puts each read-only sibling but kaylix in
 `permissions.ask` for `Edit`, `Write` and `NotebookEdit`, and

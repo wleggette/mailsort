@@ -17,7 +17,8 @@ worktree under `.claude/worktrees/` and approved once, at the merge:
 - on the main checkout, a fetch, `worktree add|remove` into `.claude/worktrees/`,
   deleting a branch, and `merge --ff-only` pass: they are the steps around a change;
 - `git push` to kaylix asks, whatever the branch: that prompt is the merge approval,
-  fired after the committed branch was shown in chat. `push --delete` passes;
+  fired after the committed branch was shown in chat. `push --delete` passes, and so does
+  every push while KAYLIX_PUSH_FOR names a plan: a grant made by the tools `grant` skill;
 - any other write to the main checkout asks.
 
 The command is tokenized with quotes respected and split at shell operators. Loop and
@@ -40,6 +41,9 @@ GUARDED = re.compile(
     r"(?![\w.-])(/[^\s'\";&|()<>]*)?"
 )
 WORKTREES = "/.claude/worktrees/"
+# The plan whose work may push to kaylix without the merge prompt; empty, every push asks.
+# Set and cleared by sync.py --writable kaylix --for <ID> and --read-only kaylix.
+KAYLIX_PUSH_FOR = ""
 # Running a sibling's code is not writing to it: the program path is exempt, and these
 # invocations of the tools repo's own scripts only read.
 INTERPRETERS = {"python", "python3", "bash", "sh", "zsh", "node", "perl", "ruby"}
@@ -285,7 +289,7 @@ def judge(command: str):
         if cwd:
             kinds.append(cwd)
         if cmd == "git" and git_args(words)[0] == "push" and any(k.startswith("kaylix") for k in kinds):
-            if "--delete" in words or "-d" in words:
+            if "--delete" in words or "-d" in words or KAYLIX_PUSH_FOR:
                 continue
             return "kaylix", "merge"
         if (segment_is_read_only(words) or runs_read_only_script(words)) \
