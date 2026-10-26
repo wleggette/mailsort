@@ -5,8 +5,9 @@
 
 This section is written by the `house-style` skill in the tools repo
 (`~/Workspace/tools/house-style/sync.py`). Edit `house-style/templates/claude-block.md`
-there and re-run the sync; an edit here is overwritten on the next run.
-`tools/docs/house-style.md` states the rules in full.
+there and re-run the sync, because an edit made here is overwritten on the next run.
+`tools/docs/house-style.md` states the rules in full, except the rules for writing
+documents, which are in the `write-doc` skill.
 
 ### Sibling repos in this workspace
 
@@ -124,34 +125,30 @@ of record.
   that breaks the first two and one that fails `bash -n`.
 - One `.service` plus `.timer` pair per scheduled job. No cron line, no `sleep` loop.
 
+### Commit messages
+
+Load the `commit` skill before every commit. It holds the message format, which
+`doc-review hook` checks for its `Task:` and `Deploys:` lines.
+
 ### Documents and comments
 
+- **Load the `write-doc` skill before writing or restructuring a document, or adding more
+  than a few lines to one.** It states the writing rules in full, numbered 1 to 11.
+- **Before committing a document that is new or gains 10 or more lines**, review it with
+  a Sonnet subagent as the skill says, apply what is right, and put a `Doc-review:`
+  trailer in the message. `doc-review hook` refuses the commit without one.
+- These rules apply to every edit to a living document, however small:
+  - **Current state, not history.** No "previously", no "(updated)", no conclusion stated
+    and then withdrawn; a correction replaces the text.
+  - **No unresolved question.** A question about current state is a `**Q**` task in a
+    plan, and the document cites the plan id.
+  - **Literal.** No metaphors or stock phrases; quantities rather than
+    characterisations.
+  - **A title or heading names its subject.** It is a label, never written to intrigue.
 - Every repo has a `README.md` that says what it is, how it is deployed, and lists the
   top-level documents with one line each. `CLAUDE.md` does not repeat the overview.
-- Top-level documents in caps, one word where one will do: `README.md`, `CLAUDE.md`,
-  `ARCHITECTURE.md`. A document at the top level is claiming to be read before the repo
-  makes sense. Everything else is kebab-case under `docs/`, in subdirectories once a flat
-  listing runs past a screenful. The `plants` vault is the exception: Title Case with
-  spaces.
-- A living document states what is true now, as though it had always read that way.
-  History belongs in git or a dedicated changelog: no "previously", "(updated)", "since
-  the last measurement", and no conclusion stated and then withdrawn — a correction
-  replaces the text. Keep the reasoning behind a decision, which is what stops it being
-  relitigated; drop the chronology of reaching it. A date in a document is a fact about
-  the system — when a measurement was taken, when a device shipped — never when the
-  document changed. Two things describe the system rather than the document and are
-  fine: a design that states a transition ("what the alert does now / after this
-  change"), and a fact whose content is variation ("three scans disagreed"), written as
-  a property rather than a diary.
-- A living document carries no unresolved question. A question about current state is
-  a `**Q**` task in a plan, naming the document that will hold the answer; the document
-  says what is determined and cites the plan id for what is not. Stated uncertainty with
-  its confidence — "inferred from circumstantial evidence" — is determined state and
-  stays.
+  Top-level documents are in caps, one word where one will do; everything else is
+  kebab-case under `docs/`. The `plants` vault is the exception: Title Case with spaces.
 - Comments record the constraint, not the reasoning that found it, in about three lines
   per block at most.
-- Write literally. No metaphors, no stock phrases; quantities rather than
-  characterisations.
-- A title, heading or subject line names its subject, in terms that make sense before the
-  content is read. It is a label, and is never written to intrigue.
 <!-- house-style:end -->

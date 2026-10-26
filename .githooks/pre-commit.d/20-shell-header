@@ -4,10 +4,37 @@
 # `set -euo pipefail` before the first command, and `bash -n` clean. Files ending in .sh,
 # and any staged file whose first line is a bash shebang. Only staged files are checked,
 # so an existing script is held to this the next time it is edited.
+# The repo's own .githooks/shell-header-exempt lists files excused from the shebang and
+# set line, one pattern per line with a `# reason`; they are still held to `bash -n`.
 set -euo pipefail
 
 bad=0
 refuse() { printf 'shell-header: %s -- %s\n' "$1" "$2" >&2; bad=1; }
+
+EXEMPT_FILE=.githooks/shell-header-exempt
+exempt=()
+if [[ -f "$EXEMPT_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+        pat=${line%%#*}
+        pat=$(printf '%s' "$pat" | sed -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//')
+        if [[ "$line" != *'#'* || -z "$(printf '%s' "${line#*#}" | tr -d '[:space:]')" ]]; then
+            refuse "$EXEMPT_FILE" "entry '$pat' has no reason; write it as '<pattern>  # <reason>'"
+            continue
+        fi
+        exempt+=("$pat")
+    done < "$EXEMPT_FILE"
+fi
+
+# Bash 3.2 (macOS) treats an empty array as unset under `set -u`, hence the ${…+…} form.
+is_exempt() {
+    local p
+    for p in ${exempt[@]+"${exempt[@]}"}; do
+        # shellcheck disable=SC2053  # unquoted: the entry is a glob; * also matches /
+        [[ "$1" == $p ]] && return 0
+    done
+    return 1
+}
 
 while IFS= read -r -d '' f; do
     [[ -f "$f" ]] || continue
@@ -16,18 +43,20 @@ while IFS= read -r -d '' f; do
         *.sh) ;;
         *) [[ "$first" == '#!/bin/bash' || "$first" == '#!/usr/bin/env bash' ]] || continue ;;
     esac
-    if [[ "$first" != '#!/bin/bash' && "$first" != '#!/usr/bin/env bash' ]]; then
-        refuse "$f" "line 1 must be #!/bin/bash (or #!/usr/bin/env bash for a Mac-side script)"
-    fi
-    # First line that is not the shebang, a comment or blank must be the set line.
-    firstcmd=$(sed -n '2,$p' "$f" | grep -v -E '^\s*(#|$)' | head -n1 || true)
-    if [[ "$firstcmd" != 'set -euo pipefail' ]]; then
-        refuse "$f" "first command must be 'set -euo pipefail', found: ${firstcmd:-<none>}"
+    if ! is_exempt "$f"; then
+        if [[ "$first" != '#!/bin/bash' && "$first" != '#!/usr/bin/env bash' ]]; then
+            refuse "$f" "line 1 must be #!/bin/bash (or #!/usr/bin/env bash for a Mac-side script)"
+        fi
+        # First line that is not the shebang, a comment or blank must be the set line.
+        firstcmd=$(sed -n '2,$p' "$f" | grep -v -E '^\s*(#|$)' | head -n1 || true)
+        if [[ "$firstcmd" != 'set -euo pipefail' ]]; then
+            refuse "$f" "first command must be 'set -euo pipefail', found: ${firstcmd:-<none>}"
+        fi
     fi
     bash -n "$f" || refuse "$f" "bash -n failed"
 done < <(git diff --cached --name-only --diff-filter=AM -z)
 
 if (( bad )); then
-    printf 'shell-header: house style for scripts is in CLAUDE.md § Scripts.\n' >&2
+    printf 'shell-header: house style for scripts is in CLAUDE.md § Scripts; exemptions are in %s.\n' "$EXEMPT_FILE" >&2
     exit 1
 fi

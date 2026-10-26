@@ -1,0 +1,13 @@
+# house-style: managed by tools house-style/sync.py -- edit templates/ there, then re-sync.
+# Calls the shared document review: living documents changed on main by commits without a
+# Doc-review: line, findings to an issue labelled doc-review. Edits nothing.
+# Secrets it reads: ANTHROPIC_API_KEY, TOOLS_READ_TOKEN.
+name: doc-review
+on:
+  push: { branches: [main], paths: ['**.md'] }
+  workflow_dispatch:
+permissions: { contents: read, issues: write }
+jobs:
+  review:
+    uses: wleggette/tools/.github/workflows/doc-review.yml@main
+    secrets: inherit

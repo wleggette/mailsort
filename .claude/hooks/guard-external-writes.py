@@ -75,9 +75,32 @@ OPERATORS = {";", ";;", "&&", "||", "|", "|&", "&", "(", ")"}
 REDIRECT_OUT = {">", ">>", "&>", "&>>", ">|", ">&"}
 
 
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)([\w.-]+)\1")
+
+
+def fold_heredocs(command: str) -> str:
+    """Each heredoc body joined onto its command's line as plain words.
+
+    A body is data, so its quotes and operators are dropped; its paths stay as arguments
+    of the command that reads it, so a script writing into a sibling still asks."""
+    lines, out, i = command.split("\n"), [], 0
+    while i < len(lines):
+        line, i = lines[i], i + 1
+        for m in HEREDOC.finditer(line):
+            body = []
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                body.append(lines[i])
+                i += 1
+            i += 1  # the delimiter line
+            line += " " + re.sub(r"[\"'`\\;|&<>()]", " ", " ".join(body))
+        out.append(line)
+    return "\n".join(out)
+
+
 def tokenize(command: str) -> list:
     """Shell words and operators, quotes respected. Raises ValueError on unbalanced quotes."""
-    lex = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lex = shlex.shlex(fold_heredocs(command).replace("\n", " ; "), posix=True,
+                      punctuation_chars=True)
     lex.whitespace_split = True
     return list(lex)
 
