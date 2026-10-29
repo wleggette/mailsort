@@ -11,6 +11,10 @@
     {
       "name": "tools · common",
       "path": "../tools"
+    },
+    {
+      "name": "agents · common",
+      "path": "../agents"
     }
   ],
   "settings": {

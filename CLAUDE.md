@@ -15,6 +15,7 @@ documents, which are in the `write-doc` skill.
 
 - **kaylix** (`~/Workspace/kaylix`, deploy)
 - **tools** (`~/Workspace/tools`, common)
+- **agents** (`~/Workspace/agents`, common)
 
 Opening them makes them Claude working directories, so reading them needs no permission.
 Their own `CLAUDE.md` files do not load here; read them before changing anything there.
@@ -25,7 +26,7 @@ covers the change described, not the next one. This holds in auto mode and for e
 tool. kaylix is the one difference: the change is written and committed on a worktree
 branch first, and the ask is made on that committed branch before it is merged and
 deployed (§ Working in kaylix). A grant, marked against the sibling above, lifts those
-asks for one plan's work. A session that needs one asks the operator; a tools session makes
+asks for one plan's work. A session that needs one asks the operator, and on his yes makes
 it with the `grant` skill.
 
 Enforcement: `.claude/settings.json` puts each read-only sibling but kaylix in

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # house-style: managed by tools house-style/sync.py -- edit templates/ there, then re-sync.
-"""PreToolUse guard for the sibling repos opened read-only: ~/Workspace/kaylix, ~/Workspace/tools.
+"""PreToolUse guard for the sibling repos opened read-only: ~/Workspace/agents, ~/Workspace/kaylix, ~/Workspace/tools.
 
 The workspace's multi-root `folders` make those repos Claude working directories, so
 reads there are unprompted -- which is wanted. The `ask` rules in settings.json cover
@@ -37,7 +37,7 @@ import sys
 # A path into a guarded sibling, anywhere in a word: ~/Workspace/<repo>, $HOME/...,
 # /Users/<u>/Workspace/<repo>, ../<repo>. Group 2 is the rest of the path.
 GUARDED = re.compile(
-    r"(?:(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s]+)/Workspace|\.\.)/(kaylix|tools)"
+    r"(?:(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s]+)/Workspace|\.\.)/(agents|kaylix|tools)"
     r"(?![\w.-])(/[^\s'\";&|()<>]*)?"
 )
 WORKTREES = "/.claude/worktrees/"

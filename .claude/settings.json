@@ -3,11 +3,15 @@
     "ask": [
       "Edit(~/Workspace/tools/**)",
       "Write(~/Workspace/tools/**)",
-      "NotebookEdit(~/Workspace/tools/**)"
+      "NotebookEdit(~/Workspace/tools/**)",
+      "Edit(~/Workspace/agents/**)",
+      "Write(~/Workspace/agents/**)",
+      "NotebookEdit(~/Workspace/agents/**)"
     ],
     "additionalDirectories": [
       "~/Workspace/kaylix",
-      "~/Workspace/tools"
+      "~/Workspace/tools",
+      "~/Workspace/agents"
     ]
   },
   "hooks": {
