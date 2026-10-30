@@ -128,6 +128,13 @@ of record.
   that breaks the first two and one that fails `bash -n`.
 - One `.service` plus `.timer` pair per scheduled job. No cron line, no `sleep` loop.
 
+### Shared dependencies
+
+- **Code from another estate repo is pinned to a tag or commit**, never a branch. A session
+  that changes a repo holding a pin moves it forward in the same sitting, in a commit of its
+  own, once the repo builds and its tests pass on the new version. `tools/docs/house-style.md`
+  § Shared dependencies.
+
 ### Commit messages
 
 Load the `commit` skill before every commit. It holds the message format, which
@@ -136,7 +143,7 @@ Load the `commit` skill before every commit. It holds the message format, which
 ### Documents and comments
 
 - **Load the `write-doc` skill before writing or restructuring a document, or adding more
-  than a few lines to one.** It states the writing rules in full, numbered 1 to 11.
+  than a few lines to one.** It states the writing rules in full, numbered 1 to 14.
 - **Before committing a document that is new or gains 10 or more lines**, review it with
   a Sonnet subagent as the skill says, apply what is right, and put a `Doc-review:`
   trailer in the message. `doc-review hook` refuses the commit without one.
