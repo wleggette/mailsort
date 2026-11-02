@@ -131,9 +131,10 @@ of record.
 ### Shared dependencies
 
 - **Code from another estate repo is pinned to a tag or commit**, never a branch. A session
-  that changes a repo holding a pin moves it forward in the same sitting, in a commit of its
-  own, once the repo builds and its tests pass on the new version. `tools/docs/house-style.md`
-  § Shared dependencies.
+  moves the pin to the dependency's latest version, in a commit of its own, once the repo
+  builds and its tests pass on it: whenever it changes the repo, and before it uses
+  something the dependency has added. Nothing alerts on a pin behind.
+  `tools/docs/house-style.md` § Shared dependencies.
 
 ### Commit messages
 
