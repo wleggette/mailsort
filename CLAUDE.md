@@ -11,6 +11,9 @@ skill is carried out by loading that skill first.
 **A request unrelated to this session's earlier work:** say in one line, before starting,
 that `/clear` would run it without the earlier context, which every request re-sends.
 
+**The operator is infrastructure-literate.** Do not explain general tools such as SHA-256
+or systemd; do explain behaviour specific to one system, such as restic's or ZFS's.
+
 ### Sibling repos in this workspace
 
 `mailsort.code-workspace` opens these repos alongside this one:
