@@ -37,6 +37,16 @@ under `.claude/worktrees/` cut from `origin/main`, never the main checkout; expl
 to `git add` and `git commit -- <paths>`; the change ends merged and deployed, with any
 change it pairs with.
 
+### Deploying
+
+Load the `deploy` skill before running, installing or copying code onto any host or Mac.
+Production runs only commits that `origin/main` contains. Test before or after the merge
+by risk (torin's VM regression on the branch first when the change is risky), then deploy
+the known-good commit, or a later one whose added commits cannot change what runs. A
+branch runs only as a test or prototype, in a VM, container or test guest, or by hand from
+a scratch directory with nothing left behind. A branch merges when its task's check
+passes; no long-lived or integration branches.
+
 ### Remote hosts, root and secrets
 
 - Name the user in every ssh: `kaylix@edwin`, `wleggette@edwin`, `root@ruslan.kaylix.net`.
