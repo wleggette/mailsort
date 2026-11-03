@@ -9,6 +9,9 @@ there and re-run the sync, because an edit made here is overwritten on the next 
 `tools/docs/house-style.md` states the rules in full, except the rules for writing
 documents, which are in the `write-doc` skill.
 
+**A request unrelated to this session's earlier work:** say in one line, before starting,
+that `/clear` would run it without the earlier context, which every request re-sends.
+
 ### Sibling repos in this workspace
 
 `mailsort.code-workspace` opens these repos alongside this one:
