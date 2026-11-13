@@ -80,4 +80,6 @@ passes; no long-lived or integration branches.
   characterisations; a heading names its subject.
 - Documents other than the root `README.md`, `CLAUDE.md` and a few top-level files are
   kebab-case under `docs/`. Comments record the constraint, about three lines at most.
+- Text asking the operator to decide or approve: load the `write-for-decision` skill. The
+  first sentence is the decision in ordinary words, and each option says what happens to him.
 <!-- house-style:end -->
