@@ -23,8 +23,11 @@ worktree under `.claude/worktrees/` and approved once, at the merge:
 
 The command is tokenized with quotes respected and split at shell operators. Loop and
 conditional keywords are skipped before the command word is read. `NAME=value`
-assignments earlier in the command are substituted into later words, and `cd` into a
-sibling makes the following segments count as inside it. A variable set outside the
+assignments earlier in the command are substituted into later words, a `for` variable takes
+the loop's first guarded word (else its first word), and `cd` into a sibling makes the
+following segments count as inside it. A redirect to an absolute path outside every guarded
+checkout is not a write to one, and `bash -c '...'` is judged by its inner command unless a
+`cd` into a sibling came first. A variable set outside the
 command cannot be resolved; a writing segment that uses one asks. String inspection
 only: this raises the floor; it is not a boundary.
 """
@@ -49,6 +52,8 @@ KAYLIX_PUSH_FOR = ""
 INTERPRETERS = {"python", "python3", "bash", "sh", "zsh", "node", "perl", "ruby"}
 READ_ONLY_SCRIPTS = {"sync.py": {"--check"}, "plan.py": {"check", "board", "id"},
                      "plan": {"check", "board", "id"}}
+# The estate's own tools in ~/.claude, which write only under ~/.claude.
+OWN_TOOLS = {"worker-status", "ask-operator", "rootgate", "credgrant"}
 VAR = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
 ASSIGN = re.compile(r"^(\w+)=(.*)$", re.S)
 
@@ -60,6 +65,7 @@ READ_ONLY = {
     "jq", "less", "ls", "md5", "md5sum", "more", "printf", "pwd", "readlink",
     "realpath", "rg", "shasum", "sha1sum", "sha256sum", "sort", "stat", "tail",
     "test", "tree", "true", "uniq", "wc", "yq",
+    "dig", "date", "seq", "tr", "paste", "sleep", "host", "nslookup",
 }
 
 # git subcommands that only read
@@ -67,7 +73,7 @@ GIT_READ_ONLY = {
     "fetch", "merge-base", "rev-list", "ls-remote", "for-each-ref", "reflog",
     "blame", "branch", "cat-file", "config", "describe", "diff", "grep", "log",
     "ls-files", "ls-tree", "remote", "rev-parse", "shortlog", "show", "status",
-    "tag",
+    "tag", "cherry", "merge-tree",
 }
 
 # Shell words that precede a command without being one. `for VAR in` is handled apart.
@@ -109,15 +115,23 @@ def tokenize(command: str) -> list:
     return list(lex)
 
 
-def writes_via_redirect(tokens: list) -> bool:
+def redirect_targets(tokens: list) -> list:
+    out = []
     for i, t in enumerate(tokens):
         if t in REDIRECT_OUT:
             nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
             if t == ">&" and nxt.isdigit():
                 continue  # fd duplication, e.g. 2>&1
             if nxt != "/dev/null":
-                return True
-    return False
+                out.append(nxt)
+    return out
+
+
+def redirect_is_outside(target: str) -> bool:
+    """An absolute, resolved path outside every guarded checkout; a kaylix worktree is outside."""
+    if "$" in target or not target.startswith(("/", "~")):
+        return False
+    return all(k == "kaylix-wt" for k in kinds_of(target))
 
 
 def segments(tokens: list) -> list:
@@ -166,6 +180,9 @@ def segment_is_read_only(tokens: list) -> bool:
                 continue
             if a.startswith("-"):
                 continue
+            if a == "archive":  # to standard output only; -o/--output writes a file
+                return not any(x in ("-o", "--output") or x.startswith("--output=")
+                               for x in args)
             return a in GIT_READ_ONLY
         return False
     return cmd in READ_ONLY
@@ -213,7 +230,12 @@ def strip_prefix(tokens: list, env: dict) -> list:
     while tokens and tokens[0] in KEYWORDS:
         tokens = tokens[1:]
     if tokens and tokens[0] == "for":
-        return []  # `for VAR in words`: the words are values, not a command
+        # `for VAR in words`: the words are values, not a command. VAR takes the first
+        # guarded word, so a write through it is judged by where it points.
+        if len(tokens) >= 3 and tokens[2] == "in":
+            vals = [expand(w, env) for w in tokens[3:]]
+            env[tokens[1]] = next((v for v in vals if kinds_of(v)), vals[0] if vals else "")
+        return []
     while tokens and (m := ASSIGN.match(tokens[0])) and not tokens[0].startswith("-"):
         env[m.group(1)] = expand(m.group(2), env)
         tokens = tokens[1:]
@@ -282,6 +304,16 @@ def judge(command: str):
         cmd = words[0].rsplit("/", 1)[-1]
         prog = program_index(words)
         kinds = [k for i, w in enumerate(words) if i != prog for k in kinds_of(w)]
+        if cmd in ("bash", "sh", "zsh") and "-c" in words[1:] and not cwd:
+            i = words.index("-c")
+            if i + 1 < len(words):
+                inner = judge(words[i + 1])
+                if inner:
+                    return inner
+                continue
+        if cmd in OWN_TOOLS and "/.claude/" in words[0] \
+                and all(redirect_is_outside(t) for t in redirect_targets(words)):
+            continue
         if cmd in ("cd", "pushd"):
             target = kinds_of(words[1]) if len(words) > 1 else []
             cwd = target[0] if target else None
@@ -293,7 +325,7 @@ def judge(command: str):
                 continue
             return "kaylix", "merge"
         if (segment_is_read_only(words) or runs_read_only_script(words)) \
-                and not writes_via_redirect(words):
+                and all(redirect_is_outside(t) for t in redirect_targets(words)):
             continue
         if not kinds:
             if any("$" in w for i, w in enumerate(words) if i != prog):
